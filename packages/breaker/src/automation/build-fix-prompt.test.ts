@@ -13,7 +13,7 @@ describe("generateFixPrompt", () => {
 
   it("generates prompt with a single error", () => {
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       errors: [{ message: "Undeclared identifier 'x'" }],
     };
 
@@ -25,7 +25,7 @@ describe("generateFixPrompt", () => {
 
   it("generates prompt with multiple errors", () => {
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       errors: [
         { message: "Error one" },
         { message: "Error two" },
@@ -43,7 +43,7 @@ describe("generateFixPrompt", () => {
 
   it("includes line and column when available", () => {
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       errors: [{ message: "Syntax error", line: 42, column: 5 }],
     };
 
@@ -54,7 +54,7 @@ describe("generateFixPrompt", () => {
 
   it("includes snippet when available", () => {
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       errors: [
         {
           message: "Unexpected token",
@@ -71,7 +71,7 @@ describe("generateFixPrompt", () => {
 
   it("handles empty errors array", () => {
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       errors: [],
     };
 
@@ -82,7 +82,7 @@ describe("generateFixPrompt", () => {
 
   it("handles null errors (falls back to empty array)", () => {
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       errors: null,
     };
 
@@ -115,7 +115,7 @@ describe("generateFixPrompt", () => {
 
   it("shows timestamp when available", () => {
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       timestamp: "2026-02-22T10:30:00Z",
       errors: [{ message: "Some error" }],
     };
@@ -127,7 +127,7 @@ describe("generateFixPrompt", () => {
 
   it("includes line without column", () => {
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       errors: [{ message: "Syntax error", line: 42 }],
     };
 
@@ -141,7 +141,7 @@ describe("generateFixPrompt", () => {
     vi.spyOn(fs, "existsSync").mockReturnValue(false);
 
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       errors: [],
     };
 
@@ -152,7 +152,7 @@ describe("generateFixPrompt", () => {
 
   it("shows 'unknown' when timestamp is undefined", () => {
     const errorData: ErrorData = {
-      strategyFile: "assets/BTC/breakout/squeeze.pine",
+      strategyFile: "assets/btc/breakout/squeeze.pine",
       errors: [{ message: "Some error" }],
     };
 

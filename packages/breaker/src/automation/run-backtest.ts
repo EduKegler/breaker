@@ -13,7 +13,7 @@ const TV_CHART_URL =
   process.env.TV_CHART_URL ||
   "https://br.tradingview.com/chart/ovLwxUsu/";
 const STRATEGY_FILE =
-  process.env.STRATEGY_FILE || "assets/BTC/breakout/squeeze.pine";
+  process.env.STRATEGY_FILE || "assets/btc/breakout/squeeze.pine";
 const AUTH_FILE = process.env.AUTH_FILE || ".auth/tradingview.json";
 const SAVE_SCRIPT_NAME = process.env.SAVE_SCRIPT_NAME || "";
 const HEADLESS =

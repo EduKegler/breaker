@@ -15,13 +15,13 @@ afterEach(() => {
 describe("buildStrategyDir", () => {
   it("builds path with asset and strategy", () => {
     expect(buildStrategyDir("/repo", "BTC", "breakout")).toBe(
-      "/repo/assets/BTC/breakout",
+      "/repo/assets/btc/breakout",
     );
   });
 
   it("handles different asset and strategy names", () => {
     expect(buildStrategyDir("/repo", "ETH", "mean-reversion")).toBe(
-      "/repo/assets/ETH/mean-reversion",
+      "/repo/assets/eth/mean-reversion",
     );
   });
 });
@@ -35,11 +35,11 @@ describe("findActiveStrategyFile", () => {
     expect(result).toBe(path.join(tmpDir, "squeeze.pine"));
   });
 
-  it("ignores _archived.pine files and returns the active one", () => {
+  it("ignores -archived.pine files and returns the active one", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "strat-"));
     fs.writeFileSync(path.join(tmpDir, "squeeze.pine"), "// active");
-    fs.writeFileSync(path.join(tmpDir, "orb_archived.pine"), "// archived");
-    fs.writeFileSync(path.join(tmpDir, "donchian_archived.pine"), "// archived");
+    fs.writeFileSync(path.join(tmpDir, "orb-archived.pine"), "// archived");
+    fs.writeFileSync(path.join(tmpDir, "donchian-archived.pine"), "// archived");
 
     const result = findActiveStrategyFile(tmpDir);
     expect(result).toBe(path.join(tmpDir, "squeeze.pine"));
@@ -54,7 +54,7 @@ describe("findActiveStrategyFile", () => {
 
   it("throws when directory has only _archived .pine files", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "strat-"));
-    fs.writeFileSync(path.join(tmpDir, "old_archived.pine"), "// archived");
+    fs.writeFileSync(path.join(tmpDir, "old-archived.pine"), "// archived");
 
     expect(() => findActiveStrategyFile(tmpDir)).toThrow(/No active .pine/);
   });

@@ -15,22 +15,16 @@
     "login": "node dist/automation/login.js",
     "dashboard": "node dist/dashboard/dashboard.js",
     "dashboard:open": "node dist/dashboard/dashboard.js --html && open dashboard.html",
-    "webhook": "node dist/webhook/server.js",
     "test:e2e": "vitest run --config vitest.config.e2e.ts"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
     "@types/node": "^22.0.0",
-    "@types/supertest": "^6.0.3",
     "@vitest/coverage-v8": "^3.2.4",
-    "supertest": "^7.2.2",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "express": "^4.21.0",
-    "ioredis": "^5.9.3",
     "playwright": "^1.51.1",
     "xlsx": "^0.18.5",
     "zod": "^3.24.0"

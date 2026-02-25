@@ -41,9 +41,6 @@ export type {
   ExitTypeBucket,
 } from "./parse-results.js";
 
-export type { AlertPayload } from "./alert.js";
-export { AlertPayloadSchema } from "./alert.js";
-
 export type { DashboardEvent } from "./events.js";
 
 export type {
