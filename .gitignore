@@ -7,15 +7,15 @@ logs/
 *.lock.tmp
 .DS_Store
 
-# Breaker-specific
+# Breaker-specific (** prefix for monorepo depth)
 .auth/
 artifacts/
-playwright/.auth/
-playwright/exports/
-playwright/results/
-playwright/.env
-infra/.env
-infra/logs/
+**/playwright/.auth/
+**/playwright/exports/
+**/playwright/results/
+**/playwright/.env
+**/infra/.env
+**/infra/logs/
 claude-raw-output.log
 
 # Claude Code
