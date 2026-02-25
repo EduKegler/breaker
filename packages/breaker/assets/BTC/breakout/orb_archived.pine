@@ -1,0 +1,139 @@
+//@version=6
+strategy("BTC 15m ORB Breakout",
+  overlay              = true,
+  initial_capital      = 1000,
+  default_qty_type     = strategy.cash,
+  default_qty_value    = 100,
+  commission_type      = strategy.commission.percent,
+  commission_value     = 0.045,
+  slippage             = 2,
+  process_orders_on_close = false,
+  calc_on_every_tick   = false,
+  max_bars_back        = 5000)
+
+// ── Free Variables (5) ──────────────────────────────────────────────
+orbMinutes     = 30
+volMult        = 1.5
+atrMult        = 2.0
+rrTarget       = 1.5
+maxBarsInTrade = 40
+
+// ── Structural Params (var — NOT counted) ───────────────────────────
+var float riskTradeUsd = 10.0
+var int   cooldownBars = 4
+var float dailyLossUsd = 20.0
+
+// ── Trend timeframe (protected) ─────────────────────────────────────
+trendTf = "60"
+
+// ── Session Detection (London+NY, Mon-Fri) ──────────────────────────
+tz = "America/New_York"
+bool inSession    = not na(time(timeframe.period, "0300-1600:23456", tz))
+bool sessionStart = inSession and not inSession[1]
+bool sessionEnd   = not inSession and inSession[1]
+
+// ── Indicators ──────────────────────────────────────────────────────
+// EMA 50 on 1H for trend filter (anti-repaint)
+float ema50_1h = request.security(syminfo.tickerid, trendTf, ta.ema(close, 50)[1], lookahead = barmerge.lookahead_on)
+
+// ATR 1H (anti-repaint)
+float atr1h = request.security(syminfo.tickerid, trendTf, ta.atr(14)[1], lookahead = barmerge.lookahead_on)
+
+// Volume average for confirmation
+float volAvg = ta.sma(volume, 20)
+
+// ── ORB Range Tracking ──────────────────────────────────────────────
+var float orbHigh   = na
+var float orbLow    = na
+var bool  orbReady  = false
+var int   barsInOrb = 0
+
+orbBarCount = math.max(1, math.ceil(orbMinutes / 15.0))
+
+if sessionStart
+    orbHigh   := high
+    orbLow    := low
+    barsInOrb := 1
+    orbReady  := barsInOrb >= orbBarCount
+else if inSession and not orbReady and not na(orbHigh)
+    orbHigh   := math.max(orbHigh, high)
+    orbLow    := math.min(orbLow, low)
+    barsInOrb += 1
+    orbReady  := barsInOrb >= orbBarCount
+
+// ── State Variables ─────────────────────────────────────────────────
+var int   barsSinceExit    = 999
+var int   consecLosses     = 0
+var float dailyPnl         = 0.0
+var int   lastTradeDay     = 0
+var int   prevClosedTrades = 0
+
+// Reset consecutive losses at session start
+if sessionStart
+    consecLosses := 0
+
+// Reset daily PnL at new day (ET)
+int today = dayofweek(time, tz)
+if today != lastTradeDay
+    dailyPnl     := 0.0
+    lastTradeDay := today
+
+// Track closed trades
+if strategy.closedtrades > prevClosedTrades
+    for i = prevClosedTrades to strategy.closedtrades - 1
+        dailyPnl += strategy.closedtrades.profit(i)
+    float lastPnl = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    if lastPnl < 0
+        consecLosses += 1
+    else
+        consecLosses := 0
+    prevClosedTrades := strategy.closedtrades
+    barsSinceExit    := 0
+else
+    barsSinceExit += 1
+
+// ── Operational Limits ──────────────────────────────────────────────
+bool cooldownOk   = barsSinceExit >= cooldownBars
+bool noConsecLoss = consecLosses < 2
+bool dailyLossOk  = dailyPnl > -dailyLossUsd
+bool canTrade     = inSession and orbReady and cooldownOk and noConsecLoss and dailyLossOk
+
+// ── Position Sizing ─────────────────────────────────────────────────
+// Stop = max(ORB range, ATR 1H × atrMult) — wider of the two
+float orbRange = nz(orbHigh) - nz(orbLow)
+float atrStop  = nz(atr1h) * atrMult
+float stopDist = math.max(orbRange, atrStop)
+float positionQty = stopDist > 0 ? riskTradeUsd / stopDist : 0
+
+// ── Entry Rules ─────────────────────────────────────────────────────
+// LONG: close breaks above ORB high + volume confirmation + uptrend
+bool longSignal = canTrade and close > orbHigh and volume > volAvg * volMult and close > ema50_1h and strategy.position_size == 0 and not na(atr1h)
+
+// SHORT: close breaks below ORB low + volume confirmation + downtrend
+bool shortSignal = canTrade and close < orbLow and volume > volAvg * volMult and close < ema50_1h and strategy.position_size == 0 and not na(atr1h)
+
+// ── Execute Entries ─────────────────────────────────────────────────
+if longSignal
+    float sl = close - stopDist
+    float tp = close + stopDist * rrTarget
+    strategy.entry("Long", strategy.long, qty = positionQty)
+    strategy.exit("Long Exit", "Long", limit = tp, stop = sl)
+
+if shortSignal
+    float sl = close + stopDist
+    float tp = close - stopDist * rrTarget
+    strategy.entry("Short", strategy.short, qty = positionQty)
+    strategy.exit("Short Exit", "Short", limit = tp, stop = sl)
+
+// ── Time Stop ───────────────────────────────────────────────────────
+if strategy.position_size != 0 and bar_index - strategy.opentrades.entry_bar_index(0) >= maxBarsInTrade
+    strategy.close_all("TimeStop")
+
+// ── Session End Exit ────────────────────────────────────────────────
+if sessionEnd and strategy.position_size != 0
+    strategy.close_all("SessionEnd")
+
+// ── Plots ───────────────────────────────────────────────────────────
+plot(orbReady ? orbHigh : na, "ORB High", color.green, 2, plot.style_stepline)
+plot(orbReady ? orbLow : na,  "ORB Low",  color.red, 2, plot.style_stepline)
+plot(ema50_1h, "EMA50 1H", color.orange)

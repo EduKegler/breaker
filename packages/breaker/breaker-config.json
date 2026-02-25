@@ -1,0 +1,142 @@
+{
+  "dateRange": "last365",
+  "criteria": {
+    "minTrades": 70,
+    "minPF": 1.8,
+    "maxDD": 4,
+    "minWR": 42,
+    "minAvgR": 0.0,
+    "minTradesForFilter": 6
+  },
+  "rollbackThreshold": 0.08,
+  "modelRouting": {
+    "optimize": "claude-sonnet-4-6",
+    "restructure": "claude-opus-4-6",
+    "fix": "claude-haiku-4-5-20251001",
+    "plan": "claude-opus-4-6"
+  },
+  "assetClasses": {
+    "crypto-major":    { "minPF": 1.8, "maxDD": 4, "minTrades": 70, "minWR": 42, "minAvgR": 0.0 },
+    "crypto-volatile": { "minPF": 1.5, "maxDD": 20, "minTrades": 100 },
+    "rwa":             { "minPF": 1.2, "maxDD": 10, "minTrades": 50  }
+  },
+  "strategyProfiles": {
+    "breakout": {
+      "minPF": 1.6, "maxDD": 6, "minWR": 40, "minTrades": 50,
+      "maxIterations": 15, "maxFreeVariables": 8,
+      "coreParameters": [
+        { "name": "dcSlow",       "min": 30, "max": 60, "step": 5 },
+        { "name": "dcFast",       "min": 10, "max": 25, "step": 5 },
+        { "name": "adxThreshold", "min": 20, "max": 35, "step": 5 },
+        { "name": "atrStopMult",  "min": 1.5, "max": 3.0, "step": 0.5 }
+      ],
+      "designChecklist": [
+        "Donchian channel entry (dcSlow breakout)",
+        "Donchian trailing exit (dcFast)",
+        "ADX consolidation filter (adxThreshold < X)",
+        "EMA50 daily regime filter (regimeBull/regimeBear)",
+        "ATR-based safety stop (atrStopMult)"
+      ]
+    },
+    "mean-reversion": {
+      "minPF": 1.4, "maxDD": 8, "minWR": 50, "minTrades": 80,
+      "maxIterations": 15, "maxFreeVariables": 5,
+      "coreParameters": [
+        { "name": "kcMultiplier", "min": 1.0, "max": 3.0, "step": 0.5 },
+        { "name": "rsi2Long",     "min": 10,  "max": 30,  "step": 5 },
+        { "name": "rsi2Short",    "min": 70,  "max": 90,  "step": 5 },
+        { "name": "timeoutBars",  "min": 4,   "max": 12,  "step": 2 }
+      ],
+      "designChecklist": [
+        "Keltner channel mean-reversion entry",
+        "RSI2 oversold/overbought confirmation",
+        "ATR-based stop loss",
+        "Regime filter (trend vs range)"
+      ]
+    },
+    "trend-continuation": {
+      "minPF": 1.6, "maxDD": 6, "minWR": 45, "minTrades": 50,
+      "maxIterations": 15, "maxFreeVariables": 8
+    },
+    "trend-following": {
+      "minPF": 1.6, "maxDD": 8, "minWR": 35, "minTrades": 40,
+      "maxIterations": 15, "maxFreeVariables": 8
+    },
+    "reversal": {
+      "minPF": 1.8, "maxDD": 6, "minWR": 35, "minTrades": 40,
+      "maxIterations": 15, "maxFreeVariables": 6
+    }
+  },
+  "guardrails": {
+    "maxRiskTradeUsd": 25,
+    "maxAtrMult": 10,
+    "minAtrMult": 1.5,
+    "protectedFields": ["commission_value", "commission_type", "slippage", "process_orders_on_close", "initial_capital", "badDay", "useDayFilter", "blockedHours", "blockedDays", "trendTf"]
+  },
+  "assets": {
+    "BTC": {
+      "class": "crypto-major",
+      "strategies": {
+        "breakout": { "chartUrl": "https://br.tradingview.com/chart/6FChfbZs/?symbol=COINBASE%3ABTCUSDC.P", "dateRange": "custom:2025-05-24:2026-02-24" },
+        "mean-reversion": { "chartUrl": "https://br.tradingview.com/chart/6FChfbZs/?symbol=COINBASE%3ABTCUSDC.P", "dateRange": "custom:2025-05-24:2026-02-24" }
+      }
+    },
+    "ETH": {
+      "class": "crypto-major",
+      "strategies": {
+        "breakout": { "chartUrl": "https://br.tradingview.com/chart/ovLwxUsu/?symbol=COINBASE%3AETHUSDC.P" }
+      }
+    },
+    "SOL": {
+      "class": "crypto-major",
+      "strategies": {
+        "breakout": { "chartUrl": "https://br.tradingview.com/chart/ovLwxUsu/?symbol=COINBASE%3ASOLUSDC.P" }
+      }
+    },
+    "SUI": {
+      "class": "crypto-volatile",
+      "strategies": {
+        "breakout": { "chartUrl": "https://br.tradingview.com/chart/ovLwxUsu/?symbol=COINBASE%3ASUIUSDC.P" }
+      }
+    }
+  },
+  "phases": {
+    "refine": { "maxIter": 5 },
+    "research": { "maxIter": 3 },
+    "restructure": { "maxIter": 5 },
+    "maxCycles": 3
+  },
+  "scoring": {
+    "weights": { "pf": 25, "avgR": 20, "wr": 10, "dd": 15, "complexity": 10, "sampleConfidence": 20 }
+  },
+  "research": {
+    "enabled": true,
+    "model": "claude-sonnet-4-6",
+    "maxSearchesPerIter": 3,
+    "timeoutMs": 420000,
+
+    "allowedDomains": [
+      "arxiv.org",
+      "ssrn.com",
+      "scholar.google.com",
+      "nber.org",
+      "jstor.org",
+
+      "quantifiedstrategies.com",
+      "quantpedia.com",
+      "quantconnect.com",
+      "robotwealth.com",
+
+      "pine-script-docs.tradingview.com",
+      "www.tradingview.com",
+      "luxalgo.com",
+      "pinecoders.com",
+
+      "kaiko.com",
+      "glassnode.com",
+      "coinalyze.net",
+      "laevitas.ch",
+      "hyperliquid.gitbook.io"
+    ]
+  }
+}

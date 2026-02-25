@@ -1,0 +1,138 @@
+//@version=6
+strategy("BTC 15m Breakout — Squeeze Release",
+  overlay              = true,
+  initial_capital      = 1000,
+  default_qty_type     = strategy.cash,
+  default_qty_value    = 100,
+  commission_type      = strategy.commission.percent,
+  commission_value     = 0.045,
+  slippage             = 2,
+  process_orders_on_close = false,
+  calc_on_every_tick   = false,
+  max_bars_back        = 5000)
+
+// ── Free Variables (5) ──────────────────────────────────────────────
+bbMult         = 2.0
+kcMult         = 1.5
+atrMult        = 2.5
+rrTarget       = 2.5
+maxBarsInTrade = 60
+
+// ── Structural Params (var — NOT counted) ───────────────────────────
+var float riskTradeUsd = 7.0
+var int   cooldownBars = 4
+var float dailyLossUsd = 20.0
+var int   sqzLen       = 20
+
+// ── Trend timeframe (protected) ─────────────────────────────────────
+trendTf = "60"
+
+// ── Session Detection (London+NY, Mon-Fri) ──────────────────────────
+tz = "America/New_York"
+bool inSession    = not na(time(timeframe.period, "0300-1600:23456", tz))
+bool sessionStart = inSession and not inSession[1]
+bool sessionEnd   = not inSession and inSession[1]
+
+// ── Indicators ──────────────────────────────────────────────────────
+// Bollinger Bands
+[bbMid, bbUp, bbLo] = ta.bb(close, sqzLen, bbMult)
+
+// Keltner Channels
+[kcMid, kcUp, kcLo] = ta.kc(close, sqzLen, kcMult, true)
+
+// Squeeze detection
+bool squeezeOn  = bbLo > kcLo and bbUp < kcUp
+bool squeezeOff = not squeezeOn
+bool sqzRelease = squeezeOff and squeezeOn[1]
+
+// Momentum: linear regression of price relative to Donchian midline
+float dchMid  = (ta.highest(high, sqzLen) + ta.lowest(low, sqzLen)) / 2
+float momVal  = ta.linreg(close - dchMid, sqzLen, 0)
+bool  momUp   = momVal > 0 and momVal > momVal[1]
+bool  momDown = momVal < 0 and momVal < momVal[1]
+
+// EMA 50 on 1H for trend filter (anti-repaint)
+float ema50_1h = request.security(syminfo.tickerid, trendTf, ta.ema(close, 50)[1], lookahead = barmerge.lookahead_on)
+
+// ATR 1H (anti-repaint)
+float atr1h = request.security(syminfo.tickerid, trendTf, ta.atr(14)[1], lookahead = barmerge.lookahead_on)
+
+// EMA 50 Daily macro-filter (anti-repaint) — long entry only when macro uptrend
+float ema50_daily = request.security(syminfo.tickerid, "D", ta.ema(close, 50)[1], lookahead = barmerge.lookahead_on)
+
+// ── State Variables ─────────────────────────────────────────────────
+var int   barsSinceExit    = 999
+var int   consecLosses     = 0
+var float dailyPnl         = 0.0
+var int   lastTradeDay     = 0
+var int   prevClosedTrades = 0
+
+// Reset consecutive losses at session start
+if sessionStart
+    consecLosses := 0
+
+// Reset daily PnL at new day (ET)
+int today = dayofweek(time, tz)
+if today != lastTradeDay
+    dailyPnl     := 0.0
+    lastTradeDay := today
+
+// Track closed trades
+if strategy.closedtrades > prevClosedTrades
+    for i = prevClosedTrades to strategy.closedtrades - 1
+        dailyPnl += strategy.closedtrades.profit(i)
+    float lastPnl = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    if lastPnl < 0
+        consecLosses += 1
+    else
+        consecLosses := 0
+    prevClosedTrades := strategy.closedtrades
+    barsSinceExit    := 0
+else
+    barsSinceExit += 1
+
+// ── Operational Limits ──────────────────────────────────────────────
+bool cooldownOk   = barsSinceExit >= cooldownBars
+bool noConsecLoss = consecLosses < 2
+bool dailyLossOk  = dailyPnl > -dailyLossUsd
+bool canTrade     = inSession and cooldownOk and noConsecLoss and dailyLossOk
+
+// ── Position Sizing ─────────────────────────────────────────────────
+float stopDist    = nz(atr1h) * atrMult
+float positionQty = stopDist > 0 ? riskTradeUsd / stopDist : 0
+
+// ── Entry Rules ─────────────────────────────────────────────────────
+// LONG: squeeze release + momentum up + uptrend
+bool longSignal = false
+
+// SHORT: squeeze release + momentum down + downtrend
+bool shortSignal = canTrade and sqzRelease and momDown and close < ema50_1h and strategy.position_size == 0 and not na(atr1h)
+
+// ── Execute Entries ─────────────────────────────────────────────────
+if longSignal
+    float sl = close - stopDist
+    float tp = close + stopDist * rrTarget
+    strategy.entry("Long", strategy.long, qty = positionQty)
+    strategy.exit("Long Exit", "Long", limit = tp, stop = sl)
+
+if shortSignal
+    float sl = close + stopDist
+    float tp = close - stopDist * rrTarget
+    strategy.entry("Short", strategy.short, qty = positionQty)
+    strategy.exit("Short Exit", "Short", limit = tp, stop = sl)
+
+// ── Time Stop ───────────────────────────────────────────────────────
+if strategy.position_size != 0 and bar_index - strategy.opentrades.entry_bar_index(0) >= maxBarsInTrade
+    strategy.close_all("TimeStop")
+
+// ── Session End Exit ────────────────────────────────────────────────
+if sessionEnd and strategy.position_size != 0
+    strategy.close_all("SessionEnd")
+
+// ── Plots ───────────────────────────────────────────────────────────
+plot(bbUp, "BB Upper", color.new(color.blue, 50))
+plot(bbLo, "BB Lower", color.new(color.blue, 50))
+plot(kcUp, "KC Upper", color.new(color.orange, 50))
+plot(kcLo, "KC Lower", color.new(color.orange, 50))
+bgcolor(squeezeOn ? color.new(color.red, 90) : na, title = "Squeeze")
+plot(ema50_1h, "EMA50 1H", color.yellow)

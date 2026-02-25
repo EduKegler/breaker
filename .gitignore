@@ -1,0 +1,24 @@
+node_modules/
+dist/
+coverage/
+.env
+.deploy.env
+logs/
+*.lock.tmp
+.DS_Store
+
+# Breaker-specific
+.auth/
+artifacts/
+playwright/.auth/
+playwright/exports/
+playwright/results/
+playwright/.env
+infra/.env
+infra/logs/
+claude-raw-output.log
+
+# Claude Code
+.claude/worktrees/
+.claude/settings.local.json
+.mcp.json
