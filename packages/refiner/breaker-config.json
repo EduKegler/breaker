@@ -72,6 +72,7 @@
     "maxRiskTradeUsd": 25,
     "maxAtrMult": 10,
     "minAtrMult": 1.5,
+    "globalMaxTradesDay": 5,
     "protectedFields": ["maxTradesDay"]
   },
   "assets": {

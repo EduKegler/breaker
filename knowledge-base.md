@@ -69,12 +69,12 @@ When multiple modules are active, signals may coincide. This is not a problem --
 **Trending:**
 - Price making HH/HL (up) or LH/LL (down)
 - Increasing volume in the direction of the move
-- Session: London or NY (08:00-20:00 UTC)
+- Session: London or NY (08:00-21:00 UTC)
 
 **Ranging:**
 - Price ping-ponging between support and resistance
 - Low / decreasing volume
-- Session: Asia (23:00-08:00 UTC) typically
+- Session: Asia (22:00-08:00 UTC) typically
 
 **Uncertain / Compression:**
 - Neither is clear
@@ -390,8 +390,9 @@ Rule: max 8 free variables (breakout profile).
 | 3 | adxThreshold | 20-35 | Max ADX to allow entry (consolidation filter) |
 | 4 | atrStopMult | 1.5-3.0 | ATR multiplier for safety stop |
 | 5 | maxTradesDay | 2-5 | Daily trade limit |
+| 6 | timeoutBars | 10-40 (step 5) | Max bars before forced exit. Default 20 (5h on 15m) |
 
-**Total: 5 variables. Regime filter is fixed (not optimized).**
+**Total: 6 of 8 max variables. Regime filter is fixed (not optimized).**
 
 > **Lessons from previous testing:** Same-timeframe directional filters (e.g. DI+/DI-) are strongly colinear with Donchian breakout and add no independent information. Higher-TF regime filters (EMA50 Daily, 4H consolidation) provide independent context. Breakout on 15m alone (without higher-TF context) produces too many false signals.
 
@@ -481,16 +482,19 @@ TIMEOUT: If TP not reached in N bars, exit
 
 ## Session Map (UTC)
 
-| Session | UTC Time | Character | Module |
-|--------|------------|---------|--------|
-| Asia | 23:00 - 08:00 | Low vol, range | **MR** + potential **Breakout** |
-| London | 08:00 - 13:00 | Expansion, breakouts | **Breakout** + **MR** |
-| NY | 13:00 - 20:00 | Directional, maximum liquidity | **Breakout** + **MR** |
-| Off-peak | 20:00 - 23:00 | Deceleration | **MR only**. Breakout disabled. Lower conviction -- monitor edge here |
+> **Note:** Times below are non-DST (winter). During US/EU DST (Mar-Nov), all sessions shift ~1h earlier in UTC. The code uses `America/New_York` timezone and converts internally -- these UTC values are the reference for KB rules and regime logic.
+
+| Session | UTC Time | ET equivalent | Character | Module |
+|--------|------------|--------------|---------|--------|
+| Asia | 22:00 - 08:00 | 17:00 - 03:00 | Low vol, range | **MR** + potential **Breakout** |
+| London | 08:00 - 17:00 | 03:00 - 12:00 | Expansion, breakouts | **Breakout** + **MR** |
+| NY | 14:30 - 21:00 | 09:30 - 16:00 | Directional, maximum liquidity | **Breakout** + **MR** |
+| London/NY overlap | 14:30 - 17:00 | 09:30 - 12:00 | Peak volume + volatility | **Breakout** primary |
+| Off-peak | 21:00 - 22:00 | 16:00 - 17:00 | Deceleration | **MR only**. Breakout disabled. Lower conviction |
 
 > **MR operates 24/7**, including off-peak. Session breakdown monitors whether off-peak edge holds. If MR PF in off-peak is consistently < 1.0, revisit restricting it.
 >
-> **Breakout is session-restricted:** disabled in off-peak (20:00-23:00 UTC). Low volume = too many false breakouts.
+> **Breakout is session-restricted:** disabled in off-peak (21:00-22:00 UTC). Low volume = too many false breakouts.
 
 ---
 

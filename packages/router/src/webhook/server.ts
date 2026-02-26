@@ -15,6 +15,7 @@ import {
   getRedisRuntimeState,
 } from "../lib/redis.js";
 import type { RedisInitResult } from "../lib/redis.js";
+import { DailyTradeLimit } from "../lib/daily-limit.js";
 import { logger, httpLogger } from "../lib/logger.js";
 import { isMainModule, formatZodErrors } from "@breaker/kit";
 
@@ -47,6 +48,11 @@ function getDedupHealthState(): {
 // ---------------------
 const sentAlerts = new LRUCache<string, true>({ max: 1000, ttl: 10 * 60 * 1000 });
 let dedupRuntimeAlarmActive = false;
+
+// ---------------------
+// Global daily trade limit (resets at 00:00 UTC)
+// ---------------------
+export const dailyLimit = new DailyTradeLimit(env.GLOBAL_MAX_TRADES_DAY);
 
 export function isDuplicate(alertId: string): boolean {
   if (sentAlerts.has(alertId)) return true;
@@ -146,10 +152,14 @@ app.use(httpLogger);
 
 app.get("/health", healthLimiter, (_req, res) => {
   const dedup = getDedupHealthState();
+  const trades = dailyLimit.getStatus();
   res.json({
     status: "ok",
     uptime: process.uptime(),
     alerts_processed: sentAlerts.size,
+    trades_today: trades.count,
+    trades_remaining: trades.remaining,
+    trades_limit: trades.limit,
     redis: dedup.redis,
     dedup_mode: dedup.dedup_mode,
     redis_configured: dedup.redis_configured,
@@ -223,12 +233,29 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
     return;
   }
 
+  const limitCheck = dailyLimit.check();
+  if (!limitCheck.allowed) {
+    logger.warn(
+      { alert_id: typedAlert.alert_id, asset: typedAlert.asset, side: typedAlert.side, count: limitCheck.count, limit: limitCheck.limit },
+      "Signal rejected: global daily limit reached",
+    );
+    res.json({
+      status: "rejected",
+      reason: "global_daily_limit",
+      alert_id: typedAlert.alert_id,
+      trades_today: limitCheck.count,
+      limit: limitCheck.limit,
+    });
+    return;
+  }
+
   try {
     const message = formatWhatsAppMessage(typedAlert);
     await sendWithRetry(message);
     await redisSetDedup(typedAlert.alert_id);
     isDuplicate(typedAlert.alert_id);
-    logger.info({ alert_id: typedAlert.alert_id }, "WhatsApp sent");
+    dailyLimit.record();
+    logger.info({ alert_id: typedAlert.alert_id, trades_today: dailyLimit.getStatus().count }, "WhatsApp sent");
     res.json({ status: "sent", alert_id: typedAlert.alert_id });
   } catch (err) {
     logger.error({ alert_id: typedAlert.alert_id, error: (err as Error).message }, "WhatsApp send failed after retry");

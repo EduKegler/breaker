@@ -10,9 +10,10 @@
 - Structured logging: pino + pino-http + pino-roll (stdout + date-rotated NDJSON files).
 - Deployed at tv.kegler.dev behind Caddy reverse proxy (Docker multi-stage build).
 - TTL_SECONDS controls alert dedup TTL (default 1200s / 20 min).
+- Global daily trade limit: `DailyTradeLimit` class enforces max trades/day (default 5, via `GLOBAL_MAX_TRADES_DAY` env var). Resets at 00:00 UTC.
+- 2 test files, 10 tests, all passing.
 
 ## Pending items
-- No tests yet (supertest is a devDependency but no test files exist).
 - No unit tests for formatWhatsAppMessage, isDuplicate, validateAlert, or safeCompare.
 
 ## Known pitfalls

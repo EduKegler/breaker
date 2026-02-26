@@ -20,7 +20,7 @@ export function saveCheckpoint(
     fs.mkdirSync(checkpointDir, { recursive: true });
   }
 
-  const strategyPath = path.join(checkpointDir, "best-strategy.ts");
+  const strategyPath = path.join(checkpointDir, "best-strategy.ts.bak");
   const metricsPath = path.join(checkpointDir, "best-metrics.json");
   const paramsPath = path.join(checkpointDir, "best-params.json");
 
@@ -40,14 +40,10 @@ export function saveCheckpoint(
  * Load a saved checkpoint. Returns null if none exists.
  */
 export function loadCheckpoint(checkpointDir: string): CheckpointData | null {
-  const strategyPath = path.join(checkpointDir, "best-strategy.ts");
+  const strategyPath = path.join(checkpointDir, "best-strategy.ts.bak");
   const metricsPath = path.join(checkpointDir, "best-metrics.json");
 
-  // Fall back to legacy best.pine if new file doesn't exist
-  const legacyPath = path.join(checkpointDir, "best.pine");
-  const actualStrategyPath = fs.existsSync(strategyPath) ? strategyPath : legacyPath;
-
-  if (!fs.existsSync(actualStrategyPath) || !fs.existsSync(metricsPath)) {
+  if (!fs.existsSync(strategyPath) || !fs.existsSync(metricsPath)) {
     return null;
   }
 
@@ -63,7 +59,7 @@ export function loadCheckpoint(checkpointDir: string): CheckpointData | null {
   }).passthrough();
 
   try {
-    const strategyContent = fs.readFileSync(actualStrategyPath, "utf8");
+    const strategyContent = fs.readFileSync(strategyPath, "utf8");
     const raw = safeJsonParse(fs.readFileSync(metricsPath, "utf8"), { schema: metricsSchema });
 
     let params: Record<string, number> | undefined;
@@ -103,13 +99,11 @@ export function rollback(
   checkpointDir: string,
   strategyFile: string,
 ): boolean {
-  const strategyPath = path.join(checkpointDir, "best-strategy.ts");
-  const legacyPath = path.join(checkpointDir, "best.pine");
-  const actualPath = fs.existsSync(strategyPath) ? strategyPath : legacyPath;
+  const strategyPath = path.join(checkpointDir, "best-strategy.ts.bak");
 
-  if (!fs.existsSync(actualPath)) return false;
+  if (!fs.existsSync(strategyPath)) return false;
 
-  const content = fs.readFileSync(actualPath, "utf8");
+  const content = fs.readFileSync(strategyPath, "utf8");
   writeFileAtomic.sync(strategyFile, content, "utf8");
   return true;
 }

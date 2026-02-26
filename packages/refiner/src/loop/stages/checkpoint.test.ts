@@ -51,7 +51,7 @@ describe("saveCheckpoint / loadCheckpoint", () => {
 
   it("returns null when metrics JSON is corrupted", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
-    fs.writeFileSync(path.join(tmpDir, "best-strategy.ts"), "// valid");
+    fs.writeFileSync(path.join(tmpDir, "best-strategy.ts.bak"), "// valid");
     fs.writeFileSync(path.join(tmpDir, "best-metrics.json"), "not valid json{{{");
     expect(loadCheckpoint(tmpDir)).toBeNull();
   });
@@ -60,30 +60,18 @@ describe("saveCheckpoint / loadCheckpoint", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
     saveCheckpoint(tmpDir, "// code", sampleMetrics, 3);
 
-    expect(fs.existsSync(path.join(tmpDir, "best-strategy.ts.tmp"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "best-strategy.ts.bak.tmp"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "best-metrics.json.tmp"))).toBe(false);
-    expect(fs.existsSync(path.join(tmpDir, "best-strategy.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "best-strategy.ts.bak"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "best-metrics.json"))).toBe(true);
   });
 
   it("creates directory if it does not exist", () => {
     tmpDir = path.join(os.tmpdir(), "ckpt-new-" + Date.now());
     saveCheckpoint(tmpDir, "code", sampleMetrics, 1);
-    expect(fs.existsSync(path.join(tmpDir, "best-strategy.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "best-strategy.ts.bak"))).toBe(true);
   });
 
-  it("falls back to legacy best.pine for loading", () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
-    fs.writeFileSync(path.join(tmpDir, "best.pine"), "// legacy pine");
-    fs.writeFileSync(
-      path.join(tmpDir, "best-metrics.json"),
-      JSON.stringify({ ...sampleMetrics, iter: 2, timestamp: "2026-01-01T00:00:00Z" }),
-    );
-
-    const loaded = loadCheckpoint(tmpDir);
-    expect(loaded).not.toBeNull();
-    expect(loaded!.strategyContent).toBe("// legacy pine");
-  });
 });
 
 describe("rollback", () => {
@@ -93,7 +81,7 @@ describe("rollback", () => {
     const checkpointDir = path.join(tmpDir, "checkpoint");
 
     fs.mkdirSync(checkpointDir, { recursive: true });
-    fs.writeFileSync(path.join(checkpointDir, "best-strategy.ts"), "// best version");
+    fs.writeFileSync(path.join(checkpointDir, "best-strategy.ts.bak"), "// best version");
     fs.writeFileSync(strategyFile, "// current version");
 
     const result = rollback(checkpointDir, strategyFile);
@@ -107,19 +95,6 @@ describe("rollback", () => {
     expect(result).toBe(false);
   });
 
-  it("falls back to legacy best.pine for rollback", () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
-    const strategyFile = path.join(tmpDir, "strategy.ts");
-    const checkpointDir = path.join(tmpDir, "checkpoint");
-
-    fs.mkdirSync(checkpointDir, { recursive: true });
-    fs.writeFileSync(path.join(checkpointDir, "best.pine"), "// legacy");
-    fs.writeFileSync(strategyFile, "// current");
-
-    const result = rollback(checkpointDir, strategyFile);
-    expect(result).toBe(true);
-    expect(fs.readFileSync(strategyFile, "utf8")).toBe("// legacy");
-  });
 });
 
 describe("loadCheckpointParams", () => {

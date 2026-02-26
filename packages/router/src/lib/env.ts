@@ -12,6 +12,7 @@ const EnvSchema = z.object({
   WEBHOOK_SECRET: z.string().default(""),
   GATEWAY_URL: z.string().default("http://localhost:3100"),
   TTL_SECONDS: z.coerce.number().default(1200),
+  GLOBAL_MAX_TRADES_DAY: z.coerce.number().int().min(1).default(5),
   REDIS_URL: z.string().optional(),
 });
 

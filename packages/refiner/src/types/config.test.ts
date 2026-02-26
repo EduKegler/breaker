@@ -44,6 +44,7 @@ describe("BreakerConfigSchema", () => {
     expect(data.rollbackThreshold).toBeUndefined();
     expect(data.modelRouting.optimize).toBe("claude-sonnet-4-6");
     expect(data.guardrails.maxRiskTradeUsd).toBe(25);
+    expect(data.guardrails.globalMaxTradesDay).toBe(5);
     expect(data.phases.refine.maxIter).toBe(5);
     expect(data.scoring.weights.pf).toBe(25);
     expect(data.research.enabled).toBe(true);
@@ -118,6 +119,36 @@ describe("GuardrailsSchema", () => {
   it("rejects negative maxRiskTradeUsd", () => {
     const result = GuardrailsSchema.safeParse({
       maxRiskTradeUsd: -1,
+      protectedFields: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("defaults globalMaxTradesDay to 5", () => {
+    const result = GuardrailsSchema.safeParse({
+      maxRiskTradeUsd: 25,
+      protectedFields: [],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.globalMaxTradesDay).toBe(5);
+  });
+
+  it("accepts custom globalMaxTradesDay", () => {
+    const result = GuardrailsSchema.safeParse({
+      maxRiskTradeUsd: 25,
+      globalMaxTradesDay: 3,
+      protectedFields: [],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.globalMaxTradesDay).toBe(3);
+  });
+
+  it("rejects globalMaxTradesDay < 1", () => {
+    const result = GuardrailsSchema.safeParse({
+      maxRiskTradeUsd: 25,
+      globalMaxTradesDay: 0,
       protectedFields: [],
     });
     expect(result.success).toBe(false);

@@ -5,6 +5,7 @@ import type { StrategyParam } from "@breaker/backtest";
 
 const defaultGuardrails: Guardrails = {
   maxRiskTradeUsd: 25,
+  globalMaxTradesDay: 5,
   protectedFields: ["maxTradesDay"],
 };
 

@@ -11,17 +11,17 @@
 - Proactively update when a new rule becomes established.
 - Shared rules go in root `AGENTS.md`; package-specific rules stay in `packages/*/AGENTS.md`.
 
-## Monorepo structure
+## Monorepo structure (B.R.E.A.K.E.R.)
 ```
 trading/
 ├── packages/
-│   ├── alerts/           — WhatsApp messaging via Evolution API
-│   ├── backtest/         — backtesting engine, indicators, strategies & candle data
-│   ├── exchange/         — Hyperliquid order execution & position management
-│   ├── explorer/         — local analysis dashboard (stub)
-│   ├── kit/              — shared utilities (isMainModule, parseEnv, formatZodErrors)
-│   ├── refiner/          — automated strategy optimization loop
-│   └── router/           — TradingView alert receiver & forwarder
+│   ├── backtest/         — B · backtesting engine, indicators, strategies & candle data
+│   ├── refiner/          — R · automated strategy optimization loop
+│   ├── exchange/         — E · Hyperliquid order execution & position management
+│   ├── alerts/           — A · WhatsApp messaging via Evolution API
+│   ├── kit/              — K · shared utilities (isMainModule, parseEnv, formatZodErrors)
+│   ├── explorer/         — E · local analysis dashboard (stub)
+│   └── router/           — R · TradingView alert receiver & forwarder
 ├── package.json          — root (private, workspaces)
 ├── pnpm-workspace.yaml   — declares packages/*
 ├── tsconfig.base.json    — shared TypeScript config

@@ -44,6 +44,7 @@ export const GuardrailsSchema = z.object({
   maxRiskTradeUsd: z.number().min(0),
   maxAtrMult: z.number().min(1).default(10),
   minAtrMult: z.number().min(0).default(1.5),
+  globalMaxTradesDay: z.number().int().min(1).default(5),
   protectedFields: z.array(z.string()),
 });
 
@@ -114,6 +115,7 @@ export const BreakerConfigSchema = z
     guardrails: GuardrailsSchema.default({
       maxRiskTradeUsd: 25,
       maxAtrMult: 10,
+      globalMaxTradesDay: 5,
       protectedFields: [],
     }),
     assets: z.record(z.string(), AssetConfigSchema).default({}),
