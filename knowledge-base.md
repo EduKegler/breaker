@@ -690,4 +690,4 @@ bool asiaStart = inAsia and not inAsia[1]
 
 ### External data
 - Kaiko 2025: BTC volume concentration in US hours (institutional crypto data)
-- Wen et al. 2022: momentum + reversion coexist in crypto (academic paper)
+- Wen et al. 2022: momentum + reversion coexist in crypto (academic paper)****
