@@ -1,18 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-
-const { mockGot } = vi.hoisted(() => {
-  const mockGot = vi.fn();
-  return { mockGot };
-});
-
-vi.mock("got", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("got")>();
-  return {
-    ...actual,
-    default: mockGot,
-  };
-});
-
+import type { Exchange } from "ccxt";
 import { CandleCache } from "./candle-cache.js";
 import type { Candle } from "../types/candle.js";
 
@@ -20,11 +7,18 @@ function makeCandle(t: number): Candle {
   return { t, o: 100, h: 110, l: 90, c: 105, v: 50, n: 20 };
 }
 
+function makeMockExchange(ohlcvData: [number, number, number, number, number, number][][]): Exchange {
+  const fetchOHLCV = vi.fn();
+  for (const batch of ohlcvData) {
+    fetchOHLCV.mockResolvedValueOnce(batch);
+  }
+  return { fetchOHLCV } as unknown as Exchange;
+}
+
 describe("CandleCache", () => {
   let cache: CandleCache;
 
   beforeEach(() => {
-    // Use in-memory SQLite for tests
     cache = new CandleCache(":memory:");
   });
 
@@ -68,7 +62,7 @@ describe("CandleCache", () => {
 
     const result = cache.getCandles("BTC", "15m", 0, 5000);
     expect(result).toHaveLength(1);
-    expect(result[0].c).toBe(200); // Updated
+    expect(result[0].c).toBe(200);
   });
 
   it("tracks last timestamp in sync_meta", () => {
@@ -95,48 +89,45 @@ describe("CandleCache", () => {
   });
 
   it("sync fetches from API and caches", async () => {
-    mockGot.mockReturnValueOnce({
-      json: () => Promise.resolve([
-        { t: 1000, T: 1999, s: "BTC", i: "15m", o: "100", c: "105", h: "110", l: "90", v: "50", n: 20 },
-        { t: 2000, T: 2999, s: "BTC", i: "15m", o: "105", c: "108", h: "112", l: "100", v: "30", n: 10 },
-      ]),
-    } as never);
+    const exchange = makeMockExchange([
+      [[1000, 100, 110, 90, 105, 50], [2000, 105, 112, 100, 108, 30]],
+    ]);
 
-    const result = await cache.sync("BTC", "15m", 0, 5000, { source: "hyperliquid", baseUrl: "http://test" });
+    const result = await cache.sync("BTC", "15m", 0, 5000, {
+      source: "hyperliquid",
+      _exchange: exchange,
+    });
     expect(result.fetched).toBe(2);
     expect(result.cached).toBe(2);
     expect(cache.getCandles("BTC", "15m", 0, 5000, "hyperliquid")).toHaveLength(2);
-
-    mockGot.mockReset();
   });
 
   it("sync skips when already up to date", async () => {
     cache.insertCandles("BTC", "15m", [makeCandle(5000)], "hyperliquid");
 
-    // startTime matches cached data, endTime within range → no fetch needed
-    const result = await cache.sync("BTC", "15m", 5000, 5000, { source: "hyperliquid", baseUrl: "http://test" });
+    const exchange = makeMockExchange([]);
+    const result = await cache.sync("BTC", "15m", 5000, 5000, {
+      source: "hyperliquid",
+      _exchange: exchange,
+    });
     expect(result.fetched).toBe(0);
-    expect(mockGot).not.toHaveBeenCalled();
+    expect(exchange.fetchOHLCV).not.toHaveBeenCalled();
   });
 
   it("sync backfills earlier data", async () => {
-    // Cache already has candle at t=5000
     cache.insertCandles("BTC", "15m", [makeCandle(5000)], "hyperliquid");
 
-    mockGot.mockReturnValueOnce({
-      json: () => Promise.resolve([
-        { t: 1000, T: 1999, s: "BTC", i: "15m", o: "100", c: "105", h: "110", l: "90", v: "50", n: 20 },
-        { t: 2000, T: 2999, s: "BTC", i: "15m", o: "105", c: "108", h: "112", l: "100", v: "30", n: 10 },
-      ]),
-    } as never);
+    const exchange = makeMockExchange([
+      [[1000, 100, 110, 90, 105, 50], [2000, 105, 112, 100, 108, 30]],
+    ]);
 
-    // Request data starting at t=0 → should backfill before t=5000
-    const result = await cache.sync("BTC", "15m", 0, 5000, { source: "hyperliquid", baseUrl: "http://test" });
+    const result = await cache.sync("BTC", "15m", 0, 5000, {
+      source: "hyperliquid",
+      _exchange: exchange,
+    });
     expect(result.fetched).toBe(2);
-    expect(result.cached).toBe(3); // 2 backfilled + 1 existing
+    expect(result.cached).toBe(3);
     expect(cache.getCandles("BTC", "15m", 0, 6000, "hyperliquid")).toHaveLength(3);
-
-    mockGot.mockReset();
   });
 
   it("isolates data by source", () => {

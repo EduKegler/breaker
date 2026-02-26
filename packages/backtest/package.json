@@ -23,7 +23,7 @@
     "@ixjb94/indicators": "^1.2.4",
     "better-sqlite3": "^11.0.0",
     "cac": "^6.7.14",
-    "got": "^14.6.6",
+    "ccxt": "^4.4.0",
     "trading-signals": "^7.4.3",
     "zod": "^3.24.0"
   },

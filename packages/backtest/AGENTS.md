@@ -5,7 +5,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 
 ## Project structure
 - `src/types/` — Candle, Strategy, Order, Metrics (BREAKER-compatible)
-- `src/data/` — Multi-source candle client (Bybit, Coinbase, Hyperliquid; `got` v14) + SQLite cache
+- `src/data/` — Multi-source candle client (Bybit, Coinbase, Hyperliquid; CCXT) + SQLite cache
 - `src/indicators/` — EMA, SMA, ATR, RSI, ADX (via trading-signals), Donchian, Keltner (custom)
 - `src/engine/` — Backtest loop, order simulation, position tracking, equity curve
 - `src/analysis/` — Metrics calculation, trade analysis, walk-forward, filter simulations

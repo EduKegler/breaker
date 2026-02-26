@@ -1,52 +1,74 @@
-import got, { HTTPError } from "got";
+import ccxt, { type Exchange } from "ccxt";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Candle, CandleInterval } from "../types/candle.js";
+import { intervalToMs } from "../types/candle.js";
 
 export type DataSource = "hyperliquid" | "bybit" | "coinbase" | "coinbase-perp";
 
 export interface CandleClientOptions {
   source?: DataSource;
-  baseUrl?: string;
   candlesPerRequest?: number;
   requestDelayMs?: number;
-  /** Bybit symbol override (default: derives from coin, e.g. "BTC" → "BTCUSDT") */
-  bybitSymbol?: string;
-  /** Bybit category: "linear" (USDT perp) | "inverse" (default: "linear") */
-  bybitCategory?: string;
-  /** Coinbase product ID override (default: derives from coin, e.g. "BTC" → "BTC-USD") */
-  coinbaseProductId?: string;
-  /** Coinbase Advanced Trade product ID override (default: derives from coin, e.g. "BTC" → "BTC-PERP-INTX") */
-  coinbasePerpProductId?: string;
+  /** Override the CCXT symbol (e.g. "BTC/USDT:USDT") */
+  ccxtSymbol?: string;
+  /** @internal — injected exchange instance for tests */
+  _exchange?: Exchange;
 }
 
-/**
- * Generic fetch with retry via got.
- * Retries on 429 (rate limit); non-retryable errors throw immediately.
- */
-async function fetchWithRetry<T>(
-  url: string,
-  init: { method?: string; headers?: Record<string, string>; body?: string } | undefined,
-  label: string,
-): Promise<T> {
-  try {
-    return await got(url, {
-      method: (init?.method as "GET" | "POST") ?? "GET",
-      headers: init?.headers,
-      body: init?.body,
-      timeout: { request: 30_000 },
-      retry: {
-        limit: 2,
-        statusCodes: [429],
-        backoffLimit: 8000,
-      },
-      isStream: false,
-    }).json<T>();
-  } catch (error) {
-    if (error instanceof HTTPError) {
-      throw new Error(`${label} API error: ${error.response.statusCode} ${error.response.statusMessage}`);
-    }
-    throw error;
+const EXCHANGE_MAP: Record<DataSource, string> = {
+  bybit: "bybit",
+  hyperliquid: "hyperliquid",
+  coinbase: "coinbase",
+  "coinbase-perp": "coinbase",
+};
+
+const DEFAULT_LIMIT: Record<DataSource, number> = {
+  bybit: 1000,
+  hyperliquid: 500,
+  coinbase: 300,
+  "coinbase-perp": 300,
+};
+
+const DEFAULT_DELAY: Record<DataSource, number> = {
+  bybit: 500,
+  hyperliquid: 200,
+  coinbase: 350,
+  "coinbase-perp": 350,
+};
+
+/** Map coin + source to CCXT unified symbol. */
+export function toSymbol(coin: string, source: DataSource): string {
+  switch (source) {
+    case "bybit":
+      return `${coin}/USDT:USDT`;
+    case "hyperliquid":
+      return `${coin}/USDC:USDC`;
+    case "coinbase":
+      return `${coin}/USD`;
+    case "coinbase-perp":
+      return `${coin}/USD:USD`;
   }
+}
+
+/** CCXT interval strings (same as our CandleInterval for common ones). */
+const CCXT_TIMEFRAME: Record<string, string> = {
+  "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
+  "1h": "1h", "2h": "2h", "4h": "4h", "8h": "8h", "12h": "12h",
+  "1d": "1d", "3d": "3d", "1w": "1w", "1M": "1M",
+};
+
+/** Cache of exchange instances (one per exchange ID). */
+const exchangeCache = new Map<string, Exchange>();
+
+function getExchange(source: DataSource): Exchange {
+  const id = EXCHANGE_MAP[source];
+  let exchange = exchangeCache.get(id);
+  if (!exchange) {
+    const ExchangeClass = (ccxt as unknown as Record<string, new (config: Record<string, unknown>) => Exchange>)[id];
+    exchange = new ExchangeClass({ enableRateLimit: true });
+    exchangeCache.set(id, exchange);
+  }
+  return exchange;
 }
 
 /** Deduplicate candles by timestamp and sort oldest-first. */
@@ -62,7 +84,7 @@ function deduplicateCandles(candles: Candle[]): Candle[] {
 }
 
 /**
- * Fetch candles with pagination. Delegates to HL or Bybit based on options.source.
+ * Fetch candles with pagination via CCXT's fetchOHLCV.
  */
 export async function fetchCandles(
   coin: string,
@@ -72,359 +94,44 @@ export async function fetchCandles(
   options: CandleClientOptions = {},
 ): Promise<Candle[]> {
   const source = options.source ?? "bybit";
-  if (source === "coinbase-perp") {
-    return fetchCoinbasePerp(coin, interval, startTime, endTime, options);
-  }
-  if (source === "coinbase") {
-    return fetchCoinbase(coin, interval, startTime, endTime, options);
-  }
-  if (source === "bybit") {
-    return fetchBybit(coin, interval, startTime, endTime, options);
-  }
-  return fetchHyperliquid(coin, interval, startTime, endTime, options);
-}
+  const exchange = options._exchange ?? getExchange(source);
+  const symbol = options.ccxtSymbol ?? toSymbol(coin, source);
+  const timeframe = CCXT_TIMEFRAME[interval];
+  if (!timeframe) throw new Error(`Unsupported interval: ${interval}`);
 
-// ── Bybit ───────────────────────────────────────────────────────────
-
-const BYBIT_BASE = "https://api.bybit.com";
-const BYBIT_LIMIT = 1000;
-
-/** Map our CandleInterval to Bybit interval string */
-function toBybitInterval(interval: CandleInterval): string {
-  const map: Record<string, string> = {
-    "1m": "1", "3m": "3", "5m": "5", "15m": "15", "30m": "30",
-    "1h": "60", "2h": "120", "4h": "240", "8h": "480", "12h": "720",
-    "1d": "D", "3d": "D", "1w": "W", "1M": "M",
-  };
-  return map[interval] ?? interval;
-}
-
-type BybitResponse = { retCode: number; retMsg: string; result: { list: string[][] } };
-
-/**
- * Bybit-specific fetch with retry.
- * Handles both HTTP-level 429 and body-level rate limits (retCode + retMsg contains "Rate Limit").
- * Non-rate-limit body errors (retCode !== 0) throw immediately without retry.
- */
-async function fetchBybitWithRetry(url: string): Promise<BybitResponse> {
-  const maxAttempts = 3;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      const json = await got(url, {
-        timeout: { request: 30_000 },
-        retry: {
-          limit: 0, // We handle retry manually for body-level rate limits
-        },
-        isStream: false,
-      }).json<BybitResponse>();
-
-      // Body-level rate limit check
-      if (json.retCode !== 0) {
-        if (json.retMsg.includes("Rate Limit")) {
-          if (attempt < maxAttempts - 1) {
-            const delay = 2000 * Math.pow(2, attempt);
-            await sleep(delay);
-            continue;
-          }
-          throw new Error("Bybit API error: rate limit exceeded after retries");
-        }
-        throw new Error(`Bybit API error: ${json.retMsg}`);
-      }
-
-      return json;
-    } catch (error) {
-      if (error instanceof HTTPError) {
-        if (error.response.statusCode === 429 && attempt < maxAttempts - 1) {
-          const delay = 2000 * Math.pow(2, attempt);
-          await sleep(delay);
-          continue;
-        }
-        if (error.response.statusCode === 429) {
-          throw new Error("Bybit API error: rate limit exceeded after retries");
-        }
-        throw new Error(`Bybit API error: ${error.response.statusCode} ${error.response.statusMessage}`);
-      }
-      throw error;
-    }
-  }
-  /* istanbul ignore next — unreachable */
-  throw new Error("Bybit API error: unexpected retry exhaustion");
-}
-
-async function fetchBybit(
-  coin: string,
-  interval: CandleInterval,
-  startTime: number,
-  endTime: number,
-  options: CandleClientOptions,
-): Promise<Candle[]> {
-  const baseUrl = options.baseUrl ?? BYBIT_BASE;
-  const limit = options.candlesPerRequest ?? BYBIT_LIMIT;
-  const delay = options.requestDelayMs ?? 500;
-  const symbol = options.bybitSymbol ?? `${coin}USDT`;
-  const category = options.bybitCategory ?? "linear";
-  const ivl = toBybitInterval(interval);
+  const limit = options.candlesPerRequest ?? DEFAULT_LIMIT[source];
+  const delay = options.requestDelayMs ?? DEFAULT_DELAY[source];
+  const ivlMs = intervalToMs(interval);
 
   const allCandles: Candle[] = [];
-  let currentEnd = endTime;
+  let since = startTime;
 
-  while (currentEnd > startTime) {
-    const url =
-      `${baseUrl}/v5/market/kline?category=${category}&symbol=${symbol}` +
-      `&interval=${ivl}&start=${startTime}&end=${currentEnd}&limit=${limit}`;
+  while (since < endTime) {
+    const ohlcv = await exchange.fetchOHLCV(symbol, timeframe, since, limit);
+    if (ohlcv.length === 0) break;
 
-    const json = await fetchBybitWithRetry(url);
-    const list = json.result.list;
-    if (list.length === 0) break;
-
-    // Bybit returns newest-first, reverse to oldest-first
-    for (let i = list.length - 1; i >= 0; i--) {
-      const raw = list[i];
+    for (const bar of ohlcv) {
+      const t = bar[0] as number;
+      if (t > endTime) break;
       allCandles.push({
-        t: parseInt(raw[0]),
-        o: parseFloat(raw[1]),
-        h: parseFloat(raw[2]),
-        l: parseFloat(raw[3]),
-        c: parseFloat(raw[4]),
-        v: parseFloat(raw[5]),
+        t,
+        o: bar[1] as number,
+        h: bar[2] as number,
+        l: bar[3] as number,
+        c: bar[4] as number,
+        v: bar[5] as number,
         n: 0,
       });
     }
 
-    const oldestTs = parseInt(list[list.length - 1][0]);
+    const lastTs = ohlcv[ohlcv.length - 1][0] as number;
+    if (lastTs <= since) break; // no progress — avoid infinite loop
 
-    if (list.length >= limit) {
-      if (oldestTs >= currentEnd) break;
-      currentEnd = oldestTs - 1;
+    if (ohlcv.length >= limit) {
+      since = lastTs + ivlMs;
       await sleep(delay);
     } else {
       break;
-    }
-  }
-
-  return deduplicateCandles(allCandles);
-}
-
-// ── Hyperliquid ─────────────────────────────────────────────────────
-
-const HL_INFO_URL = "https://api.hyperliquid.xyz/info";
-const HL_LIMIT = 500;
-
-async function fetchHyperliquid(
-  coin: string,
-  interval: CandleInterval,
-  startTime: number,
-  endTime: number,
-  options: CandleClientOptions,
-): Promise<Candle[]> {
-  const baseUrl = options.baseUrl ?? HL_INFO_URL;
-  const limit = options.candlesPerRequest ?? HL_LIMIT;
-  const delay = options.requestDelayMs ?? 200;
-
-  const allCandles: Candle[] = [];
-  let currentStart = startTime;
-
-  while (currentStart < endTime) {
-    const body = {
-      type: "candleSnapshot",
-      req: { coin, interval, startTime: currentStart, endTime },
-    };
-
-    const data = await fetchWithRetry<Array<{
-      t: number; T: number; s: string; i: string;
-      o: string; c: string; h: string; l: string; v: string; n: number;
-    }>>(
-      baseUrl,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-      "HL",
-    );
-
-    if (data.length === 0) break;
-
-    for (const raw of data) {
-      allCandles.push({
-        t: raw.t,
-        o: parseFloat(raw.o),
-        h: parseFloat(raw.h),
-        l: parseFloat(raw.l),
-        c: parseFloat(raw.c),
-        v: parseFloat(raw.v),
-        n: raw.n,
-      });
-    }
-
-    const lastTs = data[data.length - 1].t;
-    if (lastTs <= currentStart) break;
-    currentStart = lastTs + 1;
-
-    if (data.length >= limit) {
-      await sleep(delay);
-    } else {
-      break;
-    }
-  }
-
-  const seen = new Set<number>();
-  return allCandles.filter((c) => {
-    if (seen.has(c.t)) return false;
-    seen.add(c.t);
-    return true;
-  });
-}
-
-// ── Coinbase Perpetual (Advanced Trade API) ────────────────────────
-
-const CB_PERP_BASE = "https://api.coinbase.com/api/v3/brokerage/market";
-const CB_PERP_MAX_CANDLES = 300;
-
-function toCoinbasePerpGranularity(interval: CandleInterval): string {
-  const map: Record<string, string> = {
-    "1m": "ONE_MINUTE", "5m": "FIVE_MINUTE", "15m": "FIFTEEN_MINUTE",
-    "30m": "THIRTY_MINUTE", "1h": "ONE_HOUR", "2h": "TWO_HOUR",
-    "1d": "ONE_DAY",
-  };
-  const g = map[interval];
-  if (!g) throw new Error(`Coinbase perp does not support interval: ${interval}`);
-  return g;
-}
-
-function intervalToMsLocal(interval: CandleInterval): number {
-  const map: Record<string, number> = {
-    "1m": 60_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
-    "1h": 3_600_000, "2h": 7_200_000, "1d": 86_400_000,
-  };
-  return map[interval] ?? 900_000;
-}
-
-async function fetchCoinbasePerp(
-  coin: string,
-  interval: CandleInterval,
-  startTime: number,
-  endTime: number,
-  options: CandleClientOptions,
-): Promise<Candle[]> {
-  const baseUrl = options.baseUrl ?? CB_PERP_BASE;
-  const delay = options.requestDelayMs ?? 350;
-  const productId = options.coinbasePerpProductId ?? `${coin}-PERP-INTX`;
-  const granularity = toCoinbasePerpGranularity(interval);
-  const intervalMs = intervalToMsLocal(interval);
-  const maxCandles = options.candlesPerRequest ?? CB_PERP_MAX_CANDLES;
-  const windowMs = maxCandles * intervalMs;
-
-  const allCandles: Candle[] = [];
-  let currentStart = startTime;
-
-  while (currentStart < endTime) {
-    const batchEnd = Math.min(currentStart + windowMs, endTime);
-    const startSec = Math.floor(currentStart / 1000);
-    const endSec = Math.floor(batchEnd / 1000);
-
-    const url =
-      `${baseUrl}/products/${productId}/candles` +
-      `?granularity=${granularity}&start=${startSec}&end=${endSec}`;
-
-    const json = await fetchWithRetry<{
-      candles: Array<{ start: string; low: string; high: string; open: string; close: string; volume: string }>;
-    }>(url, undefined, "Coinbase perp");
-
-    const data = json.candles ?? [];
-
-    if (data.length === 0) {
-      currentStart = batchEnd;
-      continue;
-    }
-
-    for (let i = data.length - 1; i >= 0; i--) {
-      const row = data[i];
-      allCandles.push({
-        t: parseInt(row.start) * 1000,
-        o: parseFloat(row.open),
-        h: parseFloat(row.high),
-        l: parseFloat(row.low),
-        c: parseFloat(row.close),
-        v: parseFloat(row.volume),
-        n: 0,
-      });
-    }
-
-    currentStart = batchEnd;
-
-    if (data.length >= maxCandles) {
-      await sleep(delay);
-    }
-  }
-
-  return deduplicateCandles(allCandles);
-}
-
-// ── Coinbase Spot (Exchange API) ────────────────────────────────────
-
-const CB_BASE = "https://api.exchange.coinbase.com";
-const CB_LIMIT = 300;
-
-function toCoinbaseGranularity(interval: CandleInterval): number {
-  const map: Record<string, number> = {
-    "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400,
-  };
-  const g = map[interval];
-  if (!g) throw new Error(`Coinbase does not support interval: ${interval}`);
-  return g;
-}
-
-async function fetchCoinbase(
-  coin: string,
-  interval: CandleInterval,
-  startTime: number,
-  endTime: number,
-  options: CandleClientOptions,
-): Promise<Candle[]> {
-  const baseUrl = options.baseUrl ?? CB_BASE;
-  const limit = options.candlesPerRequest ?? CB_LIMIT;
-  const delay = options.requestDelayMs ?? 350;
-  const productId = options.coinbaseProductId ?? `${coin}-USD`;
-  const granularity = toCoinbaseGranularity(interval);
-  const granularityMs = granularity * 1000;
-
-  const allCandles: Candle[] = [];
-  let currentStart = startTime;
-
-  while (currentStart < endTime) {
-    const batchEnd = Math.min(currentStart + limit * granularityMs, endTime);
-    const startISO = new Date(currentStart).toISOString();
-    const endISO = new Date(batchEnd).toISOString();
-
-    const url =
-      `${baseUrl}/products/${productId}/candles` +
-      `?start=${startISO}&end=${endISO}&granularity=${granularity}`;
-
-    const data = await fetchWithRetry<number[][]>(url, undefined, "Coinbase");
-
-    if (data.length === 0) {
-      currentStart = batchEnd;
-      continue;
-    }
-
-    for (let i = data.length - 1; i >= 0; i--) {
-      const row = data[i];
-      allCandles.push({
-        t: row[0] * 1000,
-        o: row[3],
-        h: row[2],
-        l: row[1],
-        c: row[4],
-        v: row[5],
-        n: 0,
-      });
-    }
-
-    currentStart = batchEnd;
-
-    if (data.length >= limit) {
-      await sleep(delay);
     }
   }
 

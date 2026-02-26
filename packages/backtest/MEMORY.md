@@ -2,9 +2,9 @@
 
 ## Current state
 - Full implementation complete: types, indicators (7), engine (5 modules), analysis (4), data layer (2), strategy (donchian-adx), CLI, barrel
-- 180 tests passing, 20 test files, clean build
+- 174 tests passing, 20 test files, clean build
 - Strategies: donchian-adx, keltner-rsi2 (both TypeScript ports of Pine scripts)
-- Data sources: Bybit (default, perp USDT), Coinbase spot (BTC-USD), Coinbase perp (BTC-PERP-INTX via Advanced Trade API), Hyperliquid
+- Data sources: Bybit (default, perp USDT), Coinbase spot, Coinbase perp, Hyperliquid — all via CCXT `fetchOHLCV()`
 - Cache keyed by (source, coin, interval, t) — different sources stored separately
 - `shouldExit` deferred exit: places market order filling at next bar open (matches Pine `process_orders_on_close=false`)
 - CLI uses `cac` library (named import `{ cac }` for NodeNext compat); supports `--start`, `--end`, `--days`, `--source`, `--warmup`, `--strategy`, `--cash`, `--no-limits`, `--help`
@@ -37,8 +37,6 @@
 - Higher-TF candles aggregated from source candles, not fetched separately
 - Strategy uses previous-bar Donchian values ([1] in Pine) to avoid look-ahead
 - Daily EMA and 1H ATR use anti-repaint equivalent (previous completed HTF bar)
-- candle-client: uses `got` (v14) for all HTTP calls; fetchWithRetry (Coinbase, CB-perp, HL) with built-in retry on 429 and fetchBybitWithRetry (manual retry loop for body-level rate limit via retCode). HTTPError for non-retryable errors. 30s timeout per request. Tests mock `got` via `vi.hoisted` + `vi.mock`.
-- Coinbase perp uses Advanced Trade API (api.coinbase.com/api/v3/brokerage), not Exchange API
-- Coinbase perp product ID format: `{COIN}-PERP-INTX` (e.g. BTC-PERP-INTX)
-- Coinbase Advanced Trade granularity uses string enums (FIFTEEN_MINUTE, ONE_HOUR, etc.)
-- Bybit `category=linear` is USDT-margined perpetual (already perp data)
+- candle-client: uses CCXT `fetchOHLCV()` with `enableRateLimit: true`. Tests inject mock exchange via `_exchange` option (no module mocking).
+- CCXT symbol mapping: bybit→`BTC/USDT:USDT`, hyperliquid→`BTC/USDC:USDC`, coinbase→`BTC/USD`, coinbase-perp→`BTC/USD:USD`
+- `n` (trade count) is always 0 — CCXT doesn't return it, and no consumer uses it

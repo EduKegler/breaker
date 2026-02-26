@@ -1,157 +1,56 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Exchange } from "ccxt";
+import { fetchCandles, toSymbol, type DataSource } from "./candle-client.js";
 
-const { mockGot } = vi.hoisted(() => {
-  const mockGot = vi.fn();
-  return { mockGot };
+/** Create a mock CCXT exchange with a spied fetchOHLCV. */
+function makeMockExchange(): Exchange {
+  return { fetchOHLCV: vi.fn() } as unknown as Exchange;
+}
+
+/** Helper: build an OHLCV row [t, o, h, l, c, v]. */
+function ohlcv(t: number, o = 100, h = 110, l = 90, c = 105, v = 50): [number, number, number, number, number, number] {
+  return [t, o, h, l, c, v];
+}
+
+describe("toSymbol", () => {
+  it("maps bybit → BTC/USDT:USDT", () => {
+    expect(toSymbol("BTC", "bybit")).toBe("BTC/USDT:USDT");
+  });
+
+  it("maps hyperliquid → BTC/USDC:USDC", () => {
+    expect(toSymbol("BTC", "hyperliquid")).toBe("BTC/USDC:USDC");
+  });
+
+  it("maps coinbase → BTC/USD", () => {
+    expect(toSymbol("BTC", "coinbase")).toBe("BTC/USD");
+  });
+
+  it("maps coinbase-perp → BTC/USD:USD", () => {
+    expect(toSymbol("BTC", "coinbase-perp")).toBe("BTC/USD:USD");
+  });
+
+  it("works with other coins", () => {
+    expect(toSymbol("ETH", "bybit")).toBe("ETH/USDT:USDT");
+    expect(toSymbol("SOL", "hyperliquid")).toBe("SOL/USDC:USDC");
+  });
 });
 
-vi.mock("got", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("got")>();
-  return {
-    ...actual,
-    default: mockGot,
-  };
-});
+describe("fetchCandles", () => {
+  let exchange: Exchange;
 
-import { HTTPError } from "got";
-import { fetchCandles } from "./candle-client.js";
-
-/** Helper: make got resolve with a JSON body. */
-function mockGotJson(body: unknown) {
-  return mockGot.mockReturnValueOnce({ json: () => Promise.resolve(body) } as never);
-}
-
-/** Helper: create a fake HTTPError with the given status code. */
-function makeHttpError(statusCode: number, statusMessage: string): HTTPError {
-  const err = Object.create(HTTPError.prototype) as HTTPError;
-  Object.defineProperty(err, "response", {
-    value: { statusCode, statusMessage, body: "" },
-    writable: false,
-  });
-  Object.defineProperty(err, "message", {
-    value: `Response code ${statusCode} (${statusMessage})`,
-    writable: true,
-  });
-  return err;
-}
-
-/** Helper: make got reject with an HTTPError. */
-function mockGotHttpError(statusCode: number, statusMessage: string) {
-  const err = makeHttpError(statusCode, statusMessage);
-  return mockGot.mockReturnValueOnce({ json: () => Promise.reject(err) } as never);
-}
-
-describe("fetchCandles — Hyperliquid", () => {
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    exchange = makeMockExchange();
   });
 
-  afterEach(() => {
-    mockGot.mockReset();
-    vi.useRealTimers();
-  });
-
-  it("fetches and parses candles from HL API", async () => {
-    const mockData = [
-      { t: 1000, T: 1999, s: "BTC", i: "15m", o: "100", c: "105", h: "110", l: "95", v: "50", n: 20 },
-      { t: 2000, T: 2999, s: "BTC", i: "15m", o: "105", c: "108", h: "112", l: "103", v: "30", n: 15 },
-    ];
-
-    mockGotJson(mockData);
-
-    const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
-      source: "hyperliquid",
-      baseUrl: "http://test",
-    });
-
-    expect(candles).toHaveLength(2);
-    expect(candles[0]).toEqual({ t: 1000, o: 100, h: 110, l: 95, c: 105, v: 50, n: 20 });
-    expect(candles[1]).toEqual({ t: 2000, o: 105, h: 112, l: 103, c: 108, v: 30, n: 15 });
-  });
-
-  it("paginates when receiving full batches", async () => {
-    const batch1 = Array.from({ length: 500 }, (_, i) => ({
-      t: 1000 + i * 100,
-      T: 1099 + i * 100,
-      s: "BTC",
-      i: "15m",
-      o: "100",
-      c: "100",
-      h: "100",
-      l: "100",
-      v: "10",
-      n: 5,
-    }));
-
-    const batch2 = [
-      { t: 60000, T: 60099, s: "BTC", i: "15m", o: "100", c: "100", h: "100", l: "100", v: "10", n: 5 },
-    ];
-
-    mockGotJson(batch1);
-    mockGotJson(batch2);
-
-    const candles = await fetchCandles("BTC", "15m", 1000, 100000, {
-      source: "hyperliquid",
-      baseUrl: "http://test",
-      candlesPerRequest: 500,
-      requestDelayMs: 0,
-    });
-
-    expect(candles).toHaveLength(501);
-    expect(mockGot).toHaveBeenCalledTimes(2);
-  });
-
-  it("throws on API error", async () => {
-    mockGotHttpError(500, "Internal Server Error");
-
-    await expect(
-      fetchCandles("BTC", "15m", 1000, 5000, { source: "hyperliquid", baseUrl: "http://test" }),
-    ).rejects.toThrow("HL API error: 500");
-  });
-
-  it("deduplicates candles by timestamp", async () => {
-    const mockData = [
-      { t: 1000, T: 1999, s: "BTC", i: "15m", o: "100", c: "105", h: "110", l: "95", v: "50", n: 20 },
-      { t: 1000, T: 1999, s: "BTC", i: "15m", o: "100", c: "105", h: "110", l: "95", v: "50", n: 20 },
-    ];
-
-    mockGotJson(mockData);
-
-    const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
-      source: "hyperliquid",
-      baseUrl: "http://test",
-    });
-    expect(candles).toHaveLength(1);
-  });
-});
-
-describe("fetchCandles — Bybit", () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-  });
-
-  afterEach(() => {
-    mockGot.mockReset();
-    vi.useRealTimers();
-  });
-
-  it("fetches and parses candles from Bybit API", async () => {
-    const mockResponse = {
-      retCode: 0,
-      retMsg: "OK",
-      result: {
-        list: [
-          ["2000", "105", "112", "103", "108", "30", "3150"],
-          ["1000", "100", "110", "95", "105", "50", "5250"],
-        ],
-      },
-    };
-
-    mockGotJson(mockResponse);
+  it("fetches and parses OHLCV into Candle[]", async () => {
+    vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([
+      ohlcv(1000, 100, 110, 95, 105, 50),
+      ohlcv(2000, 105, 112, 103, 108, 30),
+    ]);
 
     const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
       source: "bybit",
-      baseUrl: "http://test",
+      _exchange: exchange,
     });
 
     expect(candles).toHaveLength(2);
@@ -159,291 +58,182 @@ describe("fetchCandles — Bybit", () => {
     expect(candles[1]).toEqual({ t: 2000, o: 105, h: 112, l: 103, c: 108, v: 30, n: 0 });
   });
 
-  it("throws on Bybit error response", async () => {
-    mockGotJson({ retCode: 10001, retMsg: "params error", result: { list: [] } });
+  it("sets n: 0 for all sources", async () => {
+    for (const source of ["bybit", "hyperliquid", "coinbase", "coinbase-perp"] as DataSource[]) {
+      const ex = makeMockExchange();
+      vi.mocked(ex.fetchOHLCV).mockResolvedValueOnce([ohlcv(1000)]);
 
-    await expect(
-      fetchCandles("BTC", "15m", 1000, 5000, { source: "bybit", baseUrl: "http://test" }),
-    ).rejects.toThrow("Bybit API error: params error");
-  });
-
-  it("throws on HTTP error", async () => {
-    mockGotHttpError(500, "Internal Server Error");
-
-    await expect(
-      fetchCandles("BTC", "15m", 1000, 5000, { source: "bybit", baseUrl: "http://test" }),
-    ).rejects.toThrow("Bybit API error: 500");
-  });
-
-  it("handles empty response", async () => {
-    mockGotJson({ retCode: 0, retMsg: "OK", result: { list: [] } });
-
-    const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
-      source: "bybit",
-      baseUrl: "http://test",
-    });
-    expect(candles).toHaveLength(0);
-  });
-
-  it("uses correct Bybit symbol derivation", async () => {
-    mockGotJson({ retCode: 0, retMsg: "OK", result: { list: [] } });
-
-    await fetchCandles("ETH", "1h", 5000, 10000, {
-      source: "bybit",
-      baseUrl: "http://test",
-    });
-
-    const calledUrl = mockGot.mock.calls[0][0] as string;
-    expect(calledUrl).toContain("symbol=ETHUSDT");
-    expect(calledUrl).toContain("interval=60");
-    expect(calledUrl).toContain("category=linear");
+      const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
+        source,
+        _exchange: ex,
+      });
+      expect(candles[0].n).toBe(0);
+    }
   });
 
   it("defaults to bybit source", async () => {
-    mockGotJson({ retCode: 0, retMsg: "OK", result: { list: [] } });
+    vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([]);
 
-    await fetchCandles("BTC", "15m", 1000, 5000, { baseUrl: "http://test" });
+    await fetchCandles("BTC", "15m", 1000, 5000, { _exchange: exchange });
 
-    const calledUrl = mockGot.mock.calls[0][0] as string;
-    expect(calledUrl).toContain("/v5/market/kline");
-  });
-});
-
-describe("fetchCandles — Coinbase", () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    expect(exchange.fetchOHLCV).toHaveBeenCalledWith(
+      "BTC/USDT:USDT",
+      "15m",
+      1000,
+      1000, // bybit default limit
+    );
   });
 
-  afterEach(() => {
-    mockGot.mockReset();
-    vi.useRealTimers();
-  });
-
-  it("fetches and parses candles from Coinbase API", async () => {
-    const mockData = [
-      [2, 103, 112, 105, 108, 30],
-      [1, 95, 110, 100, 105, 50],
+  it("uses correct symbol per source", async () => {
+    const sources: [DataSource, string][] = [
+      ["bybit", "BTC/USDT:USDT"],
+      ["hyperliquid", "BTC/USDC:USDC"],
+      ["coinbase", "BTC/USD"],
+      ["coinbase-perp", "BTC/USD:USD"],
     ];
 
-    mockGotJson(mockData);
+    for (const [source, expectedSymbol] of sources) {
+      const ex = makeMockExchange();
+      vi.mocked(ex.fetchOHLCV).mockResolvedValueOnce([]);
 
-    const candles = await fetchCandles("BTC", "15m", 1000, 2000000, {
-      source: "coinbase",
-      baseUrl: "http://test",
+      await fetchCandles("BTC", "15m", 1000, 5000, { source, _exchange: ex });
+
+      expect(ex.fetchOHLCV).toHaveBeenCalledWith(
+        expectedSymbol,
+        expect.any(String),
+        expect.any(Number),
+        expect.any(Number),
+      );
+    }
+  });
+
+  it("allows ccxtSymbol override", async () => {
+    vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([]);
+
+    await fetchCandles("BTC", "15m", 1000, 5000, {
+      source: "bybit",
+      ccxtSymbol: "BTC/USDC:USDC",
+      _exchange: exchange,
+    });
+
+    expect(exchange.fetchOHLCV).toHaveBeenCalledWith(
+      "BTC/USDC:USDC",
+      "15m",
+      1000,
+      1000,
+    );
+  });
+
+  it("paginates when receiving full batches", async () => {
+    const batch1 = Array.from({ length: 500 }, (_, i) => ohlcv(1000 + i * 900_000));
+    const batch2 = [ohlcv(1000 + 500 * 900_000)];
+
+    vi.mocked(exchange.fetchOHLCV)
+      .mockResolvedValueOnce(batch1)
+      .mockResolvedValueOnce(batch2);
+
+    const candles = await fetchCandles("BTC", "15m", 1000, Number.MAX_SAFE_INTEGER, {
+      source: "hyperliquid",
+      candlesPerRequest: 500,
+      requestDelayMs: 0,
+      _exchange: exchange,
+    });
+
+    expect(candles).toHaveLength(501);
+    expect(exchange.fetchOHLCV).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops paginating when batch is partial", async () => {
+    vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([
+      ohlcv(1000),
+      ohlcv(2000),
+    ]);
+
+    const candles = await fetchCandles("BTC", "15m", 1000, 100000, {
+      source: "bybit",
+      candlesPerRequest: 1000,
+      _exchange: exchange,
     });
 
     expect(candles).toHaveLength(2);
-    expect(candles[0]).toEqual({ t: 1000, o: 100, h: 110, l: 95, c: 105, v: 50, n: 0 });
-    expect(candles[1]).toEqual({ t: 2000, o: 105, h: 112, l: 103, c: 108, v: 30, n: 0 });
+    expect(exchange.fetchOHLCV).toHaveBeenCalledTimes(1);
   });
 
-  it("uses correct product ID and granularity", async () => {
-    mockGotJson([]);
-
-    await fetchCandles("ETH", "1h", 5000, 10000, {
-      source: "coinbase",
-      baseUrl: "http://test",
-    });
-
-    const calledUrl = mockGot.mock.calls[0][0] as string;
-    expect(calledUrl).toContain("/products/ETH-USD/candles");
-    expect(calledUrl).toContain("granularity=3600");
-  });
-
-  it("throws on unsupported interval", async () => {
-    await expect(
-      fetchCandles("BTC", "3m", 1000, 5000, { source: "coinbase", baseUrl: "http://test" }),
-    ).rejects.toThrow("Coinbase does not support interval: 3m");
-  });
-
-  it("throws on HTTP error", async () => {
-    mockGotHttpError(500, "Internal Server Error");
-
-    await expect(
-      fetchCandles("BTC", "15m", 1000, 5000, { source: "coinbase", baseUrl: "http://test" }),
-    ).rejects.toThrow("Coinbase API error: 500");
-  });
-});
-
-describe("fetchCandles — Coinbase Perpetual", () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-  });
-
-  afterEach(() => {
-    mockGot.mockReset();
-    vi.useRealTimers();
-  });
-
-  it("fetches and parses candles from Coinbase Advanced Trade API", async () => {
-    const mockResponse = {
-      candles: [
-        { start: "2", low: "103", high: "112", open: "105", close: "108", volume: "30" },
-        { start: "1", low: "95", high: "110", open: "100", close: "105", volume: "50" },
-      ],
-    };
-
-    mockGotJson(mockResponse);
-
-    const candles = await fetchCandles("BTC", "15m", 1000, 2000000, {
-      source: "coinbase-perp",
-      baseUrl: "http://test",
-    });
-
-    expect(candles).toHaveLength(2);
-    expect(candles[0]).toEqual({ t: 1000, o: 100, h: 110, l: 95, c: 105, v: 50, n: 0 });
-    expect(candles[1]).toEqual({ t: 2000, o: 105, h: 112, l: 103, c: 108, v: 30, n: 0 });
-  });
-
-  it("uses correct product ID and granularity", async () => {
-    mockGotJson({ candles: [] });
-
-    await fetchCandles("ETH", "1h", 5000, 10000, {
-      source: "coinbase-perp",
-      baseUrl: "http://test",
-    });
-
-    const calledUrl = mockGot.mock.calls[0][0] as string;
-    expect(calledUrl).toContain("/products/ETH-PERP-INTX/candles");
-    expect(calledUrl).toContain("granularity=ONE_HOUR");
-  });
-
-  it("throws on unsupported interval", async () => {
-    await expect(
-      fetchCandles("BTC", "3m", 1000, 5000, { source: "coinbase-perp", baseUrl: "http://test" }),
-    ).rejects.toThrow("Coinbase perp does not support interval: 3m");
-  });
-
-  it("throws on HTTP error", async () => {
-    mockGotHttpError(500, "Internal Server Error");
-
-    await expect(
-      fetchCandles("BTC", "15m", 1000, 5000, { source: "coinbase-perp", baseUrl: "http://test" }),
-    ).rejects.toThrow("Coinbase perp API error: 500");
-  });
-
-  it("handles empty response", async () => {
-    mockGotJson({ candles: [] });
+  it("stops when exchange returns empty array", async () => {
+    vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([]);
 
     const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
-      source: "coinbase-perp",
-      baseUrl: "http://test",
+      _exchange: exchange,
     });
+
     expect(candles).toHaveLength(0);
   });
-});
 
-// ---------------------------------------------------------------------------
-// Retry / timeout behaviour (got built-in retry)
-// ---------------------------------------------------------------------------
-describe("fetchWithRetry — HTTP error handling", () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+  it("deduplicates candles by timestamp", async () => {
+    vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([
+      ohlcv(1000),
+      ohlcv(1000),
+      ohlcv(2000),
+    ]);
+
+    const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
+      _exchange: exchange,
+    });
+
+    expect(candles).toHaveLength(2);
   });
 
-  afterEach(() => {
-    mockGot.mockReset();
-    vi.useRealTimers();
+  it("filters candles beyond endTime", async () => {
+    vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([
+      ohlcv(1000),
+      ohlcv(2000),
+      ohlcv(6000), // beyond endTime=5000
+    ]);
+
+    const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
+      _exchange: exchange,
+    });
+
+    expect(candles).toHaveLength(2);
   });
 
-  it("does NOT retry on non-429 HTTP errors (Coinbase)", async () => {
-    mockGotHttpError(500, "Internal Server Error");
-
-    await expect(
-      fetchCandles("BTC", "15m", 1000, 2000000, { source: "coinbase", baseUrl: "http://test" }),
-    ).rejects.toThrow("Coinbase API error: 500");
-
-    expect(mockGot).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("fetchBybitWithRetry — body-level rate limit retry", () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-  });
-
-  afterEach(() => {
-    mockGot.mockReset();
-    vi.useRealTimers();
-  });
-
-  it("retries on Bybit body-level Rate Limit then succeeds", async () => {
-    const rateLimitResponse = {
-      retCode: 10006,
-      retMsg: "Too many visits! Rate Limit",
-      result: { list: [] },
-    };
-    const successResponse = {
-      retCode: 0,
-      retMsg: "OK",
-      result: { list: [["1000", "100", "110", "95", "105", "50", "5250"]] },
-    };
-
-    mockGotJson(rateLimitResponse);
-    mockGotJson(successResponse);
+  it("avoids infinite loop when lastTs <= since", async () => {
+    // Exchange keeps returning the same timestamp
+    vi.mocked(exchange.fetchOHLCV)
+      .mockResolvedValueOnce([ohlcv(1000)])
+      .mockResolvedValueOnce([ohlcv(1000)]);
 
     const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
       source: "bybit",
-      baseUrl: "http://test",
+      candlesPerRequest: 1,
+      _exchange: exchange,
     });
 
+    // Should stop after detecting no progress
     expect(candles).toHaveLength(1);
-    expect(mockGot).toHaveBeenCalledTimes(2);
   });
 
-  it("retries on Bybit HTTP 429 then succeeds", async () => {
-    const successResponse = {
-      retCode: 0,
-      retMsg: "OK",
-      result: { list: [["1000", "100", "110", "95", "105", "50", "5250"]] },
-    };
+  it("propagates exchange errors", async () => {
+    vi.mocked(exchange.fetchOHLCV).mockRejectedValueOnce(
+      new Error("NetworkError: connection failed"),
+    );
 
-    mockGotHttpError(429, "Too Many Requests");
-    mockGotJson(successResponse);
+    await expect(
+      fetchCandles("BTC", "15m", 1000, 5000, { _exchange: exchange }),
+    ).rejects.toThrow("NetworkError: connection failed");
+  });
+
+  it("returns candles sorted oldest-first", async () => {
+    vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([
+      ohlcv(3000),
+      ohlcv(1000),
+      ohlcv(2000),
+    ]);
 
     const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
-      source: "bybit",
-      baseUrl: "http://test",
+      _exchange: exchange,
     });
 
-    expect(candles).toHaveLength(1);
-    expect(mockGot).toHaveBeenCalledTimes(2);
-  });
-
-  it("does NOT retry on non-rate-limit Bybit body errors", async () => {
-    const errorResponse = {
-      retCode: 10001,
-      retMsg: "params error",
-      result: { list: [] },
-    };
-
-    mockGotJson(errorResponse);
-
-    await expect(
-      fetchCandles("BTC", "15m", 1000, 5000, { source: "bybit", baseUrl: "http://test" }),
-    ).rejects.toThrow("Bybit API error: params error");
-
-    expect(mockGot).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("fetchCandles — Hyperliquid with retry", () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-  });
-
-  afterEach(() => {
-    mockGot.mockReset();
-    vi.useRealTimers();
-  });
-
-  it("throws on 500 from Hyperliquid API (non-retryable)", async () => {
-    mockGotHttpError(500, "Internal Server Error");
-
-    await expect(
-      fetchCandles("BTC", "15m", 1000, 5000, { source: "hyperliquid", baseUrl: "http://test" }),
-    ).rejects.toThrow("HL API error: 500");
-
-    expect(mockGot).toHaveBeenCalledTimes(1);
+    expect(candles.map((c) => c.t)).toEqual([1000, 2000, 3000]);
   });
 });
