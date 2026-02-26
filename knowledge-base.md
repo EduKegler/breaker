@@ -422,15 +422,23 @@ LONG:
 SHORT:
   - Price breaks above upper KC band
   - RSI(2) > 80
+  - Volume > 1.5 x SMA(volume, 20)  [ASYMMETRIC -- shorts only]
 ```
+
+> **[NEEDS ABLATION TEST]** The volume spike filter on shorts was found in `keltner-rsi2.ts` but its origin is unclear (thesis-driven vs optimizer-discovered). Rationale if thesis-driven: shorting against momentum in crypto has asymmetric risk (squeezes), so requiring volume confirmation reduces false signals in rallies. Run ablation: remove the filter, compare PF/WR with and without. If PF delta < 0.05, remove it (complexity not justified).
 
 **Management:**
 
 ```
 STOP:    ATR 1H x multiplier (guardrail minAtrMult)
-TP:      KC mid (EMA 20)
+
+TP LONG:   KC mid (EMA 20) -- full exit
+TP SHORT:  60% exit at KC mid (EMA 20), remaining 40% trails or times out  [ASYMMETRIC]
+
 TIMEOUT: If TP not reached in N bars, exit
 ```
+
+> **[NEEDS ABLATION TEST]** Partial TP on shorts (60/40 split) was found in `keltner-rsi2.ts` but not previously documented. Rationale if thesis-driven: short squeeze risk in crypto justifies taking partial profit early. Run ablation: compare full exit at KC mid vs 60/40 split. If 60/40 has better risk-adjusted returns (lower DD, similar or better PF), keep it and consider applying to longs too.
 
 **Operational limits:**
 - Max trades per day (BREAKER optimizes)

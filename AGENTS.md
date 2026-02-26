@@ -17,6 +17,7 @@ trading/
 ├── packages/
 │   ├── backtest/         — backtesting engine, indicators, strategies & candle data
 │   ├── breaker/          — automated strategy optimization loop
+│   ├── dashboard/        — local analysis dashboard (stub)
 │   ├── hl-broker/        — Hyperliquid order execution & position management
 │   ├── shared/           — shared utilities (isMainModule, parseEnv, formatZodErrors)
 │   ├── webhook/          — TradingView alert receiver & forwarder
