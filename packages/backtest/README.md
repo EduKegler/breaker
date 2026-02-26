@@ -1,18 +1,40 @@
 # @breaker/backtest
 
-Local backtesting engine replacing TradingView automation. Fetches candles from Hyperliquid, caches in SQLite, runs strategies as TypeScript, simulates trades with realistic execution.
+> **B** in the B.R.E.A.K.E.R. acrostic
+
+Local backtesting engine replacing TradingView automation. Fetches candles from Hyperliquid (via CCXT), caches in SQLite, runs strategies as pure TypeScript, and simulates trades with realistic execution.
+
+## How It Works
+
+```
+Candles (Bybit/Coinbase/HL)
+        |
+   [SQLite cache]
+        |
+        v
+   Indicators (EMA, RSI, ATR, ADX, Donchian, Keltner...)
+        |
+        v
+   Strategy (entry/exit signals)
+        |
+        v
+   Engine (order simulation, SL/TP, position tracking, equity curve)
+        |
+        v
+   Metrics (PF, win rate, drawdown, avgR, Sharpe...)
+```
 
 ## Structure
 
 ```
 src/
-├── types/        — Candle, Strategy, Order, Metrics
-├── data/         — Hyperliquid candle client + SQLite cache
-├── indicators/   — EMA, SMA, ATR, RSI, ADX, Donchian, Keltner
-├── engine/       — Backtest loop, order simulation, position tracking, equity curve
-├── analysis/     — Metrics calculation, trade analysis, walk-forward, filter simulations
-├── strategies/   — Strategy implementations (donchian-adx, keltner-rsi2)
-└── run-backtest.ts — CLI entrypoint
+├── types/           — Candle, Strategy, Order, Metrics
+├── data/            — Multi-source candle client (Bybit, Coinbase, HL via CCXT) + SQLite cache
+├── indicators/      — EMA, SMA, ATR, RSI, ADX, Donchian, Keltner
+├── engine/          — Backtest loop, order simulation, position tracking, equity curve
+├── analysis/        — Metrics calculation, trade analysis, walk-forward, filter simulations
+├── strategies/      — Strategy implementations (donchian-adx, keltner-rsi2)
+└── run-backtest.ts  — CLI entrypoint
 ```
 
 ## Usage
@@ -50,19 +72,20 @@ node dist/run-backtest.js --coin=BTC --interval=15m --strategy=donchian-adx
 | Donchian ADX | `createDonchianAdx` | Donchian channel breakout with ADX trend filter |
 | Keltner RSI2 | `createKeltnerRsi2` | Keltner channel mean reversion with RSI2 entry |
 
-Strategies implement the `Strategy` interface and return typed `StrategyParam` objects with min/max/step metadata.
+Strategies implement the `Strategy` interface and return typed `StrategyParam` objects with min/max/step metadata for optimization.
 
-## Key Conventions
+## Conventions
 
-- Strategies are pure functions operating on `Candle[]`
-- Engine uses worst-case assumption: if SL and TP both trigger in same bar, SL wins
+- Strategies are **pure functions** operating on `Candle[]`
+- Indicators are **pure functions** operating on `number[]`
+- Worst-case rule: if SL and TP both trigger in the same bar, SL wins
 - SQLite cache lives in `.cache/candles.db` (gitignored)
-- All indicators are pure functions operating on `number[]`
+- Metrics types are compatible with `@breaker/refiner` for direct integration
 
 ## Commands
 
 ```bash
 pnpm build       # Compile TypeScript
-pnpm test        # Run all tests (190 tests)
+pnpm test        # Run all tests (~190 tests)
 pnpm typecheck   # Type-check without emitting
 ```

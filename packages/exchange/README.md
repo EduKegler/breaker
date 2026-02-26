@@ -1,23 +1,33 @@
 # @breaker/exchange
 
-> **Not yet implemented.** This package is an empty stub reserved for future development.
+> **E** in the B.R.E.A.K.E.R. acrostic
 
-Planned: Hyperliquid broker — order execution, position management, and WhatsApp notifications.
+> **Status: Stub** — This package is a placeholder reserved for future development.
 
-## Planned features
+Hyperliquid broker — order execution, position management, and trade notifications.
+
+## Planned Features
 
 - Order placement and execution via Hyperliquid SDK/API
-- Position tracking and management
-- WhatsApp notifications via alerts (POST /send)
+- Real-time position tracking and management
+- WhatsApp notifications via `@breaker/alerts` (POST /send)
 
-## Planned configuration
+## Planned Configuration
 
 Required secrets (`.env`):
 
 ```
 HL_ACCOUNT_ADDRESS=0x...
 HL_PRIVATE_KEY=...
-GATEWAY_URL=http://localhost:3100   # alerts
+GATEWAY_URL=http://localhost:3100   # @breaker/alerts
+```
+
+## Integrations
+
+```
+Exchange
+   ├── Hyperliquid API  — order execution, position queries
+   └── @breaker/alerts  — notifications via POST /send
 ```
 
 ## Commands
