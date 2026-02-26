@@ -18,6 +18,14 @@ artifacts/
 **/infra/logs/
 claude-raw-output.log
 
+# Data caches
+.cache/
+*.db
+*.xlsx
+
+# Playwright MCP
+.playwright-mcp/
+
 # Claude Code
 .claude/worktrees/
 .claude/settings.local.json

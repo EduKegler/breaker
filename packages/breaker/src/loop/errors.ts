@@ -1,11 +1,10 @@
 import type { ErrorClass } from "./types.js";
 
 const ERROR_PATTERNS: [RegExp, ErrorClass][] = [
-  [/compilat|syntax|erro.*compilacao|Script tem \d+ erro/i, "compile_error"],
-  [/timeout|timed out|waitFor/i, "timeout"],
+  [/compilat|syntax|type.*error|tsc|typecheck/i, "compile_error"],
+  [/timeout|timed out|ETIMEDOUT/i, "timeout"],
   [/net::|ECONNREFUSED|ECONNRESET|ERR_NAME_NOT_RESOLVED|fetch failed/i, "network"],
-  [/stale|xlsx.*old|token.*not.*found|token.*not.*confirmed|nao.*confirmado/i, "stale_xlsx"],
-  [/Target closed|context.*destroy|browser.*disconnect|Protocol error|page crash/i, "transient_ui"],
+  [/ENOENT|spawn.*failed|child.*process/i, "transient"],
 ];
 
 /**

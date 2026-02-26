@@ -7,7 +7,7 @@ vi.mock("../lib/config.js", () => ({
     assetClasses: { "crypto-major": { minPF: 1.6 } },
     strategyProfiles: { breakout: {} },
     guardrails: { maxRiskTradeUsd: 25, protectedFields: [] },
-    assets: { BTC: { class: "crypto-major", strategies: { breakout: { chartUrl: "https://example.com/chart" } } } },
+    assets: { BTC: { class: "crypto-major", strategies: { breakout: { coin: "BTC", dataSource: "coinbase-perp", interval: "15m", strategyFactory: "createDonchianAdx", dateRange: { start: "2025-05-24", end: "2026-02-24" } } } } },
     phases: { refine: { maxIter: 5 }, research: { maxIter: 3 }, restructure: { maxIter: 5 }, maxCycles: 2 },
     scoring: { weights: { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 } },
     research: { enabled: true, model: "sonnet", maxSearchesPerIter: 3, timeoutMs: 180000 },
@@ -15,16 +15,21 @@ vi.mock("../lib/config.js", () => ({
   resolveAssetCriteria: vi.fn(() => ({
     minTrades: 150, minPF: 1.6, maxDD: 8, minWR: 30, minAvgR: 0.20,
   })),
-  resolveChartUrl: vi.fn((_config: unknown, asset: string, _strategy?: string) => {
-    if (asset === "BTC") return "https://example.com/chart";
-    return "";
-  }),
-  resolveDateRange: vi.fn((_config: unknown, _asset: string, _strategy?: string) => "last365"),
+  resolveDataConfig: vi.fn((_config: unknown, asset: string, _strategy?: string) => ({
+    coin: asset,
+    dataSource: "coinbase-perp",
+    interval: "15m",
+    strategyFactory: "createDonchianAdx",
+  })),
+  resolveDateRange: vi.fn(() => ({
+    startTime: new Date("2025-05-24T00:00:00Z").getTime(),
+    endTime: new Date("2026-02-24T23:59:59.999Z").getTime(),
+  })),
 }));
 
 vi.mock("../lib/strategy-path.js", () => ({
   buildStrategyDir: vi.fn((_root: string, asset: string, strategy: string) => `${_root}/assets/${asset}/${strategy}`),
-  findActiveStrategyFile: vi.fn(),
+  getStrategySourcePath: vi.fn((_root: string, _factoryName: string) => `${_root}/packages/backtest/src/strategies/donchian-adx.ts`),
 }));
 
 import {
@@ -141,7 +146,7 @@ describe("parseArgs", () => {
 // ---------------------------------------------------------------------------
 describe("buildConfig", () => {
   const savedEnv: Record<string, string | undefined> = {};
-  const envKeys = ["MAX_FIX_ATTEMPTS", "MAX_STALE_ATTEMPTS", "MAX_TRANSIENT_FAILURES", "MAX_NO_CHANGE"];
+  const envKeys = ["MAX_FIX_ATTEMPTS", "MAX_TRANSIENT_FAILURES", "MAX_NO_CHANGE"];
 
   beforeEach(() => {
     for (const k of envKeys) {
@@ -175,11 +180,6 @@ describe("buildConfig", () => {
     expect(cfg.runId).toMatch(/^\d{8}_\d{6}$/);
   });
 
-  it("returns empty chartUrl for unknown asset", () => {
-    const cfg = buildConfig({ asset: "DOGE" });
-    expect(cfg.chartUrl).toBe("");
-  });
-
   it("reads maxFixAttempts from env var", () => {
     process.env.MAX_FIX_ATTEMPTS = "7";
     const cfg = buildConfig({ asset: "BTC" });
@@ -191,9 +191,14 @@ describe("buildConfig", () => {
     expect(cfg.maxFixAttempts).toBe(3);
   });
 
-  it("includes dateRange from resolveDateRange", () => {
+  it("includes data config fields", () => {
     const cfg = buildConfig({ asset: "BTC" });
-    expect(cfg.dateRange).toBe("last365");
+    expect(cfg.coin).toBe("BTC");
+    expect(cfg.dataSource).toBe("coinbase-perp");
+    expect(cfg.interval).toBe("15m");
+    expect(cfg.strategyFactory).toBe("createDonchianAdx");
+    expect(cfg.startTime).toBeGreaterThan(0);
+    expect(cfg.endTime).toBeGreaterThan(cfg.startTime);
   });
 
   it("sets file paths relative to repoRoot", () => {
@@ -203,6 +208,7 @@ describe("buildConfig", () => {
     expect(cfg.paramHistoryFile).toBe("/custom/root/assets/SOL/breakout/parameter-history.json");
     expect(cfg.checkpointDir).toBe("/custom/root/assets/SOL/breakout/checkpoints");
     expect(cfg.configFile).toBe("/custom/root/breaker-config.json");
+    expect(cfg.dbPath).toBe("/custom/root/candles.db");
   });
 });
 
@@ -268,7 +274,6 @@ describe("checkCriteria", () => {
       winRate: null,
       avgR: null,
     };
-    // pnl=0 (not > 0) => false immediately
     expect(checkCriteria(nullMetrics, criteria)).toBe(false);
   });
 
@@ -285,7 +290,6 @@ describe("checkCriteria", () => {
   });
 
   it("uses built-in defaults when criteria fields are undefined", () => {
-    // Empty criteria => defaults: minTrades=150, minPF=1.25, maxDD=12, minWR=20, minAvgR=0.15
     const metrics = {
       totalPnl: 500,
       numTrades: 150,
@@ -315,14 +319,11 @@ describe("shouldEscalatePhase", () => {
       bestPnl: 0,
       bestIter: 0,
       fixAttempts: 0,
-      staleAttempts: 0,
-      integrityAttempts: 0,
       transientFailures: 0,
       noChangeCount: 0,
       previousPnl: 0,
       sessionMetrics: [],
       currentPhase: "refine",
-
       currentScore: 0,
       bestScore: 0,
       neutralStreak: 0,
@@ -390,14 +391,11 @@ describe("resetPhaseCounters", () => {
       bestPnl: 500,
       bestIter: 3,
       fixAttempts: 2,
-      staleAttempts: 1,
-      integrityAttempts: 1,
       transientFailures: 2,
       noChangeCount: 1,
       previousPnl: 400,
       sessionMetrics: [],
       currentPhase: "refine",
-
       currentScore: 50,
       bestScore: 60,
       neutralStreak: 3,
@@ -406,19 +404,15 @@ describe("resetPhaseCounters", () => {
     };
   }
 
-  it("resets fixAttempts, staleAttempts, integrityAttempts, transientFailures, neutralStreak, noChangeCount", () => {
+  it("resets fixAttempts, transientFailures, neutralStreak, noChangeCount", () => {
     const state = makeState({
       fixAttempts: 2,
-      staleAttempts: 1,
-      integrityAttempts: 1,
       transientFailures: 2,
       neutralStreak: 3,
       noChangeCount: 1,
     });
     resetPhaseCounters(state);
     expect(state.fixAttempts).toBe(0);
-    expect(state.staleAttempts).toBe(0);
-    expect(state.integrityAttempts).toBe(0);
     expect(state.transientFailures).toBe(0);
     expect(state.neutralStreak).toBe(0);
     expect(state.noChangeCount).toBe(0);
@@ -450,14 +444,11 @@ describe("no-change escalation", () => {
       bestPnl: 0,
       bestIter: 0,
       fixAttempts: 0,
-      staleAttempts: 0,
-      integrityAttempts: 0,
       transientFailures: 0,
       noChangeCount: 0,
       previousPnl: 0,
       sessionMetrics: [],
       currentPhase: "refine",
-
       currentScore: 0,
       bestScore: 0,
       neutralStreak: 0,
@@ -471,8 +462,6 @@ describe("no-change escalation", () => {
   it("2 no-changes in refine triggers escalation to research (not abort)", () => {
     const state = makeState({ currentPhase: "refine", noChangeCount: 2 });
     expect(shouldEscalatePhase(state, cfg)).toBe(true);
-    // The orchestrator should transition to research, not abort
-    // (shouldEscalatePhase returns true → orchestrator escalates)
   });
 
   it("2 no-changes in research triggers escalation to restructure (not abort)", () => {
@@ -501,21 +490,15 @@ describe("getPhaseMaxIter", () => {
 
   it("uses proportional allocation when maxIter is large", () => {
     const largeCfg = { ...cfg, maxIter: 20 };
-    // 20 * 0.4 = 8 > config 5 → proportional wins
     expect(getPhaseMaxIter("refine", largeCfg)).toBe(8);
-    // 20 * 0.2 = 4 > config 3 → proportional wins
     expect(getPhaseMaxIter("research", largeCfg)).toBe(4);
-    // 20 * 0.4 = 8 > config 5 → proportional wins
     expect(getPhaseMaxIter("restructure", largeCfg)).toBe(8);
   });
 
   it("uses config value when maxIter is small", () => {
     const smallCfg = { ...cfg, maxIter: 5 };
-    // 5 * 0.4 = 2 < config 5 → config wins
     expect(getPhaseMaxIter("refine", smallCfg)).toBe(5);
-    // 5 * 0.2 = 1 < config 3 → config wins
     expect(getPhaseMaxIter("research", smallCfg)).toBe(3);
-    // 5 * 0.4 = 2 < config 5 → config wins
     expect(getPhaseMaxIter("restructure", smallCfg)).toBe(5);
   });
 });
@@ -585,14 +568,11 @@ describe("low-trade accept does not block phase escalation", () => {
       bestPnl: 0,
       bestIter: 0,
       fixAttempts: 0,
-      staleAttempts: 0,
-      integrityAttempts: 0,
       transientFailures: 0,
       noChangeCount: 0,
       previousPnl: 0,
       sessionMetrics: [],
       currentPhase: "refine",
-
       currentScore: 0,
       bestScore: 0,
       neutralStreak: 0,
@@ -606,13 +586,10 @@ describe("low-trade accept does not block phase escalation", () => {
   it("3 iters with score > 0 but trades < minTrades → neutralStreak=3 → shouldEscalate", () => {
     const state = makeState({ bestScore: 50, currentPhase: "refine" });
 
-    // Simulate 3 iterations where score improves but trades < minTrades
     for (let i = 0; i < 3; i++) {
-      const scoreVerdict: ScoreVerdict = "accept"; // score > bestScore
-      const meetsMinTrades = false; // trades < minTrades
+      const scoreVerdict: ScoreVerdict = "accept";
+      const meetsMinTrades = false;
       const effective = computeEffectiveVerdict(scoreVerdict, meetsMinTrades);
-
-      // effective should be "neutral", incrementing neutralStreak
       expect(effective).toBe("neutral");
       state.neutralStreak++;
     }
@@ -637,10 +614,9 @@ describe("bestScore restoration from checkpoint", () => {
       winRate: 35,
       avgR: 0.25,
     };
-    const pineContent = "useRsi = true\nslAtrMult = 1.5";
     const score = computeScore(
       checkpointMetrics,
-      pineContent,
+      8, // paramCount
       checkpointMetrics.numTrades,
       cfg.scoring.weights,
     );
@@ -648,7 +624,6 @@ describe("bestScore restoration from checkpoint", () => {
   });
 
   it("iter 1 with lower score does NOT overwrite a restored bestScore", () => {
-    // Simulate: checkpoint had score ~70, iter 1 produces score ~35
     const checkpointMetrics = {
       totalPnl: 500,
       numTrades: 200,
@@ -659,7 +634,7 @@ describe("bestScore restoration from checkpoint", () => {
     };
     const cpScore = computeScore(
       checkpointMetrics,
-      "useRsi = true",
+      8,
       200,
       cfg.scoring.weights,
     );
@@ -674,14 +649,12 @@ describe("bestScore restoration from checkpoint", () => {
     };
     const iterScore = computeScore(
       iterMetrics,
-      "useRsi = true",
+      8,
       80,
       cfg.scoring.weights,
     );
 
-    // With bestScore properly restored, iter 1 should NOT beat checkpoint
     expect(cpScore.weighted).toBeGreaterThan(iterScore.weighted);
-    // And compareScores should NOT accept the worse score
     expect(iterScore.weighted).toBeLessThan(cpScore.weighted);
   });
 });

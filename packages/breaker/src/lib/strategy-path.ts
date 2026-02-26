@@ -10,9 +10,29 @@ export function buildStrategyDir(repoRoot: string, asset: string, strategy: stri
 }
 
 /**
+ * Get the path to a strategy source file in the backtest package.
+ * Maps factory name → source file in packages/backtest/src/strategies/.
+ */
+export function getStrategySourcePath(repoRoot: string, factoryName: string): string {
+  const nameMap: Record<string, string> = {
+    createDonchianAdx: "donchian-adx.ts",
+    createKeltnerRsi2: "keltner-rsi2.ts",
+  };
+  const filename = nameMap[factoryName];
+  if (!filename) {
+    throw new Error(`Unknown strategy factory: ${factoryName}`);
+  }
+  // repoRoot is the breaker package root; go up 2 levels to monorepo root
+  const monorepoRoot = path.resolve(repoRoot, "../..");
+  return path.join(monorepoRoot, "packages", "backtest", "src", "strategies", filename);
+}
+
+/**
  * Find the single active .pine file in a strategy directory.
  * Active = any .pine file that does NOT end with `-archived.pine`.
  * Throws if: directory doesn't exist, 0 active files, or 2+ active files.
+ *
+ * @deprecated Kept for backward compat during migration. New code uses getStrategySourcePath.
  */
 export function findActiveStrategyFile(strategyDir: string): string {
   if (!fs.existsSync(strategyDir)) {

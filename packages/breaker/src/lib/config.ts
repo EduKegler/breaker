@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { BreakerConfigSchema } from "../types/config.js";
-import type { BreakerConfig, ResolvedCriteria } from "../types/config.js";
+import type { BreakerConfig, ResolvedCriteria, StrategyDateRange } from "../types/config.js";
 
 /**
  * Loads and validates breaker-config.json using Zod.
@@ -17,10 +17,6 @@ export function loadConfig(configPath: string): BreakerConfig {
  * 1. Global criteria (base)
  * 2. Asset class overrides (class wins over global)
  * 3. Strategy profile overrides (strategy wins over class)
- *
- * When `strategy` is provided, looks up the profile via:
- *   asset.strategies[strategy].profile ?? strategy
- * Falls back to legacy asset.strategy field if no nested match.
  */
 export function resolveAssetCriteria(
   config: BreakerConfig,
@@ -33,12 +29,10 @@ export function resolveAssetCriteria(
     ? (config.assetClasses[assetClass] ?? {})
     : {};
 
-  // Determine strategy profile name
   let profileName: string | undefined;
   if (strategy && assetCfg?.strategies[strategy]) {
     profileName = assetCfg.strategies[strategy].profile ?? strategy;
   } else if (assetCfg?.strategy) {
-    // Legacy flat field
     profileName = assetCfg.strategy;
   }
 
@@ -48,39 +42,71 @@ export function resolveAssetCriteria(
   return { ...config.criteria, ...classCriteria, ...strategyProfile };
 }
 
+export interface DataConfig {
+  coin: string;
+  dataSource: string;
+  interval: string;
+  strategyFactory: string;
+}
+
+/**
+ * Resolves the data configuration for an asset+strategy pair.
+ * Returns coin, dataSource, interval, and strategyFactory from the nested strategy config.
+ */
+export function resolveDataConfig(
+  config: BreakerConfig,
+  asset: string,
+  strategy?: string,
+): DataConfig {
+  const assetCfg = config.assets[asset];
+  const entry = strategy ? assetCfg?.strategies[strategy] : undefined;
+
+  return {
+    coin: entry?.coin ?? asset,
+    dataSource: entry?.dataSource ?? "coinbase-perp",
+    interval: entry?.interval ?? "15m",
+    strategyFactory: entry?.strategyFactory ?? "createDonchianAdx",
+  };
+}
+
 /**
  * Resolves the date range for an asset+strategy pair.
- * Looks up nested strategies first, falls back to global dateRange, then "last365".
+ * Returns { startTime, endTime } as epoch ms.
  */
 export function resolveDateRange(
   config: BreakerConfig,
   asset: string,
   strategy?: string,
-): string {
+): { startTime: number; endTime: number } {
   const assetCfg = config.assets[asset];
-  if (strategy && assetCfg?.strategies[strategy]?.dateRange) {
-    return assetCfg.strategies[strategy].dateRange!;
-  }
-  return config.dateRange;
-}
+  const rawRange = strategy && assetCfg?.strategies[strategy]?.dateRange
+    ? assetCfg.strategies[strategy].dateRange
+    : config.dateRange;
 
-/**
- * Resolves the TradingView chart URL for an asset+strategy pair.
- * Looks up nested strategies first, falls back to legacy flat chartUrl.
- */
-export function resolveChartUrl(
-  config: BreakerConfig,
-  asset: string,
-  strategy?: string,
-): string {
-  const assetCfg = config.assets[asset];
-  if (!assetCfg) return "";
-
-  // Nested strategy entry
-  if (strategy && assetCfg.strategies[strategy]?.chartUrl) {
-    return assetCfg.strategies[strategy].chartUrl;
+  // Object format: { start: "YYYY-MM-DD", end: "YYYY-MM-DD" }
+  if (typeof rawRange === "object" && rawRange !== null && "start" in rawRange) {
+    const dr = rawRange as StrategyDateRange;
+    return {
+      startTime: new Date(dr.start + "T00:00:00Z").getTime(),
+      endTime: new Date(dr.end + "T23:59:59.999Z").getTime(),
+    };
   }
 
-  // Legacy flat chartUrl
-  return assetCfg.chartUrl ?? "";
+  // Legacy string format: "custom:YYYY-MM-DD:YYYY-MM-DD" or "lastN"
+  const str = rawRange as string;
+  const customMatch = str.match(/^custom:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/);
+  if (customMatch) {
+    return {
+      startTime: new Date(customMatch[1] + "T00:00:00Z").getTime(),
+      endTime: new Date(customMatch[2] + "T23:59:59.999Z").getTime(),
+    };
+  }
+
+  // lastN format
+  const endTime = Date.now();
+  const daysMatch = str.match(/^last(\d+)$/);
+  const days = daysMatch ? parseInt(daysMatch[1]) : 365;
+  const startTime = endTime - days * 24 * 60 * 60 * 1000;
+
+  return { startTime, endTime };
 }

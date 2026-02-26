@@ -3,6 +3,8 @@ import { readFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { timingSafeEqual, createHmac } from "node:crypto";
+import rateLimit from "express-rate-limit";
+import { LRUCache } from "lru-cache";
 
 import { AlertPayloadSchema } from "../types/alert.js";
 import type { AlertPayload } from "../types/alert.js";
@@ -88,33 +90,14 @@ function log(
 }
 
 // ---------------------
-// Idempotency cache (in-memory, TTL + size cap)
+// Idempotency cache (LRU with TTL)
 // ---------------------
-const sentAlerts = new Map<string, number>();
-const MAX_CACHE = 1000;
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const sentAlerts = new LRUCache<string, true>({ max: 1000, ttl: 10 * 60 * 1000 });
 let dedupRuntimeAlarmActive = false;
 
 export function isDuplicate(alertId: string): boolean {
-  const now = Date.now();
-  if (sentAlerts.size > MAX_CACHE / 2) {
-    for (const [key, ts] of sentAlerts) {
-      if (now - ts > CACHE_TTL_MS) sentAlerts.delete(key);
-    }
-  }
-  if (sentAlerts.has(alertId)) {
-    const ts = sentAlerts.get(alertId)!;
-    if (now - ts > CACHE_TTL_MS) {
-      sentAlerts.delete(alertId);
-    } else {
-      return true;
-    }
-  }
-  sentAlerts.set(alertId, now);
-  if (sentAlerts.size > MAX_CACHE) {
-    const first = sentAlerts.keys().next().value;
-    if (first !== undefined) sentAlerts.delete(first);
-  }
+  if (sentAlerts.has(alertId)) return true;
+  sentAlerts.set(alertId, true);
   return false;
 }
 
@@ -215,41 +198,11 @@ function safeCompare(a: string, b: string): boolean {
 }
 
 // ---------------------
-// Rate limiter — in-memory, per-IP
+// Rate limiters (express-rate-limit)
 // ---------------------
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_CLEANUP_INTERVAL = 5 * 60_000;
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, val] of rateLimitMap) {
-    if (val.resetAt <= now) rateLimitMap.delete(key);
-  }
-}, RATE_LIMIT_CLEANUP_INTERVAL).unref();
-
-function rateLimit(maxRequests: number): express.RequestHandler {
-  return (req, res, next) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    const basePath = req.route?.path ?? (req.path.replace(/\/[^/]+$/, "") || req.path);
-    const key = `${ip}:${basePath}`;
-    const now = Date.now();
-    const entry = rateLimitMap.get(key);
-
-    if (!entry || entry.resetAt <= now) {
-      rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-      next();
-      return;
-    }
-
-    entry.count++;
-    if (entry.count > maxRequests) {
-      res.status(429).json({ error: "rate limit exceeded" });
-      return;
-    }
-    next();
-  };
-}
+const webhookLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: false, legacyHeaders: false });
+const healthLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: false, legacyHeaders: false });
+const debugLimiter = rateLimit({ windowMs: 60_000, max: 5, standardHeaders: false, legacyHeaders: false });
 
 // ---------------------
 // Express app
@@ -258,7 +211,7 @@ export const app: express.Express = express();
 app.use(express.json({ limit: "100kb" }));
 app.use(express.text({ type: "text/plain", limit: "100kb" }));
 
-app.get("/health", rateLimit(60), (_req, res) => {
+app.get("/health", healthLimiter, (_req, res) => {
   const dedup = getDedupHealthState();
   res.json({
     status: "ok",
@@ -353,18 +306,11 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
     return;
   }
   if (sentAlerts.has(typedAlert.alert_id)) {
-    const ts = sentAlerts.get(typedAlert.alert_id)!;
-    if (Date.now() - ts <= CACHE_TTL_MS) {
-      log("info", "Duplicate alert (memory), skipping", {
-        alert_id: typedAlert.alert_id,
-      });
-      res.json({
-        status: "duplicate",
-        alert_id: typedAlert.alert_id,
-      });
-      return;
-    }
-    sentAlerts.delete(typedAlert.alert_id);
+    log("info", "Duplicate alert (memory), skipping", {
+      alert_id: typedAlert.alert_id,
+    });
+    res.json({ status: "duplicate", alert_id: typedAlert.alert_id });
+    return;
   }
 
   try {
@@ -386,7 +332,7 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
   }
 }
 
-app.post("/webhook/:token", rateLimit(30), async (req, res) => {
+app.post("/webhook/:token", webhookLimiter, async (req, res) => {
   if (WEBHOOK_SECRET) {
     const token = req.params.token;
     if (!token || !safeCompare(token, WEBHOOK_SECRET)) {
@@ -398,7 +344,7 @@ app.post("/webhook/:token", rateLimit(30), async (req, res) => {
   await handleWebhook(req, res);
 });
 
-app.post("/webhook", rateLimit(30), async (req, res) => {
+app.post("/webhook", webhookLimiter, async (req, res) => {
   if (WEBHOOK_SECRET) {
     let body: Record<string, unknown>;
     if (typeof req.body === "string") {
@@ -416,7 +362,7 @@ app.post("/webhook", rateLimit(30), async (req, res) => {
   await handleWebhook(req, res);
 });
 
-app.post("/debug", rateLimit(5), (req, res) => {
+app.post("/debug", debugLimiter, (req, res) => {
   const body = req.body as Record<string, unknown>;
   if (WEBHOOK_SECRET) {
     const provided = typeof body?.secret === "string" ? body.secret : "";

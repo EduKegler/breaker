@@ -325,6 +325,18 @@ BREAKER's research and restructure phases are powerful but dangerous. Each can a
 
 **Mitigation:** The `maxFreeVariables` gate (MR=6, Breakout=8) + rejection of +2/iteration in refine limits this. Before declaring success, count the `input()` calls in the final Pine. If it exceeded the profile limit, simplify by removing those with the least impact (ablation test: remove 1 at a time and see which makes the least difference -> candidate to cut).
 
+### 9. Leverage amplifies behavioral errors
+
+Leverage is a capital efficiency tool, not a profit multiplier. But psychologically it acts as one: seeing a larger notional position makes losses feel bigger, triggering revenge trading, premature stop-moving, or position increases.
+
+**Real risk:** A trader using 5x leverage who experiences a normal 3-trade losing streak (-3R = -3% of account) sees -15% drawdown on the position's notional value. This "feels" much worse than it is and triggers emotional overrides.
+
+**Mitigation:**
+- Hard cap at 5x in the playbook (see Leverage Policy section). Even 5x is only allowed after 3+ months of profitable live trading.
+- Ramp-up: start at 2x during Capital Deployment. Increase only after confirming emotional stability under drawdown.
+- Always think in R (risk units), never in $ notional. The leverage is invisible if your risk per trade is always 1% of account.
+- Isolated margin only: prevents one module's loss from liquidating another module's position.
+
 ---
 
 ## Backtest Period
@@ -503,6 +515,51 @@ slippage = 2              // protectedField -- conservative to cover microstruct
 - **Ramp-up:** first 1-2 weeks of live trading at 0.25-0.5% risk per trade. Scale to 1% after confirming live metrics match paper
 - **Calculation:** position = risk / stop distance
 
+### Leverage Policy (Hyperliquid BTC perps)
+
+**Max available:** 40x for BTC on Hyperliquid. **Max allowed by this playbook: 5x.** Hard rule.
+
+**Why leverage exists here:** Leverage does NOT change expectancy per trade. A 1% risk trade returns the same R whether at 1x or 10x. What leverage changes is **capital efficiency** -- how much collateral is locked per position, freeing the rest for other modules or as buffer against drawdown.
+
+**Margin modes:**
+
+| Mode | How it works | When to use |
+|------|-------------|-------------|
+| **Isolated** | Margin locked per position. Liquidation affects only that position. Other positions and free capital untouched. | **Default for all modules.** Prevents one bad trade from cascading. |
+| **Cross** | All positions share a single margin pool. Unrealized PnL from winners offsets losers. | Only if running portfolio margin optimization later (Phase 5+). NOT for initial deployment. |
+
+**Leverage tiers for this playbook:**
+
+| Phase | Max leverage | Rationale |
+|-------|-------------|-----------|
+| Paper trading | Any (no real capital) | Test freely, but log the leverage used |
+| Capital Deployment (weeks 1-2) | 2x | Ramp-up period. Conservative. Focus on execution quality, not returns |
+| Capital Deployment (weeks 3+) | 3x | Standard operating leverage after confirming live metrics |
+| Experienced (3+ months live) | 5x | Only if all modules are profitable and drawdown < 50% of max allowed |
+
+**Liquidation math (isolated margin, BTC at 40x max):**
+
+Maintenance margin = initial margin at max leverage / 2 = (1/40) / 2 = **1.25% of notional**.
+
+| Your leverage | Initial margin | Liq distance from entry (approx) |
+|--------------|---------------|----------------------------------|
+| 2x | 50% | ~49.4% |
+| 3x | 33.3% | ~32.9% |
+| 5x | 20% | ~19.4% |
+| 10x | 10% | ~9.4% |
+| 20x | 5% | ~4.4% |
+| 40x (max) | 2.5% | ~1.25% |
+
+> **Why 5x hard cap:** At 5x, liquidation is ~19% away from entry. BTC ATR Daily is typically 2-5%. Even a 3-sigma daily move (~10-15%) would not liquidate. At 10x+, a large wick during low-liquidity hours (21:00-00:00 UTC) can liquidate before your stop fires. The stop is your exit, not the liquidation engine.
+
+**Key rules:**
+
+1. **Stop must ALWAYS be closer than liquidation price.** If your ATR stop is at 3% and your liq price is at 4.4% (10x), you have only 1.4% buffer. That is too thin. At 3x (liq ~33%), you have 30% buffer. Safe.
+2. **Leverage is set per-position on Hyperliquid.** Each isolated position can have different leverage. MR (tight stops, frequent trades) can use 3x. Breakout (wider stops, less frequent) can use 2-3x.
+3. **Never use leverage to increase position size beyond 1% risk.** Leverage reduces collateral locked, it does NOT mean "bet bigger." If your 1% risk = $100, and stop distance = $1000, position = 0.1 BTC regardless of leverage. At 3x you just lock $3,166 collateral instead of $9,500.
+4. **Funding rate awareness:** At higher leverage, funding payments are proportionally larger relative to your margin. For MR (1-2h holds), negligible. For TF (multi-day holds at 3-5x), funding can erode 0.01-0.03% per hour. Monitor.
+5. **No leverage adjustment mid-trade.** Set leverage before entry. Increasing leverage on a losing position is equivalent to averaging down -- forbidden.
+
 ### Iron rules
 - Stop on 1H ATR (via request.security), avoid 15m ATR on BTC
 - **Positive expectancy required:** (WR x avgWin) > ((1-WR) x avgLoss) after fees. MR can have low R:R + high WR. Breakout/TC/TF naturally have high R:R + low WR. The test is expectancy, not R:R alone
@@ -529,6 +586,7 @@ Some rules are enforceable per-module in Pine Script. Others require an external
 | One position at a time across modules | **No** -- scripts don't see each other | Orchestrator (Phase 3) |
 | Daily loss 2R shutdown | **No** -- scripts don't share P&L | Orchestrator (Phase 3) |
 | Macro event blackout (CPI/FOMC/NFP) | **No** -- Pine has no calendar | Orchestrator (Phase 3) |
+| Leverage cap (5x max) | **No** -- Pine backtests don't model leverage/margin | Manual on Hyperliquid UI or orchestrator sets per-position |
 
 > **Implication:** The orchestrator is planned for Phase 3 (first item before parallel testing). A simple Python script receiving webhooks + economic calendar API solves 80% of these gaps.
 

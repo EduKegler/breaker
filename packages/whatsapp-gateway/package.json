@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "start": "node dist/server.js"
+    "start": "node --env-file=.env dist/server.js"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

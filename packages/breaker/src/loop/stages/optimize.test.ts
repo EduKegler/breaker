@@ -5,13 +5,12 @@ import { Readable } from "node:stream";
 // Mock child_process BEFORE importing the module under test
 vi.mock("node:child_process", () => ({
   execSync: vi.fn(),
-  execFileSync: vi.fn(),
   spawn: vi.fn(),
 }));
 
-import { execSync, execFileSync, spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import fs from "node:fs";
-import { runClaudeAsync, checkPineSyntax, optimizeStrategy, fixStrategy } from "./optimize.js";
+import { runClaudeAsync, extractParamOverrides, optimizeStrategy, fixStrategy } from "./optimize.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,7 +82,6 @@ describe("runClaudeAsync", () => {
     proc.stdout = new Readable({ read() {} });
     proc.stderr = new Readable({ read() {} });
     proc.kill = vi.fn(() => {
-      // Simulate the process closing after being killed
       setTimeout(() => {
         proc.stdout.push(null);
         proc.stderr.push(null);
@@ -115,46 +113,39 @@ describe("runClaudeAsync", () => {
     expect(result.status).toBeNull();
     expect(result.stderr).toContain("Killed: timeout");
   });
-
-  it("destroys stdout and stderr streams on timeout", async () => {
-    const proc = new EventEmitter() as any;
-    proc.stdout = new Readable({ read() {} });
-    proc.stderr = new Readable({ read() {} });
-    proc.kill = vi.fn();
-    const stdoutDestroy = vi.spyOn(proc.stdout, "destroy");
-    const stderrDestroy = vi.spyOn(proc.stderr, "destroy");
-    vi.mocked(spawn).mockReturnValue(proc as any);
-
-    await runClaudeAsync([], {
-      ...defaultOpts,
-      timeoutMs: 20,
-    });
-
-    expect(stdoutDestroy).toHaveBeenCalled();
-    expect(stderrDestroy).toHaveBeenCalled();
-  });
 });
 
 // ---------------------------------------------------------------------------
-// checkPineSyntax
+// extractParamOverrides
 // ---------------------------------------------------------------------------
 
-describe("checkPineSyntax", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
+describe("extractParamOverrides", () => {
+  it("extracts from JSON code block", () => {
+    const text = `I'll change dcSlow to 55.\n\`\`\`json\n{ "paramOverrides": { "dcSlow": 55 } }\n\`\`\`\nDone.`;
+    const result = extractParamOverrides(text);
+    expect(result).toEqual({ dcSlow: 55 });
   });
 
-  it("returns null when no errors in output", async () => {
-    vi.mocked(execFileSync).mockReturnValue("OK: no issues found\n");
-
-    const result = await checkPineSyntax("//@version=5\nstrategy('test')");
-
-    expect(result).toBeNull();
+  it("extracts from inline JSON", () => {
+    const text = `Output: { "paramOverrides": { "atrLen": 14, "rsiLen": 2 } }`;
+    const result = extractParamOverrides(text);
+    expect(result).toEqual({ atrLen: 14, rsiLen: 2 });
   });
 
-  it("always returns null (no-op stub — MCP server, not CLI)", async () => {
-    const result = await checkPineSyntax("bad pine code");
-    expect(result).toBeNull();
+  it("returns null when no paramOverrides found", () => {
+    const text = "I analyzed the strategy but couldn't find improvements.";
+    expect(extractParamOverrides(text)).toBeNull();
+  });
+
+  it("returns null for invalid JSON", () => {
+    const text = '{ "paramOverrides": { "bad": }}';
+    expect(extractParamOverrides(text)).toBeNull();
+  });
+
+  it("handles code block without json language tag", () => {
+    const text = "```\n{ \"paramOverrides\": { \"dcFast\": 10 } }\n```";
+    const result = extractParamOverrides(text);
+    expect(result).toEqual({ dcFast: 10 });
   });
 });
 
@@ -164,43 +155,23 @@ describe("checkPineSyntax", () => {
 
 describe("optimizeStrategy", () => {
   const baseOpts = {
+    prompt: "optimize prompt text",
+    strategyFile: "/repo/packages/backtest/src/strategies/donchian-adx.ts",
     repoRoot: "/repo",
-    resultJsonPath: "/repo/results.json",
-    iter: 1,
-    maxIter: 10,
-    asset: "BTC",
-    strategyFile: "/repo/assets/BTC/strategy.pine",
     model: "sonnet",
+    phase: "refine" as const,
+    artifactsDir: "/repo/artifacts",
+    globalIter: 1,
   };
 
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("returns success with changed=true when content differs after Claude", async () => {
-    // execFileSync: 1) build prompt (syntax check is now a no-op)
-    vi.mocked(execFileSync)
-      .mockReturnValueOnce("optimize prompt");
-    // spawn runs Claude
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
-    // readFileSync: first call returns before, second returns after (different)
-    const readSpy = vi.spyOn(fs, "readFileSync")
-      .mockReturnValueOnce("// before content")
-      .mockReturnValueOnce("// after content");
-    // execSync used for git diff
-    vi.mocked(execSync).mockReturnValueOnce("diff output here");
-    vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
-
-    const result = await optimizeStrategy(baseOpts);
-
-    expect(result.success).toBe(true);
-    expect(result.data?.changed).toBe(true);
-    readSpy.mockRestore();
-  });
-
-  it("returns success with changed=false when content is same", async () => {
-    vi.mocked(execFileSync).mockReturnValue("optimize prompt");
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
+  it("refine: returns paramOverrides from Claude's output", async () => {
+    vi.mocked(spawn).mockReturnValue(
+      createMockProcess(0, '```json\n{ "paramOverrides": { "dcSlow": 55 } }\n```') as any,
+    );
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// same content")
       .mockReturnValueOnce("// same content");
@@ -208,13 +179,94 @@ describe("optimizeStrategy", () => {
     const result = await optimizeStrategy(baseOpts);
 
     expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ dcSlow: 55 });
+    expect(result.data?.changeScale).toBe("parametric");
+    readSpy.mockRestore();
+  });
+
+  it("refine: returns changed=false when no paramOverrides in output", async () => {
+    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "no changes needed") as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
     expect(result.data?.changed).toBe(false);
-    expect(result.data?.diff).toBeUndefined();
+    readSpy.mockRestore();
+  });
+
+  it("refine: reverts file if Claude unexpectedly edited it", async () => {
+    vi.mocked(spawn).mockReturnValue(
+      createMockProcess(0, '{ "paramOverrides": { "dcSlow": 55 } }') as any,
+    );
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// before content")
+      .mockReturnValueOnce("// after changed unexpectedly");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(writeSpy).toHaveBeenCalledWith(baseOpts.strategyFile, "// before content", "utf8");
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ dcSlow: 55 });
+    readSpy.mockRestore();
+    writeSpy.mockRestore();
+  });
+
+  it("restructure: returns changed=true when file changed and typecheck passes", async () => {
+    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "restructured") as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// before")
+      .mockReturnValueOnce("// after changed");
+    vi.mocked(execSync)
+      .mockReturnValueOnce("") // typecheck passes
+      .mockReturnValueOnce("diff output"); // git diff
+    vi.spyOn(fs, "existsSync").mockReturnValue(false);
+
+    const result = await optimizeStrategy({ ...baseOpts, phase: "restructure" });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(true);
+    expect(result.data?.changeScale).toBe("structural");
+    readSpy.mockRestore();
+  });
+
+  it("restructure: reverts and returns error when typecheck fails", async () => {
+    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "restructured") as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// before")
+      .mockReturnValueOnce("// after changed");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
+    vi.mocked(execSync).mockImplementation(() => {
+      throw Object.assign(new Error("type error"), { stderr: "TS2345: blah" });
+    });
+
+    const result = await optimizeStrategy({ ...baseOpts, phase: "restructure" });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("typecheck_error");
+    expect(writeSpy).toHaveBeenCalledWith(baseOpts.strategyFile, "// before", "utf8");
+    readSpy.mockRestore();
+    writeSpy.mockRestore();
+  });
+
+  it("returns changed=false when restructure produces no file change", async () => {
+    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy({ ...baseOpts, phase: "restructure" });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(false);
     readSpy.mockRestore();
   });
 
   it("returns failure when Claude exits non-zero", async () => {
-    vi.mocked(execFileSync).mockReturnValue("optimize prompt");
     vi.mocked(spawn).mockReturnValue(createMockProcess(1, "", "claude error") as any);
     const readSpy = vi.spyOn(fs, "readFileSync").mockReturnValue("// content");
 
@@ -225,40 +277,9 @@ describe("optimizeStrategy", () => {
     readSpy.mockRestore();
   });
 
-  it("calls execFileSync to build prompt with correct args", async () => {
-    vi.mocked(execFileSync).mockReturnValue("prompt text");
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
-    const readSpy = vi.spyOn(fs, "readFileSync")
-      .mockReturnValue("// same");
-
-    await optimizeStrategy({
-      ...baseOpts,
-      xlsxPath: "/repo/data.xlsx",
-      phase: "refine",
-      researchBriefPath: "/repo/brief.md",
-    });
-
-    expect(execFileSync).toHaveBeenCalledWith(
-      "node",
-      expect.arrayContaining([
-        expect.stringContaining("build-optimize-prompt.js"),
-        "/repo/results.json",
-        "1",
-        "10",
-        "/repo/data.xlsx",
-        "--phase=refine",
-        "--research-brief-path=/repo/brief.md",
-      ]),
-      expect.objectContaining({ cwd: "/repo" }),
-    );
-    readSpy.mockRestore();
-  });
-
   it("invokes Claude with correct model and flags", async () => {
-    vi.mocked(execFileSync).mockReturnValue("prompt text");
     vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
-    const readSpy = vi.spyOn(fs, "readFileSync")
-      .mockReturnValue("// same");
+    const readSpy = vi.spyOn(fs, "readFileSync").mockReturnValue("// same");
 
     await optimizeStrategy(baseOpts);
 
@@ -275,91 +296,18 @@ describe("optimizeStrategy", () => {
     readSpy.mockRestore();
   });
 
-  it("succeeds even with changed content since syntax check is no-op", async () => {
-    vi.mocked(execFileSync).mockReturnValueOnce("optimize prompt");
+  it("uses max-turns 25 for restructure phase", async () => {
     vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
-    const readSpy = vi.spyOn(fs, "readFileSync")
-      .mockReturnValueOnce("// before content")
-      .mockReturnValueOnce("// bad syntax content");
-    vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
-    vi.mocked(execSync).mockReturnValueOnce("diff output");
+    const readSpy = vi.spyOn(fs, "readFileSync").mockReturnValue("// same");
 
-    const result = await optimizeStrategy(baseOpts);
+    await optimizeStrategy({ ...baseOpts, phase: "restructure" });
 
-    // checkPineSyntax is a no-op now — changed content always succeeds
-    expect(result.success).toBe(true);
-    expect(result.data?.changed).toBe(true);
+    expect(spawn).toHaveBeenCalledWith(
+      "claude",
+      expect.arrayContaining(["--max-turns", "25"]),
+      expect.any(Object),
+    );
     readSpy.mockRestore();
-  });
-
-  it("captures diff via git diff", async () => {
-    vi.mocked(execFileSync)
-      .mockReturnValueOnce("optimize prompt");
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
-    const readSpy = vi.spyOn(fs, "readFileSync")
-      .mockReturnValueOnce("// before")
-      .mockReturnValueOnce("// after changed");
-    // execSync used for git diff
-    vi.mocked(execSync).mockReturnValueOnce("--- a/file\n+++ b/file\n@@ -1 +1 @@\n-// before\n+// after changed\n");
-
-    const result = await optimizeStrategy(baseOpts);
-
-    expect(result.success).toBe(true);
-    expect(result.data?.diff).toContain("+++ b/file");
-    readSpy.mockRestore();
-  });
-
-  it('returns "(diff unavailable)" when git diff fails', async () => {
-    vi.mocked(execFileSync)
-      .mockReturnValueOnce("optimize prompt")
-      .mockReturnValueOnce("OK: no issues\n");
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
-    const readSpy = vi.spyOn(fs, "readFileSync")
-      .mockReturnValueOnce("// before")
-      .mockReturnValueOnce("// after changed");
-    // git diff throws
-    vi.mocked(execSync).mockImplementationOnce(() => { throw new Error("git error"); });
-
-    const result = await optimizeStrategy(baseOpts);
-
-    expect(result.success).toBe(true);
-    expect(result.data?.diff).toBe("(diff unavailable)");
-    readSpy.mockRestore();
-  });
-
-  it("reads changeScale from metadata file", async () => {
-    const optsWithArtifacts = {
-      ...baseOpts,
-      artifactsDir: "/repo/artifacts",
-      globalIter: 3,
-    };
-    vi.mocked(execFileSync)
-      .mockReturnValueOnce("optimize prompt")
-      .mockReturnValueOnce("OK: no issues\n");
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
-    const readSpy = vi.spyOn(fs, "readFileSync")
-      .mockReturnValueOnce("// before")
-      .mockReturnValueOnce("// after changed")
-      .mockReturnValueOnce(JSON.stringify({ changeApplied: { scale: "parametric" } }));
-    vi.mocked(execSync).mockReturnValueOnce("diff text");
-    vi.spyOn(fs, "existsSync").mockReturnValue(true);
-
-    const result = await optimizeStrategy(optsWithArtifacts);
-
-    expect(result.success).toBe(true);
-    expect(result.data?.changeScale).toBe("parametric");
-    readSpy.mockRestore();
-  });
-
-  it("returns failure when prompt build fails (execFileSync throws)", async () => {
-    vi.mocked(execFileSync).mockImplementation(() => {
-      throw new Error("node script failed");
-    });
-
-    const result = await optimizeStrategy(baseOpts);
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("node script failed");
   });
 });
 
@@ -369,42 +317,68 @@ describe("optimizeStrategy", () => {
 
 describe("fixStrategy", () => {
   const fixOpts = {
+    prompt: "fix prompt text",
+    strategyFile: "/repo/packages/backtest/src/strategies/donchian-adx.ts",
     repoRoot: "/repo",
-    model: "sonnet",
+    model: "haiku",
   };
 
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("returns success on happy path", async () => {
-    vi.mocked(execFileSync).mockReturnValue("fix prompt text");
+  it("returns success when Claude fixes and typecheck passes", async () => {
     vi.mocked(spawn).mockReturnValue(createMockProcess(0, "fixed") as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// before")
+      .mockReturnValueOnce("// after fixed");
+    vi.mocked(execSync).mockReturnValue(""); // typecheck passes
 
     const result = await fixStrategy(fixOpts);
 
     expect(result.success).toBe(true);
     expect(result.data?.changed).toBe(true);
+    readSpy.mockRestore();
+  });
+
+  it("reverts and returns failure when typecheck still fails after fix", async () => {
+    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "tried fixing") as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// before")
+      .mockReturnValueOnce("// after still broken");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
+    vi.mocked(execSync).mockImplementation(() => { throw new Error("TS error"); });
+
+    const result = await fixStrategy(fixOpts);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("typecheck errors");
+    expect(writeSpy).toHaveBeenCalledWith(fixOpts.strategyFile, "// before", "utf8");
+    readSpy.mockRestore();
+    writeSpy.mockRestore();
+  });
+
+  it("returns success with changed=false when file unchanged", async () => {
+    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "no changes") as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await fixStrategy(fixOpts);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(false);
+    readSpy.mockRestore();
   });
 
   it("returns failure when Claude exits non-zero", async () => {
-    vi.mocked(execFileSync).mockReturnValue("fix prompt text");
     vi.mocked(spawn).mockReturnValue(createMockProcess(1, "", "fix error") as any);
+    const readSpy = vi.spyOn(fs, "readFileSync").mockReturnValue("// content");
 
     const result = await fixStrategy(fixOpts);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("exited with code 1");
-  });
-
-  it("returns failure when execFileSync throws", async () => {
-    vi.mocked(execFileSync).mockImplementation(() => {
-      throw new Error("build-fix-prompt not found");
-    });
-
-    const result = await fixStrategy(fixOpts);
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("build-fix-prompt not found");
+    readSpy.mockRestore();
   });
 });

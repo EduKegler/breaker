@@ -1,4 +1,4 @@
-import { execSync, execFileSync, spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { StageResult } from "../types.js";
@@ -7,6 +7,7 @@ export interface OptimizeResult {
   changed: boolean;
   diff?: string;
   changeScale?: "parametric" | "structural";
+  paramOverrides?: Record<string, number>;
 }
 
 function log(msg: string): void {
@@ -62,83 +63,63 @@ export function runClaudeAsync(
 }
 
 /**
- * Check Pine Script syntax.
- *
- * pinescript-syntax-checker is an MCP server (JSON-RPC over stdio),
- * not a CLI that accepts Pine code on stdin. It cannot be invoked
- * via execFileSync. Syntax validation happens in two other places:
- * 1. The Claude agent inside the loop uses the MCP tool directly.
- * 2. TradingView's compiler catches errors during the next backtest.
- *
- * This function is a no-op stub kept for API compatibility.
+ * Extract paramOverrides JSON from Claude's text output.
+ * Looks for { "paramOverrides": { ... } } in code blocks or inline.
  */
-export async function checkPineSyntax(_pineCode: string): Promise<string | null> {
+export function extractParamOverrides(text: string): Record<string, number> | null {
+  // Try JSON code block first
+  const codeBlockMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?"paramOverrides"[\s\S]*?\})\s*```/);
+  if (codeBlockMatch) {
+    try {
+      const parsed = JSON.parse(codeBlockMatch[1]);
+      if (parsed.paramOverrides && typeof parsed.paramOverrides === "object") {
+        return parsed.paramOverrides;
+      }
+    } catch { /* try next pattern */ }
+  }
+
+  // Try inline JSON
+  const inlineMatch = text.match(/\{\s*"paramOverrides"\s*:\s*\{[^}]*\}\s*\}/);
+  if (inlineMatch) {
+    try {
+      const parsed = JSON.parse(inlineMatch[0]);
+      if (parsed.paramOverrides && typeof parsed.paramOverrides === "object") {
+        return parsed.paramOverrides;
+      }
+    } catch { /* ignore */ }
+  }
+
   return null;
 }
 
 /**
- * Build optimization prompt and invoke Claude CLI to optimize the strategy.
+ * Invoke Claude CLI with a pre-built optimization prompt.
+ * In refine phase: parses paramOverrides from Claude's output.
+ * In restructure phase: checks if file changed, runs typecheck.
  */
 export async function optimizeStrategy(opts: {
-  repoRoot: string;
-  resultJsonPath: string;
-  iter: number;
-  maxIter: number;
-  asset: string;
-  strategy?: string;
+  prompt: string;
   strategyFile: string;
+  repoRoot: string;
   model: string;
-  xlsxPath?: string;
-  phase?: string;
-  researchBriefPath?: string;
-  artifactsDir?: string;
-  globalIter?: number;
+  phase: string;
+  artifactsDir: string;
+  globalIter: number;
   timeoutMs?: number;
 }): Promise<StageResult<OptimizeResult>> {
-  const { repoRoot, resultJsonPath, iter, maxIter, asset, strategy, strategyFile, model, xlsxPath, phase, researchBriefPath, artifactsDir, globalIter, timeoutMs = 900000 } = opts;
-
-  const env = {
-    ...process.env,
-    ASSET: asset,
-    ...(strategy ? { STRATEGY: strategy } : {}),
-    PINE_FILE: strategyFile,
-    REPO_ROOT: repoRoot,
-    ...(artifactsDir ? { ARTIFACTS_DIR: artifactsDir } : {}),
-  };
+  const { prompt, strategyFile, repoRoot, model, phase, artifactsDir, globalIter, timeoutMs = 900000 } = opts;
 
   try {
-    // Step 1: Build optimization prompt
-    const promptArgs = [resultJsonPath, String(iter), String(maxIter)];
-    if (xlsxPath) promptArgs.push(xlsxPath);
-    const namedArgs: string[] = [];
-    if (phase) namedArgs.push(`--phase=${phase}`);
-    if (researchBriefPath) namedArgs.push(`--research-brief-path=${researchBriefPath}`);
-    const allArgs = [...promptArgs, ...namedArgs];
-    const prompt = execFileSync(
-      "node",
-      [path.join(repoRoot, "dist/automation/build-optimize-prompt.js"), ...allArgs],
-      {
-        env,
-        cwd: repoRoot,
-        timeout: 30000,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-
-    // Step 2: Save before-state for diff
     const beforeContent = fs.readFileSync(strategyFile, "utf8");
-
-    // Step 3: Invoke Claude CLI with periodic progress logs
     const maxTurns = phase === "restructure" ? 25 : 12;
     log(`  [optimize] prompt size: ${prompt.length} chars, model: ${model}, max-turns: ${maxTurns}`);
+
     const result = await runClaudeAsync(
       ["--model", model, "--dangerously-skip-permissions", "--max-turns", String(maxTurns), "-p", prompt],
-      { env, cwd: repoRoot, timeoutMs, label: "optimize" },
+      { env: process.env as NodeJS.ProcessEnv, cwd: repoRoot, timeoutMs, label: "optimize" },
     );
 
     if (result.status !== 0) {
-      // Log stdout/stderr for debugging
       if (result.stdout) log(`  [optimize] stdout (last 500): ${result.stdout.slice(-500)}`);
       if (result.stderr) log(`  [optimize] stderr (last 500): ${result.stderr.slice(-500)}`);
       return {
@@ -147,58 +128,77 @@ export async function optimizeStrategy(opts: {
       };
     }
 
-    // Step 4: Check if anything changed
     const afterContent = fs.readFileSync(strategyFile, "utf8");
-    const changed = beforeContent !== afterContent;
+    const fileChanged = beforeContent !== afterContent;
 
-    // Step 4b: Syntax check if changed
-    if (changed) {
-      const syntaxError = await checkPineSyntax(afterContent);
-      if (syntaxError) {
-        log(`Syntax check FAILED: ${syntaxError.slice(0, 200)}`);
-        // Revert to before state
+    // Refine phase: extract paramOverrides from Claude's output
+    if (phase === "refine") {
+      // Safety: if file changed during refine (unexpected), revert
+      if (fileChanged) {
+        log(`  [optimize] WARNING: file changed during refine phase — reverting`);
         fs.writeFileSync(strategyFile, beforeContent, "utf8");
-        return {
-          success: false,
-          error: `syntax_error: ${syntaxError}`,
-          errorClass: "compile_error",
-        };
       }
-      log("Syntax check passed");
+
+      const paramOverrides = extractParamOverrides(result.stdout);
+      if (!paramOverrides || Object.keys(paramOverrides).length === 0) {
+        return { success: true, data: { changed: false } };
+      }
+
+      return {
+        success: true,
+        data: { changed: true, changeScale: "parametric", paramOverrides },
+      };
+    }
+
+    // Restructure/research phase: check if file changed, typecheck
+    if (!fileChanged) {
+      return { success: true, data: { changed: false } };
+    }
+
+    // Typecheck the modified strategy
+    try {
+      execSync("pnpm --filter @trading/backtest typecheck", {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 30000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      log("  [optimize] Typecheck passed");
+    } catch (err) {
+      const errMsg = (err as { stderr?: string }).stderr ?? (err as Error).message;
+      log(`  [optimize] Typecheck FAILED: ${errMsg.slice(0, 300)}`);
+      fs.writeFileSync(strategyFile, beforeContent, "utf8");
+      return {
+        success: false,
+        error: `typecheck_error: ${errMsg.slice(0, 500)}`,
+        errorClass: "compile_error",
+      };
     }
 
     let diff: string | undefined;
-    let changeScale: "parametric" | "structural" | undefined;
-    if (changed) {
-      try {
-        diff = execSync(`git diff --no-color "${strategyFile}"`, {
-          cwd: repoRoot,
-          encoding: "utf8",
-          timeout: 5000,
-        });
-      } catch {
-        diff = "(diff unavailable)";
-      }
-
-      // Read metadata to get changeScale
-      if (artifactsDir) {
-        try {
-          const metaPath = path.join(artifactsDir, `iter${globalIter ?? iter}-metadata.json`);
-          const candidates = [metaPath];
-          for (const mp of candidates) {
-            if (fs.existsSync(mp)) {
-              const meta = JSON.parse(fs.readFileSync(mp, "utf8"));
-              changeScale = meta.changeApplied?.scale;
-              break;
-            }
-          }
-        } catch { /* ignore */ }
-      }
+    try {
+      diff = execSync(`git diff --no-color "${strategyFile}"`, {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 5000,
+      });
+    } catch {
+      diff = "(diff unavailable)";
     }
+
+    // Read metadata for changeScale
+    let changeScale: "parametric" | "structural" | undefined;
+    try {
+      const metaPath = path.join(artifactsDir, `iter${globalIter}-metadata.json`);
+      if (fs.existsSync(metaPath)) {
+        const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+        changeScale = meta.changeApplied?.scale;
+      }
+    } catch { /* ignore */ }
 
     return {
       success: true,
-      data: { changed, diff, changeScale },
+      data: { changed: true, diff, changeScale: changeScale ?? "structural" },
     };
   } catch (err) {
     return {
@@ -209,28 +209,19 @@ export async function optimizeStrategy(opts: {
 }
 
 /**
- * Build fix prompt and invoke Claude CLI to fix compilation errors.
+ * Invoke Claude CLI with a pre-built fix prompt for TypeScript compilation errors.
  */
 export async function fixStrategy(opts: {
+  prompt: string;
+  strategyFile: string;
   repoRoot: string;
   model: string;
 }): Promise<StageResult<OptimizeResult>> {
-  const { repoRoot, model } = opts;
+  const { prompt, strategyFile, repoRoot, model } = opts;
 
   try {
-    // Build fix prompt
-    const prompt = execFileSync(
-      "node",
-      [path.join(repoRoot, "dist/automation/build-fix-prompt.js")],
-      {
-        cwd: repoRoot,
-        timeout: 15000,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+    const beforeContent = fs.readFileSync(strategyFile, "utf8");
 
-    // Invoke Claude CLI with periodic progress logs
     const result = await runClaudeAsync(
       ["--model", model, "--dangerously-skip-permissions", "-p", prompt],
       { env: process.env as NodeJS.ProcessEnv, cwd: repoRoot, timeoutMs: 180000, label: "fix" },
@@ -243,7 +234,29 @@ export async function fixStrategy(opts: {
       };
     }
 
-    return { success: true, data: { changed: true } };
+    const afterContent = fs.readFileSync(strategyFile, "utf8");
+    const changed = beforeContent !== afterContent;
+
+    // Verify typecheck after fix
+    if (changed) {
+      try {
+        execSync("pnpm --filter @trading/backtest typecheck", {
+          cwd: repoRoot,
+          encoding: "utf8",
+          timeout: 30000,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch {
+        fs.writeFileSync(strategyFile, beforeContent, "utf8");
+        return {
+          success: false,
+          error: "Fix attempt did not resolve typecheck errors",
+          errorClass: "compile_error",
+        };
+      }
+    }
+
+    return { success: true, data: { changed } };
   } catch (err) {
     return {
       success: false,

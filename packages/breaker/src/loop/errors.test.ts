@@ -3,14 +3,16 @@ import { classifyError, backoffDelay } from "./errors.js";
 
 describe("classifyError", () => {
   it("detects compile errors", () => {
-    expect(classifyError("Script tem 3 erro(s) de compilacao")).toBe("compile_error");
     expect(classifyError("compilation error on line 42")).toBe("compile_error");
     expect(classifyError("syntax error")).toBe("compile_error");
+    expect(classifyError("typecheck failed")).toBe("compile_error");
+    expect(classifyError("tsc exited with code 1")).toBe("compile_error");
   });
 
   it("detects timeouts", () => {
     expect(classifyError("Timeout 60000ms exceeded")).toBe("timeout");
-    expect(classifyError("waitFor selector timed out")).toBe("timeout");
+    expect(classifyError("timed out waiting")).toBe("timeout");
+    expect(classifyError("ETIMEDOUT")).toBe("timeout");
   });
 
   it("detects network errors", () => {
@@ -19,16 +21,9 @@ describe("classifyError", () => {
     expect(classifyError("fetch failed")).toBe("network");
   });
 
-  it("detects stale xlsx", () => {
-    expect(classifyError("stale xlsx detected")).toBe("stale_xlsx");
-    expect(classifyError("token nao confirmado")).toBe("stale_xlsx");
-    expect(classifyError("token not confirmed")).toBe("stale_xlsx");
-  });
-
-  it("detects transient UI errors", () => {
-    expect(classifyError("Target closed")).toBe("transient_ui");
-    expect(classifyError("browser has been disconnected")).toBe("transient_ui");
-    expect(classifyError("Protocol error: Connection closed")).toBe("transient_ui");
+  it("detects transient errors", () => {
+    expect(classifyError("ENOENT: no such file")).toBe("transient");
+    expect(classifyError("spawn ENOENT")).toBe("transient");
   });
 
   it("returns unknown for unrecognized errors", () => {

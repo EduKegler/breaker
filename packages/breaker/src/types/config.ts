@@ -47,10 +47,20 @@ export const GuardrailsSchema = z.object({
   protectedFields: z.array(z.string()),
 });
 
+export const StrategyDateRangeSchema = z.object({
+  start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
 export const StrategyEntrySchema = z.object({
-  chartUrl: z.string().url(),
+  coin: z.string().min(1).optional(),
+  dataSource: z.string().min(1).optional(),
+  interval: z.string().min(1).optional(),
+  strategyFactory: z.string().min(1).optional(),
   profile: z.string().optional(),
-  dateRange: DateRangeSchema.optional(),
+  dateRange: z.union([DateRangeSchema, StrategyDateRangeSchema]).optional(),
+  // Legacy field — kept for migration period only
+  chartUrl: z.string().url().optional(),
 });
 
 export const AssetConfigSchema = z.object({
@@ -161,6 +171,7 @@ export type ScoringWeights = z.infer<typeof ScoringWeightsSchema>;
 export type ResearchConfig = z.infer<typeof ResearchConfigSchema>;
 export type BreakerConfig = z.infer<typeof BreakerConfigSchema>;
 export type CoreParameterDef = z.infer<typeof CoreParameterDefSchema>;
+export type StrategyDateRange = z.infer<typeof StrategyDateRangeSchema>;
 export type ResolvedCriteria = Criteria & {
   maxFreeVariables?: number;
   maxIterations?: number;

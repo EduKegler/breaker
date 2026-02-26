@@ -15,7 +15,8 @@
 ```
 trading/
 ├── packages/
-│   ├── breaker/          — backtesting automation & optimization
+│   ├── backtest/         — backtesting engine, indicators, strategies & candle data
+│   ├── breaker/          — automated strategy optimization loop
 │   ├── hl-broker/        — Hyperliquid order execution & position management
 │   ├── webhook/          — TradingView alert receiver & forwarder
 │   └── whatsapp-gateway/ — WhatsApp messaging via Evolution API

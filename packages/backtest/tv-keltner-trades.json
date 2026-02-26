@@ -1,0 +1,1102 @@
+[
+  {
+    "tradeNum": 1,
+    "direction": "long",
+    "entryTimestamp": 1752826500000,
+    "entryPrice": 119378.1,
+    "exitTimestamp": 1752834600000,
+    "exitPrice": 118905,
+    "exitSignal": "Timeout",
+    "pnl": -4.82
+  },
+  {
+    "tradeNum": 2,
+    "direction": "long",
+    "entryTimestamp": 1756169100000,
+    "entryPrice": 109244.2,
+    "exitTimestamp": 1756177200000,
+    "exitPrice": 109734.3,
+    "exitSignal": "Timeout",
+    "pnl": 3.09
+  },
+  {
+    "tradeNum": 3,
+    "direction": "long",
+    "entryTimestamp": 1760167800000,
+    "entryPrice": 110855.1,
+    "exitTimestamp": 1760175900000,
+    "exitPrice": 111886.2,
+    "exitSignal": "Timeout",
+    "pnl": 3.24
+  },
+  {
+    "tradeNum": 4,
+    "direction": "long",
+    "entryTimestamp": 1760211900000,
+    "entryPrice": 111164.7,
+    "exitTimestamp": 1760220000000,
+    "exitPrice": 110987.9,
+    "exitSignal": "Timeout",
+    "pnl": -1.56
+  },
+  {
+    "tradeNum": 5,
+    "direction": "long",
+    "entryTimestamp": 1760229000000,
+    "entryPrice": 110008.7,
+    "exitTimestamp": 1760237100000,
+    "exitPrice": 110331.8,
+    "exitSignal": "Timeout",
+    "pnl": 1.3
+  },
+  {
+    "tradeNum": 6,
+    "direction": "short",
+    "entryTimestamp": 1760282100000,
+    "entryPrice": 113258.6,
+    "exitTimestamp": 1760287500000,
+    "exitPrice": 114712.7,
+    "exitSignal": "Short TP1",
+    "pnl": -6.42
+  },
+  {
+    "tradeNum": 7,
+    "direction": "short",
+    "entryTimestamp": 1760282100000,
+    "entryPrice": 113258.6,
+    "exitTimestamp": 1760287500000,
+    "exitPrice": 114712.7,
+    "exitSignal": "Short TP2",
+    "pnl": -4.28
+  },
+  {
+    "tradeNum": 8,
+    "direction": "long",
+    "entryTimestamp": 1760355000000,
+    "entryPrice": 113726.8,
+    "exitTimestamp": 1760362200000,
+    "exitPrice": 114941,
+    "exitSignal": "Long TP",
+    "pnl": 9.3
+  },
+  {
+    "tradeNum": 9,
+    "direction": "long",
+    "entryTimestamp": 1760531400000,
+    "entryPrice": 111558.5,
+    "exitTimestamp": 1760539500000,
+    "exitPrice": 111409,
+    "exitSignal": "Timeout",
+    "pnl": -2.01
+  },
+  {
+    "tradeNum": 10,
+    "direction": "long",
+    "entryTimestamp": 1760624100000,
+    "entryPrice": 110148.2,
+    "exitTimestamp": 1760625000000,
+    "exitPrice": 111143.1,
+    "exitSignal": "Long TP",
+    "pnl": 6.89
+  },
+  {
+    "tradeNum": 11,
+    "direction": "long",
+    "entryTimestamp": 1760629500000,
+    "entryPrice": 109145.9,
+    "exitTimestamp": 1760631300000,
+    "exitPrice": 107761.4,
+    "exitSignal": "Long TP",
+    "pnl": -10.64
+  },
+  {
+    "tradeNum": 12,
+    "direction": "long",
+    "entryTimestamp": 1760682600000,
+    "entryPrice": 107822.8,
+    "exitTimestamp": 1760684400000,
+    "exitPrice": 106514.1,
+    "exitSignal": "Long TP",
+    "pnl": -10.74
+  },
+  {
+    "tradeNum": 13,
+    "direction": "long",
+    "entryTimestamp": 1760688900000,
+    "entryPrice": 105126.4,
+    "exitTimestamp": 1760696100000,
+    "exitPrice": 103656.8,
+    "exitSignal": "Long TP",
+    "pnl": -10.64
+  },
+  {
+    "tradeNum": 14,
+    "direction": "long",
+    "entryTimestamp": 1761093000000,
+    "entryPrice": 108076.9,
+    "exitTimestamp": 1761101100000,
+    "exitPrice": 108352,
+    "exitSignal": "Timeout",
+    "pnl": 0.99
+  },
+  {
+    "tradeNum": 15,
+    "direction": "long",
+    "entryTimestamp": 1761117300000,
+    "entryPrice": 107700.2,
+    "exitTimestamp": 1761118200000,
+    "exitPrice": 108314.7,
+    "exitSignal": "Long TP",
+    "pnl": 3.71
+  },
+  {
+    "tradeNum": 16,
+    "direction": "long",
+    "entryTimestamp": 1761168600000,
+    "entryPrice": 106756.4,
+    "exitTimestamp": 1761174900000,
+    "exitPrice": 107794,
+    "exitSignal": "Long TP",
+    "pnl": 6.75
+  },
+  {
+    "tradeNum": 17,
+    "direction": "short",
+    "entryTimestamp": 1761201000000,
+    "entryPrice": 109934.1,
+    "exitTimestamp": 1761209100000,
+    "exitPrice": 109642.8,
+    "exitSignal": "Timeout",
+    "pnl": 1.67
+  },
+  {
+    "tradeNum": 18,
+    "direction": "long",
+    "entryTimestamp": 1761798600000,
+    "entryPrice": 108393.7,
+    "exitTimestamp": 1761805800000,
+    "exitPrice": 110467.3,
+    "exitSignal": "Long TP",
+    "pnl": 15.14
+  },
+  {
+    "tradeNum": 19,
+    "direction": "long",
+    "entryTimestamp": 1761827400000,
+    "entryPrice": 108769.8,
+    "exitTimestamp": 1761831000000,
+    "exitPrice": 107343.4,
+    "exitSignal": "Long TP",
+    "pnl": -10.68
+  },
+  {
+    "tradeNum": 20,
+    "direction": "long",
+    "entryTimestamp": 1761845400000,
+    "entryPrice": 107123.2,
+    "exitTimestamp": 1761853500000,
+    "exitPrice": 106712,
+    "exitSignal": "Timeout",
+    "pnl": -3.45
+  },
+  {
+    "tradeNum": 21,
+    "direction": "short",
+    "entryTimestamp": 1761872400000,
+    "entryPrice": 109322.7,
+    "exitTimestamp": 1761880500000,
+    "exitPrice": 109026.1,
+    "exitSignal": "Timeout",
+    "pnl": 1.41
+  },
+  {
+    "tradeNum": 22,
+    "direction": "long",
+    "entryTimestamp": 1761930000000,
+    "entryPrice": 108788.7,
+    "exitTimestamp": 1761938100000,
+    "exitPrice": 109299.8,
+    "exitSignal": "Timeout",
+    "pnl": 2.97
+  },
+  {
+    "tradeNum": 23,
+    "direction": "long",
+    "entryTimestamp": 1762234200000,
+    "entryPrice": 105646.2,
+    "exitTimestamp": 1762235100000,
+    "exitPrice": 104306.6,
+    "exitSignal": "Long TP",
+    "pnl": -10.69
+  },
+  {
+    "tradeNum": 24,
+    "direction": "long",
+    "entryTimestamp": 1762244100000,
+    "entryPrice": 103840.3,
+    "exitTimestamp": 1762252200000,
+    "exitPrice": 103715.9,
+    "exitSignal": "Timeout",
+    "pnl": -1.46
+  },
+  {
+    "tradeNum": 25,
+    "direction": "long",
+    "entryTimestamp": 1762306200000,
+    "entryPrice": 99101.3,
+    "exitTimestamp": 1762307100000,
+    "exitPrice": 100747.3,
+    "exitSignal": "Long TP",
+    "pnl": 8.35
+  },
+  {
+    "tradeNum": 26,
+    "direction": "long",
+    "entryTimestamp": 1762392600000,
+    "entryPrice": 102850.2,
+    "exitTimestamp": 1762398900000,
+    "exitPrice": 103587.5,
+    "exitSignal": "Long TP",
+    "pnl": 5.19
+  },
+  {
+    "tradeNum": 27,
+    "direction": "long",
+    "entryTimestamp": 1762447500000,
+    "entryPrice": 100554.1,
+    "exitTimestamp": 1762454700000,
+    "exitPrice": 102305.3,
+    "exitSignal": "Long TP",
+    "pnl": 12.84
+  },
+  {
+    "tradeNum": 28,
+    "direction": "long",
+    "entryTimestamp": 1762507800000,
+    "entryPrice": 100991,
+    "exitTimestamp": 1762514100000,
+    "exitPrice": 99836.3,
+    "exitSignal": "Long TP",
+    "pnl": -10.74
+  },
+  {
+    "tradeNum": 29,
+    "direction": "long",
+    "entryTimestamp": 1762518600000,
+    "entryPrice": 99894.1,
+    "exitTimestamp": 1762526700000,
+    "exitPrice": 100763.4,
+    "exitSignal": "Timeout",
+    "pnl": 6.62
+  },
+  {
+    "tradeNum": 30,
+    "direction": "long",
+    "entryTimestamp": 1762604100000,
+    "entryPrice": 101708.9,
+    "exitTimestamp": 1762612200000,
+    "exitPrice": 101683.6,
+    "exitSignal": "Timeout",
+    "pnl": -1.13
+  },
+  {
+    "tradeNum": 31,
+    "direction": "short",
+    "entryTimestamp": 1762735500000,
+    "entryPrice": 106045.8,
+    "exitTimestamp": 1762743600000,
+    "exitPrice": 106005.7,
+    "exitSignal": "Timeout",
+    "pnl": -0.52
+  },
+  {
+    "tradeNum": 32,
+    "direction": "long",
+    "entryTimestamp": 1762787700000,
+    "entryPrice": 105001.2,
+    "exitTimestamp": 1762795800000,
+    "exitPrice": 105353.7,
+    "exitSignal": "Timeout",
+    "pnl": 2.32
+  },
+  {
+    "tradeNum": 33,
+    "direction": "long",
+    "entryTimestamp": 1762867800000,
+    "entryPrice": 104355.2,
+    "exitTimestamp": 1762875900000,
+    "exitPrice": 103542.9,
+    "exitSignal": "Timeout",
+    "pnl": -8.31
+  },
+  {
+    "tradeNum": 34,
+    "direction": "long",
+    "entryTimestamp": 1762883100000,
+    "entryPrice": 102987.3,
+    "exitTimestamp": 1762891200000,
+    "exitPrice": 103110,
+    "exitSignal": "Timeout",
+    "pnl": 0.27
+  },
+  {
+    "tradeNum": 35,
+    "direction": "short",
+    "entryTimestamp": 1763015400000,
+    "entryPrice": 103577.2,
+    "exitTimestamp": 1763023500000,
+    "exitPrice": 103802.3,
+    "exitSignal": "Timeout",
+    "pnl": -2.53
+  },
+  {
+    "tradeNum": 36,
+    "direction": "long",
+    "entryTimestamp": 1763053200000,
+    "entryPrice": 100609.1,
+    "exitTimestamp": 1763057700000,
+    "exitPrice": 99197.4,
+    "exitSignal": "Long TP",
+    "pnl": -10.69
+  },
+  {
+    "tradeNum": 37,
+    "direction": "long",
+    "entryTimestamp": 1763095500000,
+    "entryPrice": 97554.8,
+    "exitTimestamp": 1763102700000,
+    "exitPrice": 96065.5,
+    "exitSignal": "Long TP",
+    "pnl": -10.63
+  },
+  {
+    "tradeNum": 38,
+    "direction": "long",
+    "entryTimestamp": 1763122500000,
+    "entryPrice": 95589.3,
+    "exitTimestamp": 1763130600000,
+    "exitPrice": 95336.5,
+    "exitSignal": "Timeout",
+    "pnl": -2.12
+  },
+  {
+    "tradeNum": 39,
+    "direction": "long",
+    "entryTimestamp": 1763239500000,
+    "entryPrice": 95398.1,
+    "exitTimestamp": 1763247600000,
+    "exitPrice": 95565.1,
+    "exitSignal": "Timeout",
+    "pnl": 0.8
+  },
+  {
+    "tradeNum": 40,
+    "direction": "long",
+    "entryTimestamp": 1763386200000,
+    "entryPrice": 94530.3,
+    "exitTimestamp": 1763387100000,
+    "exitPrice": 93503.4,
+    "exitSignal": "Long TP",
+    "pnl": -10.83
+  },
+  {
+    "tradeNum": 41,
+    "direction": "long",
+    "entryTimestamp": 1763396100000,
+    "entryPrice": 93126.1,
+    "exitTimestamp": 1763404200000,
+    "exitPrice": 92375.9,
+    "exitSignal": "Timeout",
+    "pnl": -6.14
+  },
+  {
+    "tradeNum": 42,
+    "direction": "long",
+    "entryTimestamp": 1763435700000,
+    "entryPrice": 90303.2,
+    "exitTimestamp": 1763443800000,
+    "exitPrice": 90107.9,
+    "exitSignal": "Timeout",
+    "pnl": -1.99
+  },
+  {
+    "tradeNum": 43,
+    "direction": "short",
+    "entryTimestamp": 1763479800000,
+    "entryPrice": 92770.5,
+    "exitTimestamp": 1763487900000,
+    "exitPrice": 93317.3,
+    "exitSignal": "Timeout",
+    "pnl": -4.69
+  },
+  {
+    "tradeNum": 44,
+    "direction": "long",
+    "entryTimestamp": 1763527500000,
+    "entryPrice": 91385.9,
+    "exitTimestamp": 1763531100000,
+    "exitPrice": 90115.9,
+    "exitSignal": "Long TP",
+    "pnl": -10.48
+  },
+  {
+    "tradeNum": 45,
+    "direction": "long",
+    "entryTimestamp": 1763568000000,
+    "entryPrice": 89893.7,
+    "exitTimestamp": 1763576100000,
+    "exitPrice": 89600.1,
+    "exitSignal": "Timeout",
+    "pnl": -3.15
+  },
+  {
+    "tradeNum": 46,
+    "direction": "short",
+    "entryTimestamp": 1763604900000,
+    "entryPrice": 92627.7,
+    "exitTimestamp": 1763613000000,
+    "exitPrice": 92248.6,
+    "exitSignal": "Timeout",
+    "pnl": 2.04
+  },
+  {
+    "tradeNum": 47,
+    "direction": "long",
+    "entryTimestamp": 1763648100000,
+    "entryPrice": 90639.3,
+    "exitTimestamp": 1763654400000,
+    "exitPrice": 89471.7,
+    "exitSignal": "Long TP",
+    "pnl": -10.7
+  },
+  {
+    "tradeNum": 48,
+    "direction": "long",
+    "entryTimestamp": 1763658900000,
+    "entryPrice": 86950.2,
+    "exitTimestamp": 1763667000000,
+    "exitPrice": 86822.9,
+    "exitSignal": "Timeout",
+    "pnl": -1.42
+  },
+  {
+    "tradeNum": 49,
+    "direction": "long",
+    "entryTimestamp": 1763693100000,
+    "entryPrice": 85808.1,
+    "exitTimestamp": 1763701200000,
+    "exitPrice": 85972.9,
+    "exitSignal": "Timeout",
+    "pnl": 0.55
+  },
+  {
+    "tradeNum": 50,
+    "direction": "long",
+    "entryTimestamp": 1763712000000,
+    "entryPrice": 83943.4,
+    "exitTimestamp": 1763717400000,
+    "exitPrice": 82456.1,
+    "exitSignal": "Long TP",
+    "pnl": -10.5
+  },
+  {
+    "tradeNum": 51,
+    "direction": "long",
+    "entryTimestamp": 1763728200000,
+    "entryPrice": 80880.4,
+    "exitTimestamp": 1763729100000,
+    "exitPrice": 82961.4,
+    "exitSignal": "Long TP",
+    "pnl": 10.54
+  },
+  {
+    "tradeNum": 52,
+    "direction": "short",
+    "entryTimestamp": 1763861400000,
+    "entryPrice": 85493.8,
+    "exitTimestamp": 1763869500000,
+    "exitPrice": 86041.7,
+    "exitSignal": "Timeout",
+    "pnl": -5.86
+  },
+  {
+    "tradeNum": 53,
+    "direction": "short",
+    "entryTimestamp": 1763901000000,
+    "entryPrice": 86749.7,
+    "exitTimestamp": 1763909100000,
+    "exitPrice": 86729,
+    "exitSignal": "Timeout",
+    "pnl": -0.59
+  },
+  {
+    "tradeNum": 54,
+    "direction": "long",
+    "entryTimestamp": 1763943300000,
+    "entryPrice": 86311.8,
+    "exitTimestamp": 1763949600000,
+    "exitPrice": 87227.6,
+    "exitSignal": "Long TP",
+    "pnl": 7.89
+  },
+  {
+    "tradeNum": 55,
+    "direction": "long",
+    "entryTimestamp": 1763976600000,
+    "entryPrice": 85903.1,
+    "exitTimestamp": 1763984700000,
+    "exitPrice": 86364.7,
+    "exitSignal": "Timeout",
+    "pnl": 3.34
+  },
+  {
+    "tradeNum": 56,
+    "direction": "long",
+    "entryTimestamp": 1764061200000,
+    "entryPrice": 86997.8,
+    "exitTimestamp": 1764069300000,
+    "exitPrice": 87441.6,
+    "exitSignal": "Timeout",
+    "pnl": 3.67
+  },
+  {
+    "tradeNum": 57,
+    "direction": "long",
+    "entryTimestamp": 1764099000000,
+    "entryPrice": 86263.1,
+    "exitTimestamp": 1764102600000,
+    "exitPrice": 87187.1,
+    "exitSignal": "Long TP",
+    "pnl": 7.95
+  },
+  {
+    "tradeNum": 58,
+    "direction": "long",
+    "entryTimestamp": 1764150300000,
+    "entryPrice": 86933.9,
+    "exitTimestamp": 1764158400000,
+    "exitPrice": 87071,
+    "exitSignal": "Timeout",
+    "pnl": 0.61
+  },
+  {
+    "tradeNum": 59,
+    "direction": "short",
+    "entryTimestamp": 1764179100000,
+    "entryPrice": 89498.7,
+    "exitTimestamp": 1764187200000,
+    "exitPrice": 89958.2,
+    "exitSignal": "Timeout",
+    "pnl": -5.33
+  },
+  {
+    "tradeNum": 60,
+    "direction": "short",
+    "entryTimestamp": 1764210600000,
+    "entryPrice": 91463.9,
+    "exitTimestamp": 1764218700000,
+    "exitPrice": 91172.8,
+    "exitSignal": "Timeout",
+    "pnl": 1.98
+  },
+  {
+    "tradeNum": 61,
+    "direction": "short",
+    "entryTimestamp": 1764684900000,
+    "entryPrice": 88342.2,
+    "exitTimestamp": 1764687600000,
+    "exitPrice": 89351.3,
+    "exitSignal": "Short TP1",
+    "pnl": -6.48
+  },
+  {
+    "tradeNum": 62,
+    "direction": "short",
+    "entryTimestamp": 1764684900000,
+    "entryPrice": 88342.2,
+    "exitTimestamp": 1764687600000,
+    "exitPrice": 89351.3,
+    "exitSignal": "Short TP2",
+    "pnl": -4.32
+  },
+  {
+    "tradeNum": 63,
+    "direction": "short",
+    "entryTimestamp": 1764728100000,
+    "entryPrice": 92910,
+    "exitTimestamp": 1764736200000,
+    "exitPrice": 92835.7,
+    "exitSignal": "Timeout",
+    "pnl": -0.07
+  },
+  {
+    "tradeNum": 64,
+    "direction": "long",
+    "entryTimestamp": 1764771300000,
+    "entryPrice": 92065.9,
+    "exitTimestamp": 1764772200000,
+    "exitPrice": 92923.6,
+    "exitSignal": "Long TP",
+    "pnl": 7.6
+  },
+  {
+    "tradeNum": 65,
+    "direction": "long",
+    "entryTimestamp": 1764860400000,
+    "entryPrice": 91898.6,
+    "exitTimestamp": 1764861300000,
+    "exitPrice": 92815,
+    "exitSignal": "Long TP",
+    "pnl": 8.42
+  },
+  {
+    "tradeNum": 66,
+    "direction": "long",
+    "entryTimestamp": 1764875700000,
+    "entryPrice": 91319.2,
+    "exitTimestamp": 1764880200000,
+    "exitPrice": 92376.9,
+    "exitSignal": "Long TP",
+    "pnl": 8.71
+  },
+  {
+    "tradeNum": 67,
+    "direction": "long",
+    "entryTimestamp": 1765145700000,
+    "entryPrice": 89387.3,
+    "exitTimestamp": 1765153800000,
+    "exitPrice": 90247.5,
+    "exitSignal": "Timeout",
+    "pnl": 7.67
+  },
+  {
+    "tradeNum": 68,
+    "direction": "short",
+    "entryTimestamp": 1765185300000,
+    "entryPrice": 92105.7,
+    "exitTimestamp": 1765193400000,
+    "exitPrice": 92061.4,
+    "exitSignal": "Timeout",
+    "pnl": -0.38
+  },
+  {
+    "tradeNum": 69,
+    "direction": "long",
+    "entryTimestamp": 1765206900000,
+    "entryPrice": 90241.2,
+    "exitTimestamp": 1765215000000,
+    "exitPrice": 89957.7,
+    "exitSignal": "Timeout",
+    "pnl": -3.72
+  },
+  {
+    "tradeNum": 70,
+    "direction": "short",
+    "entryTimestamp": 1765296900000,
+    "entryPrice": 93466.4,
+    "exitTimestamp": 1765299600000,
+    "exitPrice": 94560.6,
+    "exitSignal": "Short TP1",
+    "pnl": -6.52
+  },
+  {
+    "tradeNum": 71,
+    "direction": "short",
+    "entryTimestamp": 1765296900000,
+    "entryPrice": 93466.4,
+    "exitTimestamp": 1765299600000,
+    "exitPrice": 94560.6,
+    "exitSignal": "Short TP2",
+    "pnl": -4.35
+  },
+  {
+    "tradeNum": 72,
+    "direction": "short",
+    "entryTimestamp": 1765397700000,
+    "entryPrice": 94306.8,
+    "exitTimestamp": 1765399500000,
+    "exitPrice": 92634.4,
+    "exitSignal": "Short TP1",
+    "pnl": 9.28
+  },
+  {
+    "tradeNum": 73,
+    "direction": "short",
+    "entryTimestamp": 1765397700000,
+    "entryPrice": 94306.8,
+    "exitTimestamp": 1765405800000,
+    "exitPrice": 92364,
+    "exitSignal": "Timeout",
+    "pnl": 7.24
+  },
+  {
+    "tradeNum": 74,
+    "direction": "long",
+    "entryTimestamp": 1765413900000,
+    "entryPrice": 91282.8,
+    "exitTimestamp": 1765419300000,
+    "exitPrice": 90098.4,
+    "exitSignal": "Long TP",
+    "pnl": -10.61
+  },
+  {
+    "tradeNum": 75,
+    "direction": "long",
+    "entryTimestamp": 1765946700000,
+    "entryPrice": 86858.2,
+    "exitTimestamp": 1765954800000,
+    "exitPrice": 86756.9,
+    "exitSignal": "Timeout",
+    "pnl": -1.94
+  },
+  {
+    "tradeNum": 76,
+    "direction": "short",
+    "entryTimestamp": 1766051100000,
+    "entryPrice": 87349.8,
+    "exitTimestamp": 1766059200000,
+    "exitPrice": 87281.1,
+    "exitSignal": "Timeout",
+    "pnl": -0.1
+  },
+  {
+    "tradeNum": 77,
+    "direction": "short",
+    "entryTimestamp": 1766114100000,
+    "entryPrice": 86319.7,
+    "exitTimestamp": 1766122200000,
+    "exitPrice": 86720.5,
+    "exitSignal": "Timeout",
+    "pnl": -3.77
+  },
+  {
+    "tradeNum": 78,
+    "direction": "short",
+    "entryTimestamp": 1766128500000,
+    "entryPrice": 88109.9,
+    "exitTimestamp": 1766136600000,
+    "exitPrice": 87991.8,
+    "exitSignal": "Timeout",
+    "pnl": 0.3
+  },
+  {
+    "tradeNum": 79,
+    "direction": "long",
+    "entryTimestamp": 1768447800000,
+    "entryPrice": 95903.9,
+    "exitTimestamp": 1768455900000,
+    "exitPrice": 96432.3,
+    "exitSignal": "Timeout",
+    "pnl": 4.28
+  },
+  {
+    "tradeNum": 80,
+    "direction": "long",
+    "entryTimestamp": 1769737500000,
+    "entryPrice": 81879,
+    "exitTimestamp": 1769745600000,
+    "exitPrice": 82553.5,
+    "exitSignal": "Timeout",
+    "pnl": 5.64
+  },
+  {
+    "tradeNum": 81,
+    "direction": "short",
+    "entryTimestamp": 1769784300000,
+    "entryPrice": 83533.7,
+    "exitTimestamp": 1769784300000,
+    "exitPrice": 82754.3,
+    "exitSignal": "Short TP1",
+    "pnl": 3.58
+  },
+  {
+    "tradeNum": 82,
+    "direction": "short",
+    "entryTimestamp": 1769784300000,
+    "entryPrice": 83533.7,
+    "exitTimestamp": 1769792400000,
+    "exitPrice": 83036.2,
+    "exitSignal": "Timeout",
+    "pnl": 1.43
+  },
+  {
+    "tradeNum": 83,
+    "direction": "long",
+    "entryTimestamp": 1769845500000,
+    "entryPrice": 83368.9,
+    "exitTimestamp": 1769853600000,
+    "exitPrice": 83002,
+    "exitSignal": "Timeout",
+    "pnl": -4.71
+  },
+  {
+    "tradeNum": 84,
+    "direction": "long",
+    "entryTimestamp": 1769959800000,
+    "entryPrice": 76919.1,
+    "exitTimestamp": 1769967900000,
+    "exitPrice": 77408.2,
+    "exitSignal": "Timeout",
+    "pnl": 3.39
+  },
+  {
+    "tradeNum": 85,
+    "direction": "long",
+    "entryTimestamp": 1770003000000,
+    "entryPrice": 75031.3,
+    "exitTimestamp": 1770011100000,
+    "exitPrice": 75176.8,
+    "exitSignal": "Timeout",
+    "pnl": 0.5
+  },
+  {
+    "tradeNum": 86,
+    "direction": "long",
+    "entryTimestamp": 1770087600000,
+    "entryPrice": 77743.3,
+    "exitTimestamp": 1770090300000,
+    "exitPrice": 78575.7,
+    "exitSignal": "Long TP",
+    "pnl": 6.32
+  },
+  {
+    "tradeNum": 87,
+    "direction": "long",
+    "entryTimestamp": 1770130800000,
+    "entryPrice": 77130.3,
+    "exitTimestamp": 1770132600000,
+    "exitPrice": 78127.9,
+    "exitSignal": "Long TP",
+    "pnl": 8.97
+  },
+  {
+    "tradeNum": 88,
+    "direction": "long",
+    "entryTimestamp": 1770138000000,
+    "entryPrice": 76423.7,
+    "exitTimestamp": 1770139800000,
+    "exitPrice": 75275.5,
+    "exitSignal": "Long TP",
+    "pnl": -10.6
+  },
+  {
+    "tradeNum": 89,
+    "direction": "long",
+    "entryTimestamp": 1770212700000,
+    "entryPrice": 75253.3,
+    "exitTimestamp": 1770217200000,
+    "exitPrice": 74117.2,
+    "exitSignal": "Long TP",
+    "pnl": -10.56
+  },
+  {
+    "tradeNum": 90,
+    "direction": "long",
+    "entryTimestamp": 1770223500000,
+    "entryPrice": 72993.6,
+    "exitTimestamp": 1770231600000,
+    "exitPrice": 73279.5,
+    "exitSignal": "Timeout",
+    "pnl": 1.63
+  },
+  {
+    "tradeNum": 91,
+    "direction": "long",
+    "entryTimestamp": 1770291000000,
+    "entryPrice": 69949.7,
+    "exitTimestamp": 1770299100000,
+    "exitPrice": 69311.2,
+    "exitSignal": "Timeout",
+    "pnl": -4.55
+  },
+  {
+    "tradeNum": 92,
+    "direction": "long",
+    "entryTimestamp": 1770304500000,
+    "entryPrice": 67890.1,
+    "exitTimestamp": 1770312600000,
+    "exitPrice": 67299,
+    "exitSignal": "Timeout",
+    "pnl": -4.05
+  },
+  {
+    "tradeNum": 93,
+    "direction": "long",
+    "entryTimestamp": 1770336900000,
+    "entryPrice": 60153.1,
+    "exitTimestamp": 1770340500000,
+    "exitPrice": 63967.4,
+    "exitSignal": "Long TP",
+    "pnl": 15.87
+  },
+  {
+    "tradeNum": 94,
+    "direction": "short",
+    "entryTimestamp": 1770386400000,
+    "entryPrice": 67244.6,
+    "exitTimestamp": 1770394500000,
+    "exitPrice": 69250.2,
+    "exitSignal": "Timeout",
+    "pnl": -9.35
+  },
+  {
+    "tradeNum": 95,
+    "direction": "long",
+    "entryTimestamp": 1770447600000,
+    "entryPrice": 68746,
+    "exitTimestamp": 1770455700000,
+    "exitPrice": 68725.4,
+    "exitSignal": "Timeout",
+    "pnl": -0.45
+  },
+  {
+    "tradeNum": 96,
+    "direction": "short",
+    "entryTimestamp": 1770539400000,
+    "entryPrice": 70138.6,
+    "exitTimestamp": 1770547500000,
+    "exitPrice": 70178.8,
+    "exitSignal": "Timeout",
+    "pnl": -1
+  },
+  {
+    "tradeNum": 97,
+    "direction": "long",
+    "entryTimestamp": 1770626700000,
+    "entryPrice": 69746.8,
+    "exitTimestamp": 1770633000000,
+    "exitPrice": 68671.5,
+    "exitSignal": "Long TP",
+    "pnl": -10.58
+  },
+  {
+    "tradeNum": 98,
+    "direction": "long",
+    "entryTimestamp": 1770695100000,
+    "entryPrice": 69327.4,
+    "exitTimestamp": 1770703200000,
+    "exitPrice": 69401.2,
+    "exitSignal": "Timeout",
+    "pnl": 0.1
+  },
+  {
+    "tradeNum": 99,
+    "direction": "long",
+    "entryTimestamp": 1770783300000,
+    "entryPrice": 67990.2,
+    "exitTimestamp": 1770789600000,
+    "exitPrice": 66976.7,
+    "exitSignal": "Long TP",
+    "pnl": -10.6
+  },
+  {
+    "tradeNum": 100,
+    "direction": "long",
+    "entryTimestamp": 1770794100000,
+    "entryPrice": 66701.1,
+    "exitTimestamp": 1770802200000,
+    "exitPrice": 66946.8,
+    "exitSignal": "Timeout",
+    "pnl": 1.78
+  },
+  {
+    "tradeNum": 101,
+    "direction": "short",
+    "entryTimestamp": 1770819300000,
+    "entryPrice": 68420,
+    "exitTimestamp": 1770820200000,
+    "exitPrice": 67179.3,
+    "exitSignal": "Short TP1",
+    "pnl": 7.34
+  },
+  {
+    "tradeNum": 102,
+    "direction": "short",
+    "entryTimestamp": 1770819300000,
+    "entryPrice": 68420,
+    "exitTimestamp": 1770827400000,
+    "exitPrice": 66567.8,
+    "exitSignal": "Timeout",
+    "pnl": 7.43
+  },
+  {
+    "tradeNum": 103,
+    "direction": "short",
+    "entryTimestamp": 1770894000000,
+    "entryPrice": 67976.9,
+    "exitTimestamp": 1770902100000,
+    "exitPrice": 67819.3,
+    "exitSignal": "Timeout",
+    "pnl": 0.98
+  },
+  {
+    "tradeNum": 104,
+    "direction": "long",
+    "entryTimestamp": 1770912900000,
+    "entryPrice": 66512.2,
+    "exitTimestamp": 1770918300000,
+    "exitPrice": 65473.7,
+    "exitSignal": "Long TP",
+    "pnl": -10.58
+  },
+  {
+    "tradeNum": 105,
+    "direction": "long",
+    "entryTimestamp": 1771162200000,
+    "entryPrice": 69016.1,
+    "exitTimestamp": 1771170300000,
+    "exitPrice": 69055.9,
+    "exitSignal": "Timeout",
+    "pnl": -0.3
+  },
+  {
+    "tradeNum": 106,
+    "direction": "long",
+    "entryTimestamp": 1771306200000,
+    "entryPrice": 68019.3,
+    "exitTimestamp": 1771314300000,
+    "exitPrice": 68378.7,
+    "exitSignal": "Timeout",
+    "pnl": 3.64
+  },
+  {
+    "tradeNum": 107,
+    "direction": "long",
+    "entryTimestamp": 1771325100000,
+    "entryPrice": 67750.1,
+    "exitTimestamp": 1771331400000,
+    "exitPrice": 68156.7,
+    "exitSignal": "Long TP",
+    "pnl": 4.64
+  },
+  {
+    "tradeNum": 108,
+    "direction": "long",
+    "entryTimestamp": 1771339500000,
+    "entryPrice": 67068.3,
+    "exitTimestamp": 1771344000000,
+    "exitPrice": 67940.1,
+    "exitSignal": "Long TP",
+    "pnl": 11.04
+  },
+  {
+    "tradeNum": 109,
+    "direction": "short",
+    "entryTimestamp": 1771402500000,
+    "entryPrice": 68202.8,
+    "exitTimestamp": 1771410600000,
+    "exitPrice": 68021.2,
+    "exitSignal": "Timeout",
+    "pnl": 1.62
+  },
+  {
+    "tradeNum": 110,
+    "direction": "long",
+    "entryTimestamp": 1771440300000,
+    "entryPrice": 66307.2,
+    "exitTimestamp": 1771448400000,
+    "exitPrice": 66228.8,
+    "exitSignal": "Timeout",
+    "pnl": -1.65
+  }
+]

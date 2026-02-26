@@ -77,26 +77,56 @@
     "BTC": {
       "class": "crypto-major",
       "strategies": {
-        "breakout": { "chartUrl": "https://br.tradingview.com/chart/6FChfbZs/?symbol=COINBASE%3ABTCUSDC.P", "dateRange": "custom:2025-05-24:2026-02-24" },
-        "mean-reversion": { "chartUrl": "https://br.tradingview.com/chart/6FChfbZs/?symbol=COINBASE%3ABTCUSDC.P", "dateRange": "custom:2025-05-24:2026-02-24" }
+        "breakout": {
+          "coin": "BTC",
+          "dataSource": "coinbase-perp",
+          "interval": "15m",
+          "strategyFactory": "createDonchianAdx",
+          "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
+        },
+        "mean-reversion": {
+          "coin": "BTC",
+          "dataSource": "coinbase-perp",
+          "interval": "15m",
+          "strategyFactory": "createKeltnerRsi2",
+          "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
+        }
       }
     },
     "ETH": {
       "class": "crypto-major",
       "strategies": {
-        "breakout": { "chartUrl": "https://br.tradingview.com/chart/ovLwxUsu/?symbol=COINBASE%3AETHUSDC.P" }
+        "breakout": {
+          "coin": "ETH",
+          "dataSource": "coinbase-perp",
+          "interval": "15m",
+          "strategyFactory": "createDonchianAdx",
+          "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
+        }
       }
     },
     "SOL": {
       "class": "crypto-major",
       "strategies": {
-        "breakout": { "chartUrl": "https://br.tradingview.com/chart/ovLwxUsu/?symbol=COINBASE%3ASOLUSDC.P" }
+        "breakout": {
+          "coin": "SOL",
+          "dataSource": "coinbase-perp",
+          "interval": "15m",
+          "strategyFactory": "createDonchianAdx",
+          "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
+        }
       }
     },
     "SUI": {
       "class": "crypto-volatile",
       "strategies": {
-        "breakout": { "chartUrl": "https://br.tradingview.com/chart/ovLwxUsu/?symbol=COINBASE%3ASUIUSDC.P" }
+        "breakout": {
+          "coin": "SUI",
+          "dataSource": "coinbase-perp",
+          "interval": "15m",
+          "strategyFactory": "createDonchianAdx",
+          "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
+        }
       }
     }
   },

@@ -1,5 +1,5 @@
 import type { ResolvedCriteria, ModelRouting, Guardrails, PhasesConfig, ScoringConfig, ResearchConfig } from "../types/config.js";
-import type { ParseResultsOutput, Metrics } from "../types/parse-results.js";
+import type { Metrics, CandleInterval, DataSource } from "@trading/backtest";
 
 export type LoopPhase = "refine" | "research" | "restructure";
 
@@ -8,7 +8,6 @@ export interface LoopConfig {
   strategy: string;
   maxIter: number;
   maxFixAttempts: number;
-  maxStaleAttempts: number;
   maxTransientFailures: number;
   maxNoChange: number;
   autoCommit: boolean;
@@ -18,8 +17,14 @@ export interface LoopConfig {
   phases: PhasesConfig;
   scoring: ScoringConfig;
   research: ResearchConfig;
-  chartUrl: string;
-  dateRange: string;
+  // Data config (replaces chartUrl + dateRange string)
+  coin: string;
+  dataSource: DataSource;
+  interval: CandleInterval;
+  strategyFactory: string;
+  startTime: number;
+  endTime: number;
+  dbPath: string;
   repoRoot: string;
   strategyDir: string;
   strategyFile: string;
@@ -36,8 +41,6 @@ export interface IterationState {
   bestPnl: number;
   bestIter: number;
   fixAttempts: number;
-  staleAttempts: number;
-  integrityAttempts: number;
   transientFailures: number;
   noChangeCount: number;
   previousPnl: number;
@@ -60,8 +63,9 @@ export interface IterationMetric {
 }
 
 export interface CheckpointData {
-  pineContent: string;
+  strategyContent: string;
   metrics: Metrics;
+  params?: Record<string, number>;
   iter: number;
   timestamp: string;
 }
@@ -70,8 +74,7 @@ export type ErrorClass =
   | "compile_error"
   | "timeout"
   | "network"
-  | "stale_xlsx"
-  | "transient_ui"
+  | "transient"
   | "unknown";
 
 export interface StageResult<T = unknown> {

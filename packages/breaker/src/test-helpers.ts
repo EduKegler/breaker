@@ -8,7 +8,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import type { IterationMetric } from "./loop/types.js";
-import type { Metrics } from "./types/parse-results.js";
+import type { Metrics } from "@trading/backtest";
 
 /**
  * Creates a mock child process with configurable exit code and optional stdout/stderr data.

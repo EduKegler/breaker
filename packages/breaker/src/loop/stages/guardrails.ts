@@ -1,4 +1,5 @@
 import type { Guardrails } from "../../types/config.js";
+import type { StrategyParam } from "@trading/backtest";
 
 export interface GuardrailViolation {
   field: string;
@@ -6,8 +7,70 @@ export interface GuardrailViolation {
 }
 
 /**
- * Validate that a Pine Script edit didn't violate guardrails.
- * Compares before/after to detect forbidden changes.
+ * Validate that strategy param changes don't violate guardrails.
+ * Works with typed StrategyParam objects instead of Pine regex.
+ */
+export function validateParamGuardrails(
+  beforeParams: Record<string, StrategyParam>,
+  afterParams: Record<string, StrategyParam>,
+  guardrails: Guardrails,
+): GuardrailViolation[] {
+  const violations: GuardrailViolation[] = [];
+
+  // Check protected fields
+  for (const field of guardrails.protectedFields) {
+    const beforeVal = beforeParams[field]?.value;
+    const afterVal = afterParams[field]?.value;
+    if (beforeVal !== undefined && afterVal !== undefined && beforeVal !== afterVal) {
+      violations.push({
+        field,
+        reason: `Protected field changed: ${beforeVal} → ${afterVal}`,
+      });
+    }
+  }
+
+  // Check atrStopMult / atrMult bounds
+  const atrMultNames = ["atrStopMult", "atrMult", "slAtrMult"];
+  for (const name of atrMultNames) {
+    const afterVal = afterParams[name]?.value;
+    if (afterVal === undefined) continue;
+
+    if (guardrails.maxAtrMult && afterVal > guardrails.maxAtrMult) {
+      violations.push({
+        field: name,
+        reason: `Exceeds max: ${afterVal} > ${guardrails.maxAtrMult}`,
+      });
+    }
+    if (guardrails.minAtrMult && afterVal < guardrails.minAtrMult) {
+      violations.push({
+        field: name,
+        reason: `Below min: ${afterVal} < ${guardrails.minAtrMult}`,
+      });
+    }
+  }
+
+  // Validate params stay within their declared min/max bounds
+  for (const [name, param] of Object.entries(afterParams)) {
+    if (param.value < param.min) {
+      violations.push({
+        field: name,
+        reason: `Below declared min: ${param.value} < ${param.min}`,
+      });
+    }
+    if (param.value > param.max) {
+      violations.push({
+        field: name,
+        reason: `Above declared max: ${param.value} > ${param.max}`,
+      });
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Legacy Pine guardrail validation.
+ * Validates Pine Script edits (for backward compat during restructure phase).
  */
 export function validateGuardrails(
   before: string,
@@ -16,11 +79,9 @@ export function validateGuardrails(
 ): GuardrailViolation[] {
   const violations: GuardrailViolation[] = [];
 
-  // Strip comments to avoid matching values in commented-out code
   const beforeClean = stripComments(before);
   const afterClean = stripComments(after);
 
-  // Check protected fields
   for (const field of guardrails.protectedFields) {
     const beforeVal = extractFieldValue(beforeClean, field);
     const afterVal = extractFieldValue(afterClean, field);
@@ -32,7 +93,6 @@ export function validateGuardrails(
     }
   }
 
-  // Check riskTradeUsd cap
   const riskAfter = extractNumericVar(afterClean, "riskTradeUsd");
   if (riskAfter !== null && riskAfter > guardrails.maxRiskTradeUsd) {
     violations.push({
@@ -41,7 +101,6 @@ export function validateGuardrails(
     });
   }
 
-  // Check atrMult cap (prevents disabling stop loss with absurd values)
   if (guardrails.maxAtrMult) {
     const atrMultAfter = extractNumericVar(afterClean, "atrMult");
     if (atrMultAfter !== null && atrMultAfter > guardrails.maxAtrMult) {
@@ -52,7 +111,6 @@ export function validateGuardrails(
     }
   }
 
-  // Check atrMult floor (prevents tight stops where fees eat the edge)
   if (guardrails.minAtrMult) {
     const atrMultAfter = extractNumericVar(afterClean, "atrMult");
     if (atrMultAfter !== null && atrMultAfter < guardrails.minAtrMult) {
@@ -63,41 +121,10 @@ export function validateGuardrails(
     }
   }
 
-  // Check strategy.exit count didn't decrease (ignore commented lines)
-  const beforeExits = countPattern(stripComments(before), /strategy\.exit\s*\(/g);
-  const afterExits = countPattern(stripComments(after), /strategy\.exit\s*\(/g);
-  if (afterExits < beforeExits) {
-    violations.push({
-      field: "strategy.exit",
-      reason: `Exit count decreased: ${beforeExits} → ${afterExits}`,
-    });
-  }
-
-  // Check dayofweek usage didn't increase (no persistent DOW edge in crypto 15m)
-  const beforeDowCount = countDayOfWeekUsage(beforeClean);
-  const afterDowCount = countDayOfWeekUsage(afterClean);
-  if (afterDowCount > beforeDowCount) {
-    violations.push({
-      field: "dayofweek",
-      reason: `Day-of-week usage increased: ${beforeDowCount} → ${afterDowCount}. Forbidden in crypto 15m.`,
-    });
-  }
-
-  // Check strategy category hasn't changed (e.g. breakout → trend-continuation)
-  const beforeCategory = extractStrategyCategory(beforeClean);
-  const afterCategory = extractStrategyCategory(afterClean);
-  if (beforeCategory && afterCategory && beforeCategory !== afterCategory) {
-    violations.push({
-      field: "strategy()",
-      reason: `Strategy category changed: "${beforeCategory}" → "${afterCategory}". Category must match the directory (breakout, mean-reversion, etc.).`,
-    });
-  }
-
   return violations;
 }
 
 function extractFieldValue(code: string, field: string): string | null {
-  // Match patterns like: field = value or field: value in strategy() call
   const patterns = [
     new RegExp(`${escapeRegex(field)}\\s*=\\s*([^\\s,)]+)`),
     new RegExp(`${escapeRegex(field)}\\s*:\\s*([^\\s,)]+)`),
@@ -116,10 +143,6 @@ function extractNumericVar(code: string, varName: string): number | null {
   return isNaN(val) ? null : val;
 }
 
-function countPattern(text: string, pattern: RegExp): number {
-  return (text.match(pattern) || []).length;
-}
-
 function stripComments(code: string): string {
   return code
     .split("\n")
@@ -131,23 +154,14 @@ export function countDayOfWeekUsage(code: string): number {
   return (code.match(/\bdayofweek\b/gi) || []).length;
 }
 
-/**
- * Extract the strategy category from the strategy() title.
- * Convention: strategy("ASSET TF Category — Name", ...)
- * Returns the category portion (e.g. "Breakout", "Mean-Reversion").
- */
 export function extractStrategyCategory(code: string): string | null {
-  // Match strategy("...") title — handles both em-dash and regular dash
   const m = code.match(/strategy\s*\(\s*"([^"]+)"/);
   if (!m) return null;
   const title = m[1];
-  // Split on em-dash (—) or double-dash (--)
   const parts = title.split(/\s*[—]\s*|\s+--\s+/);
   if (parts.length < 2) return null;
-  // Category is the last word(s) before the dash: "BTC 15m Breakout" → "Breakout"
   const prefix = parts[0].trim();
   const words = prefix.split(/\s+/);
-  // Category is everything after asset + timeframe (first 2 words)
   return words.length > 2 ? words.slice(2).join(" ").toLowerCase() : null;
 }
 
