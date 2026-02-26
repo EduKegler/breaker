@@ -2,7 +2,7 @@
 
 ## Current state
 - Full implementation complete: types, indicators (7), engine (5 modules), analysis (4), data layer (2), strategy (donchian-adx), CLI, barrel
-- 190 tests passing, 21 test files, clean build
+- 197 tests passing, 21 test files, clean build
 - Strategies: donchian-adx, keltner-rsi2 (both TypeScript ports of Pine scripts)
 - Data sources: Bybit (default, perp USDT), Coinbase spot, Coinbase perp, Hyperliquid — all via CCXT `fetchOHLCV()`
 - Cache keyed by (source, coin, interval, t) — different sources stored separately
@@ -33,6 +33,7 @@
 - trueRange() kept as custom standalone utility
 - SQLite via better-sqlite3 for candle caching (WAL mode, in-memory for tests)
 - Worst-case assumption on same-bar SL/TP conflicts (SL wins)
+- Engine risk limits: `maxDailyLossR` (in R units, not USD), `maxGlobalTradesDay` (orchestrator-level cap), `maxTradesPerDay` (per-strategy)
 - Engine force-closes open positions at end of data (exitType="eod")
 - Deferred exit: shouldExit clears SL/TP, places market order (tag="signal") → fills next bar open; prevents same-bar re-entry
 - Higher-TF candles aggregated from source candles, not fetched separately

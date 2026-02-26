@@ -14,6 +14,7 @@ export interface DonchianAdxParams {
   adxThreshold: StrategyParam;
   atrStopMult: StrategyParam;
   maxTradesDay: StrategyParam;
+  timeoutBars: StrategyParam;
 }
 
 const DEFAULT_PARAMS: DonchianAdxParams = {
@@ -22,6 +23,7 @@ const DEFAULT_PARAMS: DonchianAdxParams = {
   adxThreshold: { value: 25, min: 20, max: 35, step: 5, optimizable: true, description: "ADX below this = consolidation" },
   atrStopMult: { value: 2.0, min: 1.5, max: 3.0, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop" },
   maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
+  timeoutBars: { value: 20, min: 10, max: 40, step: 5, optimizable: true, description: "Bars before timeout exit" },
 };
 
 /**
@@ -157,8 +159,16 @@ export function createDonchianAdx(
     },
 
     shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
-      const { candles, index, positionDirection } = ctx;
-      if (!positionDirection || index < params.dcFast.value + 1) return null;
+      const { candles, index, positionDirection, positionEntryBarIndex } = ctx;
+      if (!positionDirection || positionEntryBarIndex === null) return null;
+
+      // Timeout check (before trailing exit)
+      const barsInTrade = index - positionEntryBarIndex;
+      if (barsInTrade >= params.timeoutBars.value) {
+        return { exit: true, comment: "Timeout" };
+      }
+
+      if (index < params.dcFast.value + 1) return null;
 
       const dcFast = dcFastCache ?? donchian(candles.slice(0, index + 1), params.dcFast.value);
       const prevFastUpper = dcFast.upper[index - 1];

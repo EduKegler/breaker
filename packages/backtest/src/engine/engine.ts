@@ -16,7 +16,8 @@ export interface BacktestConfig {
   cashPerTrade: number;
   execution: ExecutionConfig;
   maxTradesPerDay: number;
-  dailyLossLimitUsd: number;
+  maxDailyLossR: number;
+  maxGlobalTradesDay: number;
   cooldownBars: number;
   maxConsecutiveLosses: number;
 }
@@ -28,7 +29,8 @@ export const DEFAULT_BACKTEST_CONFIG: BacktestConfig = {
   cashPerTrade: 100,
   execution: DEFAULT_EXECUTION,
   maxTradesPerDay: 3,
-  dailyLossLimitUsd: 20,
+  maxDailyLossR: 2,
+  maxGlobalTradesDay: 5,
   cooldownBars: 4,
   maxConsecutiveLosses: 2,
 };
@@ -227,8 +229,8 @@ export function runBacktest(
       const canTrade =
         barsSinceExit >= config.cooldownBars &&
         consecutiveLosses < config.maxConsecutiveLosses &&
-        dailyPnl > -config.dailyLossLimitUsd &&
-        tradesToday < config.maxTradesPerDay;
+        dailyPnl > -(config.maxDailyLossR * config.initialCapital * 0.01) &&
+        tradesToday < Math.min(config.maxTradesPerDay, config.maxGlobalTradesDay);
 
       if (canTrade) {
         const ctx = buildContext(

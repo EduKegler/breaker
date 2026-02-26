@@ -87,7 +87,7 @@ describe("runBacktest", () => {
       cooldownBars: 1,
       maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
-      dailyLossLimitUsd: 10000,
+      maxDailyLossR: 10000,
     };
     const result = runBacktest(candles, alwaysLongStrategy, config);
     expect(result.trades.length).toBeGreaterThan(0);
@@ -102,7 +102,7 @@ describe("runBacktest", () => {
       cooldownBars: 1,
       maxConsecutiveLosses: 100,
       maxTradesPerDay: 100,
-      dailyLossLimitUsd: 10000,
+      maxDailyLossR: 10000,
     };
     const result = runBacktest(candles, alwaysLongStrategy, config);
     // Should have at least 1 trade (force-closed)
@@ -118,7 +118,7 @@ describe("runBacktest", () => {
       cooldownBars: 100, // Very high cooldown
       maxConsecutiveLosses: 100,
       maxTradesPerDay: 100,
-      dailyLossLimitUsd: 10000,
+      maxDailyLossR: 10000,
     };
     const result = runBacktest(candles, alwaysLongStrategy, config);
     // Should only have 1-2 trades due to high cooldown
@@ -132,7 +132,7 @@ describe("runBacktest", () => {
       cooldownBars: 1,
       maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
-      dailyLossLimitUsd: 10000,
+      maxDailyLossR: 10000,
     };
     const result = runBacktest(candles, trailingExitStrategy, config);
     const signalExits = result.trades.filter((t) => t.exitType === "signal");
@@ -148,7 +148,7 @@ describe("runBacktest", () => {
       cooldownBars: 1,
       maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
-      dailyLossLimitUsd: 10000,
+      maxDailyLossR: 10000,
     };
     const result = runBacktest(candles, alwaysLongStrategy, config);
     expect(result.finalEquity).toBeCloseTo(config.initialCapital + result.totalPnl, 0);
@@ -162,7 +162,7 @@ describe("runBacktest", () => {
       cooldownBars: 1,
       maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
-      dailyLossLimitUsd: 10000,
+      maxDailyLossR: 10000,
     };
     const result = runBacktest(candles, alwaysLongStrategy, config);
     for (const trade of result.trades) {
@@ -185,19 +185,37 @@ describe("no-limits config", () => {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 4,
       maxConsecutiveLosses: 2,
-      dailyLossLimitUsd: 20,
+      maxDailyLossR: 20,
       maxTradesPerDay: 3,
     };
     const unlimitedConfig: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 0,
       maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
-      dailyLossLimitUsd: Number.MAX_SAFE_INTEGER,
+      maxDailyLossR: Number.MAX_SAFE_INTEGER,
       maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+      maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
     };
     const limited = runBacktest(candles, alwaysLongStrategy, limitedConfig);
     const unlimited = runBacktest(candles, alwaysLongStrategy, unlimitedConfig);
     expect(unlimited.trades.length).toBeGreaterThan(limited.trades.length);
+  });
+
+  it("respects global daily trade limit", () => {
+    // Use fixed start at midnight UTC so all 50 candles (12.5h) fit in one day
+    const dayStart = new Date("2024-06-01T00:00:00Z").getTime();
+    const candles = generateCandles(50, 10000, dayStart);
+    const config: BacktestConfig = {
+      ...DEFAULT_BACKTEST_CONFIG,
+      cooldownBars: 1,
+      maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
+      maxDailyLossR: Number.MAX_SAFE_INTEGER,
+      maxTradesPerDay: 100,
+      maxGlobalTradesDay: 2,
+    };
+    const result = runBacktest(candles, alwaysLongStrategy, config);
+    // Global cap of 2 entries per day + force-close at end
+    expect(result.trades.length).toBeLessThanOrEqual(3);
   });
 });
 
@@ -229,7 +247,7 @@ describe("cash sizing mode", () => {
     cooldownBars: 1,
     maxConsecutiveLosses: 100,
     maxTradesPerDay: 100,
-    dailyLossLimitUsd: 10000,
+    maxDailyLossR: 10000,
   };
 
   it("cash sizing: size = cashPerTrade / entryPrice", () => {
@@ -270,7 +288,7 @@ describe("cash sizing mode", () => {
       cooldownBars: 1,
       maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
-      dailyLossLimitUsd: 10000,
+      maxDailyLossR: 10000,
     };
     const result = runBacktest(candles, alwaysLongStrategy, config);
     expect(result.trades.length).toBeGreaterThan(0);
@@ -372,7 +390,8 @@ describe("deferred exit (process_orders_on_close = false)", () => {
     cooldownBars: 0,
     maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
     maxTradesPerDay: Number.MAX_SAFE_INTEGER,
-    dailyLossLimitUsd: Number.MAX_SAFE_INTEGER,
+    maxDailyLossR: Number.MAX_SAFE_INTEGER,
+    maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
     execution: { slippageBps: 0, commissionPct: 0 },
   };
 
@@ -462,6 +481,87 @@ describe("deferred exit (process_orders_on_close = false)", () => {
     expect(slExits.length).toBeGreaterThanOrEqual(1);
     // SL fills at stop price (190), not deferred
     expect(slExits[0].exitPrice).toBe(190);
+  });
+});
+
+describe("take-profit and partial close", () => {
+  /** Candles with known prices for TP assertions. */
+  function makeTpCandles(): Candle[] {
+    const t0 = new Date("2024-06-01T12:00:00Z").getTime();
+    const ms15 = 900_000;
+    return [
+      // 0-4: warmup
+      makeCandle(t0 + 0 * ms15, 100, 105, 95, 100),
+      makeCandle(t0 + 1 * ms15, 100, 105, 95, 100),
+      makeCandle(t0 + 2 * ms15, 100, 105, 95, 100),
+      makeCandle(t0 + 3 * ms15, 100, 105, 95, 100),
+      makeCandle(t0 + 4 * ms15, 100, 105, 95, 100),
+      // 5: entry signal → market order fills bar 6 open
+      makeCandle(t0 + 5 * ms15, 100, 105, 95, 100),
+      // 6: entry fills at open (100). Price starts rising.
+      makeCandle(t0 + 6 * ms15, 100, 110, 98, 108),
+      // 7: price reaches TP1 (120) — high=125 hits limit at 120
+      makeCandle(t0 + 7 * ms15, 108, 125, 105, 122),
+      // 8: price reaches TP2 (140) — high=145 hits limit at 140
+      makeCandle(t0 + 8 * ms15, 122, 145, 120, 142),
+      // 9: extra bar
+      makeCandle(t0 + 9 * ms15, 142, 150, 138, 148),
+    ];
+  }
+
+  /** Strategy with two take-profit levels. */
+  const tpStrategy: Strategy = {
+    name: "tp-test",
+    params: {},
+    onCandle(ctx: StrategyContext): Signal | null {
+      if (ctx.index === 5) {
+        return {
+          direction: "long",
+          entryPrice: null,
+          stopLoss: 50, // far away, won't trigger
+          takeProfits: [
+            { price: 120, pctOfPosition: 0.5 }, // TP1: close 50% at 120
+            { price: 140, pctOfPosition: 0.5 }, // TP2: close remaining at 140
+          ],
+          comment: "TP test entry",
+        };
+      }
+      return null;
+    },
+  };
+
+  const noLimitsNoFees: BacktestConfig = {
+    ...DEFAULT_BACKTEST_CONFIG,
+    cooldownBars: 0,
+    maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
+    maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+    maxDailyLossR: Number.MAX_SAFE_INTEGER,
+    maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
+    execution: { slippageBps: 0, commissionPct: 0 },
+  };
+
+  it("exercises take-profit order placement and fill", () => {
+    const candles = makeTpCandles();
+    const result = runBacktest(candles, tpStrategy, noLimitsNoFees);
+
+    const tpExits = result.trades.filter((t) => t.exitType.startsWith("tp"));
+    expect(tpExits.length).toBeGreaterThanOrEqual(1);
+    // TP1 fills at limit price 120
+    expect(tpExits[0].exitPrice).toBe(120);
+  });
+
+  it("partial close reduces position and records separate trades", () => {
+    const candles = makeTpCandles();
+    const result = runBacktest(candles, tpStrategy, noLimitsNoFees);
+
+    const tpExits = result.trades.filter((t) => t.exitType.startsWith("tp"));
+    // With two TP levels that both get hit, we expect 2 partial/full exits
+    expect(tpExits.length).toBe(2);
+    expect(tpExits[0].exitType).toBe("tp1");
+    expect(tpExits[1].exitType).toBe("tp2");
+    // Both should be profitable
+    expect(tpExits[0].pnl).toBeGreaterThan(0);
+    expect(tpExits[1].pnl).toBeGreaterThan(0);
   });
 });
 

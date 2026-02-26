@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { buildStrategyDir, findActiveStrategyFile } from "./strategy-path.js";
+import { buildStrategyDir, findActiveStrategyFile, getStrategySourcePath } from "./strategy-path.js";
 
 let tmpDir: string;
 
@@ -73,7 +73,7 @@ describe("findActiveStrategyFile", () => {
     );
   });
 
-  it("ignores non-.pine files", () => {
+  it("ignores non-pine files", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "strat-"));
     fs.writeFileSync(path.join(tmpDir, "squeeze.pine"), "// active");
     fs.writeFileSync(path.join(tmpDir, "parameter-history.json"), "{}");
@@ -81,5 +81,23 @@ describe("findActiveStrategyFile", () => {
 
     const result = findActiveStrategyFile(tmpDir);
     expect(result).toBe(path.join(tmpDir, "squeeze.pine"));
+  });
+});
+
+describe("getStrategySourcePath", () => {
+  it("maps createDonchianAdx to donchian-adx.ts", () => {
+    const result = getStrategySourcePath("/repo/packages/refiner", "createDonchianAdx");
+    expect(result).toBe(path.join("/repo", "packages", "backtest", "src", "strategies", "donchian-adx.ts"));
+  });
+
+  it("maps createKeltnerRsi2 to keltner-rsi2.ts", () => {
+    const result = getStrategySourcePath("/repo/packages/refiner", "createKeltnerRsi2");
+    expect(result).toBe(path.join("/repo", "packages", "backtest", "src", "strategies", "keltner-rsi2.ts"));
+  });
+
+  it("throws for unknown factory name", () => {
+    expect(() => getStrategySourcePath("/repo/packages/refiner", "createUnknown")).toThrow(
+      /Unknown strategy factory/,
+    );
   });
 });

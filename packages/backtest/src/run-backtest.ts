@@ -101,8 +101,9 @@ async function main(): Promise<void> {
     ...(noLimits ? {
       cooldownBars: 0,
       maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
-      dailyLossLimitUsd: Number.MAX_SAFE_INTEGER,
+      maxDailyLossR: Number.MAX_SAFE_INTEGER,
       maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+      maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
     } : {}),
   };
   const flags = [useCash ? "cash" : null, noLimits ? "no-limits" : null].filter(Boolean);
