@@ -1,8 +1,11 @@
-import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
+import { execaSync } from "execa";
+import writeFileAtomic from "write-file-atomic";
 import type { StageResult } from "../types.js";
 import { runClaude } from "./run-claude.js";
+import { safeJsonParse } from "../../lib/safe-json.js";
 
 export interface OptimizeResult {
   changed: boolean;
@@ -15,19 +18,22 @@ function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
+const paramOverridesSchema = z.object({
+  paramOverrides: z.record(z.string(), z.number()),
+});
+
 /**
  * Extract paramOverrides JSON from Claude's text output.
  * Looks for { "paramOverrides": { ... } } in code blocks or inline.
+ * Uses jsonrepair to handle malformed LLM output.
  */
 export function extractParamOverrides(text: string): Record<string, number> | null {
   // Try JSON code block first
   const codeBlockMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?"paramOverrides"[\s\S]*?\})\s*```/);
   if (codeBlockMatch) {
     try {
-      const parsed = JSON.parse(codeBlockMatch[1]);
-      if (parsed.paramOverrides && typeof parsed.paramOverrides === "object") {
-        return parsed.paramOverrides;
-      }
+      const parsed = safeJsonParse(codeBlockMatch[1], { repair: true, schema: paramOverridesSchema });
+      return parsed.paramOverrides;
     } catch { /* try next pattern */ }
   }
 
@@ -35,10 +41,8 @@ export function extractParamOverrides(text: string): Record<string, number> | nu
   const inlineMatch = text.match(/\{\s*"paramOverrides"\s*:\s*\{[^}]*\}\s*\}/);
   if (inlineMatch) {
     try {
-      const parsed = JSON.parse(inlineMatch[0]);
-      if (parsed.paramOverrides && typeof parsed.paramOverrides === "object") {
-        return parsed.paramOverrides;
-      }
+      const parsed = safeJsonParse(inlineMatch[0], { repair: true, schema: paramOverridesSchema });
+      return parsed.paramOverrides;
     } catch { /* ignore */ }
   }
 
@@ -89,7 +93,7 @@ export async function optimizeStrategy(opts: {
       // Safety: if file changed during refine (unexpected), revert
       if (fileChanged) {
         log(`  [optimize] WARNING: file changed during refine phase — reverting`);
-        fs.writeFileSync(strategyFile, beforeContent, "utf8");
+        writeFileAtomic.sync(strategyFile, beforeContent, "utf8");
       }
 
       const paramOverrides = extractParamOverrides(result.stdout);
@@ -110,9 +114,8 @@ export async function optimizeStrategy(opts: {
 
     // Typecheck the modified strategy
     try {
-      execSync("pnpm --filter @trading/backtest typecheck", {
+      execaSync("pnpm", ["--filter", "@trading/backtest", "typecheck"], {
         cwd: repoRoot,
-        encoding: "utf8",
         timeout: 30000,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -120,7 +123,7 @@ export async function optimizeStrategy(opts: {
     } catch (err) {
       const errMsg = (err as { stderr?: string }).stderr ?? (err as Error).message;
       log(`  [optimize] Typecheck FAILED: ${errMsg.slice(0, 300)}`);
-      fs.writeFileSync(strategyFile, beforeContent, "utf8");
+      writeFileAtomic.sync(strategyFile, beforeContent, "utf8");
       return {
         success: false,
         error: `typecheck_error: ${errMsg.slice(0, 500)}`,
@@ -130,22 +133,26 @@ export async function optimizeStrategy(opts: {
 
     let diff: string | undefined;
     try {
-      diff = execSync(`git diff --no-color "${strategyFile}"`, {
+      const diffResult = execaSync("git", ["diff", "--no-color", strategyFile], {
         cwd: repoRoot,
-        encoding: "utf8",
         timeout: 5000,
       });
+      diff = diffResult.stdout;
     } catch {
       diff = "(diff unavailable)";
     }
 
-    // Read metadata for changeScale
+    // Read metadata for changeScale (Claude-written, use repair)
+    const iterMetadataSchema = z.object({
+      changeApplied: z.object({ scale: z.string() }).passthrough().nullable().optional(),
+    }).passthrough();
+
     let changeScale: "parametric" | "structural" | undefined;
     try {
       const metaPath = path.join(artifactsDir, `iter${globalIter}-metadata.json`);
       if (fs.existsSync(metaPath)) {
-        const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-        changeScale = meta.changeApplied?.scale;
+        const meta = safeJsonParse(fs.readFileSync(metaPath, "utf8"), { repair: true, schema: iterMetadataSchema });
+        changeScale = meta.changeApplied?.scale as "parametric" | "structural" | undefined;
       }
     } catch { /* ignore */ }
 
@@ -193,14 +200,13 @@ export async function fixStrategy(opts: {
     // Verify typecheck after fix
     if (changed) {
       try {
-        execSync("pnpm --filter @trading/backtest typecheck", {
+        execaSync("pnpm", ["--filter", "@trading/backtest", "typecheck"], {
           cwd: repoRoot,
-          encoding: "utf8",
           timeout: 30000,
           stdio: ["ignore", "pipe", "pipe"],
         });
       } catch {
-        fs.writeFileSync(strategyFile, beforeContent, "utf8");
+        writeFileAtomic.sync(strategyFile, beforeContent, "utf8");
         return {
           success: false,
           error: "Fix attempt did not resolve typecheck errors",

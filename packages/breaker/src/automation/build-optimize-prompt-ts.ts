@@ -9,10 +9,12 @@
  */
 
 import fs from "node:fs";
+import { z } from "zod";
 
 import type { Metrics, TradeAnalysis, StrategyParam, SessionName } from "@trading/backtest";
 import type { ResolvedCriteria, CoreParameterDef } from "../types/config.js";
 import type { ParameterHistory, ApproachRecord } from "../types/parameter-history.js";
+import { safeJsonParse } from "../lib/safe-json.js";
 
 export interface BuildPromptOptions {
   metrics: Metrics;
@@ -68,9 +70,20 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const tradeAnalysisSection = tradeAnalysis ? buildTradeAnalysisSection(tradeAnalysis) : "";
 
   // Parameter history
+  const paramHistorySchema = z.object({
+    iterations: z.array(z.object({}).passthrough()),
+    neverWorked: z.array(z.unknown()),
+    exploredRanges: z.record(z.string(), z.array(z.unknown())),
+    pendingHypotheses: z.array(z.object({}).passthrough()),
+    approaches: z.array(z.object({}).passthrough()).optional(),
+    researchLog: z.array(z.object({}).passthrough()).optional(),
+    currentPhase: z.string().optional(),
+    phaseStartIter: z.number().optional(),
+  });
+
   let paramHistory: ParameterHistory | null = null;
   try {
-    paramHistory = JSON.parse(fs.readFileSync(paramHistoryPath, "utf8")) as ParameterHistory;
+    paramHistory = safeJsonParse(fs.readFileSync(paramHistoryPath, "utf8"), { schema: paramHistorySchema }) as unknown as ParameterHistory;
   } catch { /* File doesn't exist yet */ }
 
   const exploredSpaceSection = buildExploredSpaceSection(paramHistory, globalIter, iter, maxIter);
@@ -81,13 +94,22 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const filterSimsSection = buildFilterSimsSection(tradeAnalysis);
   const overfitSection = buildOverfitSection(paramHistory, tradeAnalysis);
 
-  // Research brief
+  // Research brief (Claude-written, use repair)
+  const researchBriefSchema = z.object({
+    suggestedApproaches: z.array(z.object({
+      name: z.string(),
+      indicators: z.array(z.string()),
+      entryLogic: z.string(),
+      rationale: z.string(),
+    })).default([]),
+  }).passthrough();
+
   let researchSection = "";
   if (researchBriefPath) {
     try {
-      const brief = JSON.parse(fs.readFileSync(researchBriefPath, "utf8"));
+      const brief = safeJsonParse(fs.readFileSync(researchBriefPath, "utf8"), { repair: true, schema: researchBriefSchema });
       const approaches = (brief.suggestedApproaches ?? [])
-        .map((a: { name: string; indicators: string[]; entryLogic: string; rationale: string }) =>
+        .map((a) =>
           `- **${a.name}**: ${a.indicators.join(", ")} — ${a.entryLogic} (${a.rationale})`,
         ).join("\n");
       researchSection = `## RECENT RESEARCH (research phase results)\n${approaches}\n\n`;

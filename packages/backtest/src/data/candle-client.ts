@@ -1,5 +1,4 @@
-import pRetry, { AbortError } from "p-retry";
-import pTimeout from "p-timeout";
+import got, { HTTPError } from "got";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Candle, CandleInterval } from "../types/candle.js";
 
@@ -20,20 +19,34 @@ export interface CandleClientOptions {
   coinbasePerpProductId?: string;
 }
 
-async function fetchWithRetry(
+/**
+ * Generic fetch with retry via got.
+ * Retries on 429 (rate limit); non-retryable errors throw immediately.
+ */
+async function fetchWithRetry<T>(
   url: string,
-  init: RequestInit | undefined,
+  init: { method?: string; headers?: Record<string, string>; body?: string } | undefined,
   label: string,
-): Promise<Response> {
-  return pRetry(
-    async () => {
-      const response = await pTimeout(fetch(url, init), { milliseconds: 30_000 });
-      if (response.ok) return response;
-      if (response.status === 429) throw new Error(`${label} API error: rate limit exceeded after retries`);
-      throw new AbortError(`${label} API error: ${response.status} ${response.statusText}`);
-    },
-    { retries: 2, minTimeout: 2000, factor: 2 },
-  );
+): Promise<T> {
+  try {
+    return await got(url, {
+      method: (init?.method as "GET" | "POST") ?? "GET",
+      headers: init?.headers,
+      body: init?.body,
+      timeout: { request: 30_000 },
+      retry: {
+        limit: 2,
+        statusCodes: [429],
+        backoffLimit: 8000,
+      },
+      isStream: false,
+    }).json<T>();
+  } catch (error) {
+    if (error instanceof HTTPError) {
+      throw new Error(`${label} API error: ${error.response.statusCode} ${error.response.statusMessage}`);
+    }
+    throw error;
+  }
 }
 
 /** Deduplicate candles by timestamp and sort oldest-first. */
@@ -88,23 +101,54 @@ function toBybitInterval(interval: CandleInterval): string {
 
 type BybitResponse = { retCode: number; retMsg: string; result: { list: string[][] } };
 
+/**
+ * Bybit-specific fetch with retry.
+ * Handles both HTTP-level 429 and body-level rate limits (retCode + retMsg contains "Rate Limit").
+ * Non-rate-limit body errors (retCode !== 0) throw immediately without retry.
+ */
 async function fetchBybitWithRetry(url: string): Promise<BybitResponse> {
-  return pRetry(
-    async () => {
-      const response = await pTimeout(fetch(url), { milliseconds: 30_000 });
-      if (!response.ok) {
-        if (response.status === 429) throw new Error("Bybit API error: rate limit exceeded after retries");
-        throw new AbortError(`Bybit API error: ${response.status} ${response.statusText}`);
-      }
-      const json = (await response.json()) as BybitResponse;
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const json = await got(url, {
+        timeout: { request: 30_000 },
+        retry: {
+          limit: 0, // We handle retry manually for body-level rate limits
+        },
+        isStream: false,
+      }).json<BybitResponse>();
+
+      // Body-level rate limit check
       if (json.retCode !== 0) {
-        if (json.retMsg.includes("Rate Limit")) throw new Error("Bybit API error: rate limit exceeded after retries");
-        throw new AbortError(`Bybit API error: ${json.retMsg}`);
+        if (json.retMsg.includes("Rate Limit")) {
+          if (attempt < maxAttempts - 1) {
+            const delay = 2000 * Math.pow(2, attempt);
+            await sleep(delay);
+            continue;
+          }
+          throw new Error("Bybit API error: rate limit exceeded after retries");
+        }
+        throw new Error(`Bybit API error: ${json.retMsg}`);
       }
+
       return json;
-    },
-    { retries: 2, minTimeout: 2000, factor: 2 },
-  );
+    } catch (error) {
+      if (error instanceof HTTPError) {
+        if (error.response.statusCode === 429 && attempt < maxAttempts - 1) {
+          const delay = 2000 * Math.pow(2, attempt);
+          await sleep(delay);
+          continue;
+        }
+        if (error.response.statusCode === 429) {
+          throw new Error("Bybit API error: rate limit exceeded after retries");
+        }
+        throw new Error(`Bybit API error: ${error.response.statusCode} ${error.response.statusMessage}`);
+      }
+      throw error;
+    }
+  }
+  /* istanbul ignore next — unreachable */
+  throw new Error("Bybit API error: unexpected retry exhaustion");
 }
 
 async function fetchBybit(
@@ -186,7 +230,10 @@ async function fetchHyperliquid(
       req: { coin, interval, startTime: currentStart, endTime },
     };
 
-    const response = await fetchWithRetry(
+    const data = await fetchWithRetry<Array<{
+      t: number; T: number; s: string; i: string;
+      o: string; c: string; h: string; l: string; v: string; n: number;
+    }>>(
       baseUrl,
       {
         method: "POST",
@@ -195,11 +242,6 @@ async function fetchHyperliquid(
       },
       "HL",
     );
-
-    const data = (await response.json()) as Array<{
-      t: number; T: number; s: string; i: string;
-      o: string; c: string; h: string; l: string; v: string; n: number;
-    }>;
 
     if (data.length === 0) break;
 
@@ -285,10 +327,9 @@ async function fetchCoinbasePerp(
       `${baseUrl}/products/${productId}/candles` +
       `?granularity=${granularity}&start=${startSec}&end=${endSec}`;
 
-    const response = await fetchWithRetry(url, undefined, "Coinbase perp");
-    const json = (await response.json()) as {
+    const json = await fetchWithRetry<{
       candles: Array<{ start: string; low: string; high: string; open: string; close: string; volume: string }>;
-    };
+    }>(url, undefined, "Coinbase perp");
 
     const data = json.candles ?? [];
 
@@ -360,8 +401,7 @@ async function fetchCoinbase(
       `${baseUrl}/products/${productId}/candles` +
       `?start=${startISO}&end=${endISO}&granularity=${granularity}`;
 
-    const response = await fetchWithRetry(url, undefined, "Coinbase");
-    const data = (await response.json()) as number[][];
+    const data = await fetchWithRetry<number[][]>(url, undefined, "Coinbase");
 
     if (data.length === 0) {
       currentStart = batchEnd;

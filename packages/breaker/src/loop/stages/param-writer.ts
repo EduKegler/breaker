@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { z } from "zod";
+import writeFileAtomic from "write-file-atomic";
 import type {
   ParameterHistory,
   ParameterHistoryIteration,
@@ -7,6 +9,7 @@ import type {
   ApproachRecord,
 } from "../../types/parameter-history.js";
 import type { LoopPhase } from "../types.js";
+import { safeJsonParse } from "../../lib/safe-json.js";
 
 export interface IterationMetadata {
   changeApplied: {
@@ -37,13 +40,24 @@ function emptyHistory(): ParameterHistory {
   };
 }
 
+const parameterHistorySchema = z.object({
+  iterations: z.array(z.object({}).passthrough()),
+  neverWorked: z.array(z.unknown()),
+  exploredRanges: z.record(z.string(), z.array(z.unknown())),
+  pendingHypotheses: z.array(z.object({}).passthrough()),
+  approaches: z.array(z.object({}).passthrough()).optional(),
+  researchLog: z.array(z.object({}).passthrough()).optional(),
+  currentPhase: z.string().optional(),
+  phaseStartIter: z.number().optional(),
+});
+
 /**
  * Load parameter history from disk, or return empty if not found.
  */
 export function loadParameterHistory(filePath: string): ParameterHistory {
   try {
     const raw = fs.readFileSync(filePath, "utf8");
-    return JSON.parse(raw) as ParameterHistory;
+    return safeJsonParse(raw, { schema: parameterHistorySchema }) as unknown as ParameterHistory;
   } catch {
     return emptyHistory();
   }
@@ -112,14 +126,7 @@ export function backfillLastIteration(opts: {
   }
 
   // Write atomically
-  const tmpPath = historyPath + ".tmp";
-  fs.writeFileSync(tmpPath, JSON.stringify(history, null, 2), "utf8");
-  try {
-    fs.renameSync(tmpPath, historyPath);
-  } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* ignore cleanup failure */ }
-    throw err;
-  }
+  writeFileAtomic.sync(historyPath, JSON.stringify(history, null, 2), "utf8");
 
   return history;
 }
@@ -257,14 +264,7 @@ export function updateParameterHistory(opts: {
   }
 
   // 7. Write atomically
-  const tmpPath = historyPath + ".tmp";
-  fs.writeFileSync(tmpPath, JSON.stringify(history, null, 2), "utf8");
-  try {
-    fs.renameSync(tmpPath, historyPath);
-  } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* ignore cleanup failure */ }
-    throw err;
-  }
+  writeFileAtomic.sync(historyPath, JSON.stringify(history, null, 2), "utf8");
 
   return history;
 }
@@ -307,14 +307,7 @@ export function transitionApproach(opts: {
     verdict: "active",
   });
 
-  const tmpPath = historyPath + ".tmp";
-  fs.writeFileSync(tmpPath, JSON.stringify(history, null, 2), "utf8");
-  try {
-    fs.renameSync(tmpPath, historyPath);
-  } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* ignore cleanup failure */ }
-    throw err;
-  }
+  writeFileAtomic.sync(historyPath, JSON.stringify(history, null, 2), "utf8");
 }
 
 function isAlreadyInNeverWorked(

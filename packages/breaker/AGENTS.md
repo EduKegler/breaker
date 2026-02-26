@@ -6,8 +6,8 @@ B.R.E.A.K.E.R. — Backtesting Runtime for Evolutionary Analysis, Kernel Executi
 ## Project structure
 - `src/automation/` — Prompt builders for Claude optimization/fix (`build-optimize-prompt-ts.ts`, `build-fix-prompt-ts.ts`)
 - `src/dashboard/` — Dashboard and anomaly detection
-- `src/lib/` — Config, lock, strategy-registry, candle-loader, strategy-path
-- `src/loop/` — Orchestrator + stages (optimize, scoring, checkpoint, guardrails, integrity, events, research, summary, param-writer, run-engine, run-claude)
+- `src/lib/` — Config, lock, strategy-registry, candle-loader, strategy-path, safe-json
+- `src/loop/` — Orchestrator + state-machine (xstate v5) + stages (optimize, scoring, checkpoint, guardrails, integrity, events, research, summary, param-writer, run-engine, run-claude)
 - `src/types/` — Zod config schemas
 - `assets/{ASSET}/{CATEGORY}/{IMPLEMENTATION}/` — Strategy artifacts (checkpoints, param history, optimization log)
 - Strategies live in `packages/backtest/src/strategies/` (shared library)
@@ -34,7 +34,13 @@ B.R.E.A.K.E.R. — Backtesting Runtime for Evolutionary Analysis, Kernel Executi
 - Non-secret config lives in `breaker-config.json` and constants in code.
 - Strategy data config in `breaker-config.json`: `coin`, `dataSource`, `interval`, `strategyFactory`, `dateRange`.
 
+## Infra conventions (breaker-specific)
+- Shell commands: `execaSync` from `execa` (no `child_process`)
+- File writes: `write-file-atomic` (no `fs.writeFileSync`)
+- JSON parsing: `safeJsonParse()` from `src/lib/safe-json.ts` — `jsonrepair` for LLM output, Zod schemas for validation
+- State management: xstate v5 machine in `src/loop/state-machine.ts` advises phase/counter state; for-loop still drives iteration flow
+
 ## Build and test (breaker-specific)
 - Coverage: `pnpm vitest run --coverage`
-- Tests: `pnpm test` (314 tests across 20 files)
+- Tests: `pnpm test` (377 tests across 22 files)
 - After strategy code changes in restructure phase: `pnpm --filter @trading/backtest typecheck` then `pnpm --filter @trading/backtest build`

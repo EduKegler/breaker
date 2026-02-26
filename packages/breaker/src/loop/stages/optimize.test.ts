@@ -1,16 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock child_process BEFORE importing the module under test
-vi.mock("node:child_process", () => ({
-  execSync: vi.fn(),
-}));
-
+// Mock execa BEFORE importing the module under test
 vi.mock("execa", () => ({
   execa: vi.fn(),
+  execaSync: vi.fn(),
 }));
 
-import { execSync } from "node:child_process";
-import { execa } from "execa";
+vi.mock("write-file-atomic", () => ({
+  default: Object.assign(vi.fn().mockResolvedValue(undefined), {
+    sync: vi.fn(),
+  }),
+}));
+
+import { execa, execaSync } from "execa";
+import writeFileAtomic from "write-file-atomic";
 import fs from "node:fs";
 import { extractParamOverrides, optimizeStrategy, fixStrategy } from "./optimize.js";
 
@@ -100,15 +103,13 @@ describe("optimizeStrategy", () => {
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before content")
       .mockReturnValueOnce("// after changed unexpectedly");
-    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
 
     const result = await optimizeStrategy(baseOpts);
 
-    expect(writeSpy).toHaveBeenCalledWith(baseOpts.strategyFile, "// before content", "utf8");
+    expect(vi.mocked(writeFileAtomic.sync)).toHaveBeenCalledWith(baseOpts.strategyFile, "// before content", "utf8");
     expect(result.success).toBe(true);
     expect(result.data?.paramOverrides).toEqual({ dcSlow: 55 });
     readSpy.mockRestore();
-    writeSpy.mockRestore();
   });
 
   it("restructure: returns changed=true when file changed and typecheck passes", async () => {
@@ -116,7 +117,7 @@ describe("optimizeStrategy", () => {
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before")
       .mockReturnValueOnce("// after changed");
-    vi.mocked(execSync)
+    vi.mocked(execaSync)
       .mockReturnValueOnce("") // typecheck passes
       .mockReturnValueOnce("diff output"); // git diff
     vi.spyOn(fs, "existsSync").mockReturnValue(false);
@@ -134,8 +135,7 @@ describe("optimizeStrategy", () => {
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before")
       .mockReturnValueOnce("// after changed");
-    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
-    vi.mocked(execSync).mockImplementation(() => {
+    vi.mocked(execaSync).mockImplementation(() => {
       throw Object.assign(new Error("type error"), { stderr: "TS2345: blah" });
     });
 
@@ -143,9 +143,8 @@ describe("optimizeStrategy", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("typecheck_error");
-    expect(writeSpy).toHaveBeenCalledWith(baseOpts.strategyFile, "// before", "utf8");
+    expect(vi.mocked(writeFileAtomic.sync)).toHaveBeenCalledWith(baseOpts.strategyFile, "// before", "utf8");
     readSpy.mockRestore();
-    writeSpy.mockRestore();
   });
 
   it("returns changed=false when restructure produces no file change", async () => {
@@ -227,7 +226,7 @@ describe("fixStrategy", () => {
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before")
       .mockReturnValueOnce("// after fixed");
-    vi.mocked(execSync).mockReturnValue(""); // typecheck passes
+    vi.mocked(execaSync).mockReturnValue(""); // typecheck passes
 
     const result = await fixStrategy(fixOpts);
 
@@ -241,16 +240,14 @@ describe("fixStrategy", () => {
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before")
       .mockReturnValueOnce("// after still broken");
-    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
-    vi.mocked(execSync).mockImplementation(() => { throw new Error("TS error"); });
+    vi.mocked(execaSync).mockImplementation(() => { throw new Error("TS error"); });
 
     const result = await fixStrategy(fixOpts);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("typecheck errors");
-    expect(writeSpy).toHaveBeenCalledWith(fixOpts.strategyFile, "// before", "utf8");
+    expect(vi.mocked(writeFileAtomic.sync)).toHaveBeenCalledWith(fixOpts.strategyFile, "// before", "utf8");
     readSpy.mockRestore();
-    writeSpy.mockRestore();
   });
 
   it("returns success with changed=false when file unchanged", async () => {

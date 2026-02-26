@@ -152,52 +152,16 @@ describe("updateParameterHistory", () => {
     expect(nwEntries.length).toBe(1);
   });
 
-  it("writes atomically (temp file then rename)", () => {
+  it("writes atomically via write-file-atomic", () => {
     updateParameterHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
       currentMetrics: { pnl: 200, trades: 180, pf: 1.5 },
     });
-    // .tmp should not remain
-    expect(fs.existsSync(historyPath + ".tmp")).toBe(false);
     // File should be valid JSON
     const parsed = JSON.parse(fs.readFileSync(historyPath, "utf8"));
     expect(parsed.iterations).toHaveLength(1);
-  });
-
-  it("cleans up .tmp file when renameSync fails", () => {
-    // Write initial history so writeFileSync succeeds
-    const tmpPath = historyPath + ".tmp";
-
-    // Mock renameSync to fail
-    const originalRename = fs.renameSync;
-    let tmpExistedAfterError = false;
-    fs.renameSync = (...args: Parameters<typeof fs.renameSync>) => {
-      if (String(args[0]).endsWith(".tmp")) {
-        // Check .tmp exists before throwing
-        tmpExistedAfterError = fs.existsSync(tmpPath);
-        throw new Error("ENOSPC: no space left on device");
-      }
-      return originalRename(...args);
-    };
-
-    try {
-      expect(() =>
-        updateParameterHistory({
-          historyPath,
-          metadata: baseMetadata,
-          globalIter: 1,
-          currentMetrics: { pnl: 200, trades: 180, pf: 1.5 },
-        }),
-      ).toThrow("ENOSPC");
-      // .tmp existed when rename threw
-      expect(tmpExistedAfterError).toBe(true);
-      // .tmp should be cleaned up after error
-      expect(fs.existsSync(tmpPath)).toBe(false);
-    } finally {
-      fs.renameSync = originalRename;
-    }
   });
 
   it("detects neverWorked for pnl_degraded", () => {

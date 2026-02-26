@@ -59,15 +59,11 @@ export const StrategyEntrySchema = z.object({
   strategyFactory: z.string().min(1).optional(),
   profile: z.string().optional(),
   dateRange: z.union([DateRangeSchema, StrategyDateRangeSchema]).optional(),
-  // Legacy field — kept for migration period only
-  chartUrl: z.string().url().optional(),
 });
 
 export const AssetConfigSchema = z.object({
   class: z.string().min(1),
   strategies: z.record(z.string(), StrategyEntrySchema).default({}),
-  // Legacy flat fields (kept for backwards compat during migration)
-  chartUrl: z.string().url().optional(),
   strategy: z.string().optional(),
 });
 

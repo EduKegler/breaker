@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import writeFileAtomic from "write-file-atomic";
 import lockfile from "proper-lockfile";
 
 const LOCK_DIR = "/tmp";
@@ -18,7 +19,7 @@ export function lockPath(asset: string): string {
 function ensureSentinel(asset: string): string {
   const sentinel = lockPath(asset);
   if (!fs.existsSync(sentinel)) {
-    fs.writeFileSync(sentinel, "");
+    writeFileAtomic.sync(sentinel, "");
   }
   return sentinel;
 }
@@ -34,7 +35,7 @@ export function acquireLock(asset: string): void {
     throw err;
   }
   // Write metadata to sentinel for readLock
-  fs.writeFileSync(sentinel, JSON.stringify({ pid: process.pid, ts: Date.now(), asset }));
+  writeFileAtomic.sync(sentinel, JSON.stringify({ pid: process.pid, ts: Date.now(), asset }));
 }
 
 export function releaseLock(asset: string): void {
@@ -67,7 +68,7 @@ export async function acquireLockBlocking(
     }
     throw err;
   }
-  fs.writeFileSync(sentinel, JSON.stringify({ pid: process.pid, ts: Date.now(), asset: name }));
+  writeFileAtomic.sync(sentinel, JSON.stringify({ pid: process.pid, ts: Date.now(), asset: name }));
 }
 
 export function readLock(asset: string): LockData | null {

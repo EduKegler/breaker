@@ -1,5 +1,5 @@
-import { execSync } from "node:child_process";
 import path from "node:path";
+import { execaSync } from "execa";
 
 import {
   runBacktest,
@@ -78,9 +78,8 @@ export function runEngineChild(opts: {
     endTime,
   });
 
-  const stdout = execSync(`node ${childScript}`, {
+  const { stdout } = execaSync("node", [childScript], {
     cwd: repoRoot,
-    encoding: "utf8",
     timeout: 30000,
     input,
     stdio: ["pipe", "pipe", "pipe"],

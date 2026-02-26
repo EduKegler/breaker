@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import type { StageResult } from "../types.js";
 import { runClaude } from "./run-claude.js";
+import { safeJsonParse } from "../../lib/safe-json.js";
 
 export interface ResearchBrief {
   queries: string[];
@@ -96,16 +98,33 @@ Write ONLY the JSON file. Do not modify any other files.`;
     }
 
     const raw = fs.readFileSync(briefPath, "utf8");
+    const researchBriefSchema = z.object({
+      queries: z.array(z.string()).default([]),
+      findings: z.array(z.object({ source: z.string(), summary: z.string() })).default([]),
+      suggestedApproaches: z.array(z.object({
+        name: z.string(),
+        indicators: z.array(z.string()),
+        entryLogic: z.string(),
+        rationale: z.string(),
+      })),
+      timestamp: z.string().default(""),
+    });
+
     let brief: ResearchBrief;
     try {
-      brief = JSON.parse(raw) as ResearchBrief;
-    } catch {
-      log("Research brief is not valid JSON — falling back");
+      brief = safeJsonParse(raw, { repair: true, schema: researchBriefSchema }) as ResearchBrief;
+    } catch (parseErr) {
+      const errMsg = (parseErr as Error).message || "";
+      log("Research brief is not valid JSON or failed schema validation — falling back");
+      // Propagate specific validation errors (e.g. missing suggestedApproaches)
+      if (errMsg.includes("suggestedApproaches")) {
+        return { success: false, error: "research-brief.json missing suggestedApproaches" };
+      }
       return { success: false, error: "research-brief.json is not valid JSON" };
     }
 
-    // Basic validation
-    if (!brief.suggestedApproaches || !Array.isArray(brief.suggestedApproaches)) {
+    // suggestedApproaches validated by schema above, but check for empty
+    if (brief.suggestedApproaches.length === 0) {
       return { success: false, error: "research-brief.json missing suggestedApproaches" };
     }
 

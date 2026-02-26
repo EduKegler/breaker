@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
+import writeFileAtomic from "write-file-atomic";
 import type { CheckpointData } from "../types.js";
 import type { Metrics } from "@trading/backtest";
+import { safeJsonParse } from "../../lib/safe-json.js";
 
 /**
  * Save a checkpoint (best strategy source + params + metrics).
@@ -21,19 +24,15 @@ export function saveCheckpoint(
   const metricsPath = path.join(checkpointDir, "best-metrics.json");
   const paramsPath = path.join(checkpointDir, "best-params.json");
 
-  fs.writeFileSync(strategyPath + ".tmp", strategyContent, "utf8");
-  fs.writeFileSync(
-    metricsPath + ".tmp",
+  writeFileAtomic.sync(strategyPath, strategyContent, "utf8");
+  writeFileAtomic.sync(
+    metricsPath,
     JSON.stringify({ ...metrics, iter, timestamp: new Date().toISOString() }, null, 2),
     "utf8",
   );
 
-  fs.renameSync(strategyPath + ".tmp", strategyPath);
-  fs.renameSync(metricsPath + ".tmp", metricsPath);
-
   if (params) {
-    fs.writeFileSync(paramsPath + ".tmp", JSON.stringify(params, null, 2), "utf8");
-    fs.renameSync(paramsPath + ".tmp", paramsPath);
+    writeFileAtomic.sync(paramsPath, JSON.stringify(params, null, 2), "utf8");
   }
 }
 
@@ -52,30 +51,40 @@ export function loadCheckpoint(checkpointDir: string): CheckpointData | null {
     return null;
   }
 
+  const metricsSchema = z.object({
+    totalPnl: z.number().nullable().optional(),
+    numTrades: z.number().nullable().optional(),
+    profitFactor: z.number().nullable().optional(),
+    maxDrawdownPct: z.number().nullable().optional(),
+    winRate: z.number().nullable().optional(),
+    avgR: z.number().nullable().optional(),
+    iter: z.number().optional(),
+    timestamp: z.string().optional(),
+  }).passthrough();
+
   try {
     const strategyContent = fs.readFileSync(actualStrategyPath, "utf8");
-    const raw = JSON.parse(fs.readFileSync(metricsPath, "utf8")) as {
-      iter?: number;
-      timestamp?: string;
-    } & Metrics;
+    const raw = safeJsonParse(fs.readFileSync(metricsPath, "utf8"), { schema: metricsSchema });
 
     let params: Record<string, number> | undefined;
     const paramsPath = path.join(checkpointDir, "best-params.json");
     if (fs.existsSync(paramsPath)) {
       try {
-        params = JSON.parse(fs.readFileSync(paramsPath, "utf8")) as Record<string, number>;
+        params = safeJsonParse(fs.readFileSync(paramsPath, "utf8"), {
+          schema: z.record(z.string(), z.number()),
+        });
       } catch { /* ignore corrupt params */ }
     }
 
     return {
       strategyContent,
       metrics: {
-        totalPnl: raw.totalPnl,
-        numTrades: raw.numTrades,
-        profitFactor: raw.profitFactor,
-        maxDrawdownPct: raw.maxDrawdownPct,
-        winRate: raw.winRate,
-        avgR: raw.avgR,
+        totalPnl: raw.totalPnl ?? null,
+        numTrades: raw.numTrades ?? null,
+        profitFactor: raw.profitFactor ?? null,
+        maxDrawdownPct: raw.maxDrawdownPct ?? null,
+        winRate: raw.winRate ?? null,
+        avgR: raw.avgR ?? null,
       },
       params,
       iter: raw.iter ?? 0,
@@ -101,7 +110,7 @@ export function rollback(
   if (!fs.existsSync(actualPath)) return false;
 
   const content = fs.readFileSync(actualPath, "utf8");
-  fs.writeFileSync(strategyFile, content, "utf8");
+  writeFileAtomic.sync(strategyFile, content, "utf8");
   return true;
 }
 
@@ -112,7 +121,9 @@ export function loadCheckpointParams(checkpointDir: string): Record<string, numb
   const paramsPath = path.join(checkpointDir, "best-params.json");
   if (!fs.existsSync(paramsPath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(paramsPath, "utf8")) as Record<string, number>;
+    return safeJsonParse(fs.readFileSync(paramsPath, "utf8"), {
+      schema: z.record(z.string(), z.number()),
+    });
   } catch {
     return null;
   }

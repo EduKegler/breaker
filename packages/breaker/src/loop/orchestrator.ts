@@ -10,8 +10,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { execaSync } from "execa";
+import writeFileAtomic from "write-file-atomic";
+import { createActor } from "xstate";
 
 import { cac } from "cac";
 import { sendWithRetry as sendWhatsAppWithRetry } from "@trading/whatsapp-gateway";
@@ -33,6 +35,8 @@ import { buildOptimizePrompt } from "../automation/build-optimize-prompt-ts.js";
 import { buildFixPrompt } from "../automation/build-fix-prompt-ts.js";
 import { updateParameterHistory, loadParameterHistory, backfillLastIteration } from "./stages/param-writer.js";
 import { conductResearch } from "./stages/research.js";
+import { safeJsonParse } from "../lib/safe-json.js";
+import { breakerMachine } from "./state-machine.js";
 import type { Candle, CandleInterval, DataSource, Strategy, StrategyParam } from "@trading/backtest";
 import type { ScoreVerdict } from "./stages/scoring.js";
 import type { IterationMetadata } from "./stages/param-writer.js";
@@ -140,9 +144,9 @@ export function checkCriteria(
 
 /**
  * Determine if we should escalate from current phase.
- * refine → research: 3+ consecutive neutral or 2+ no-change
- * research → restructure: 2+ no-change
- * restructure → refine (next cycle): 2+ no-change
+ * refine -> research: 3+ consecutive neutral or 2+ no-change
+ * research -> restructure: 2+ no-change
+ * restructure -> refine (next cycle): 2+ no-change
  */
 export function shouldEscalatePhase(state: IterationState, _cfg: LoopConfig): boolean {
   if (state.currentPhase === "refine") {
@@ -255,7 +259,7 @@ async function main(): Promise<void> {
     endTime: cfg.endTime,
     dbPath: cfg.dbPath,
   });
-  log(`Candles loaded: ${candles.length} bars (${new Date(candles[0].t).toISOString()} → ${new Date(candles[candles.length - 1].t).toISOString()})`);
+  log(`Candles loaded: ${candles.length} bars (${new Date(candles[0].t).toISOString()} -> ${new Date(candles[candles.length - 1].t).toISOString()})`);
 
   // Determine initial phase from param history or CLI
   const existingHistory = loadParameterHistory(cfg.paramHistoryFile);
@@ -269,11 +273,42 @@ async function main(): Promise<void> {
   const strategyParams = initialStrategy.params;
   const paramCount = countOptimizableParams(strategyParams);
 
+  // Load existing checkpoint to seed best scores
+  let initialBestPnl = 0;
+  let initialBestIter = 0;
+  let initialBestScore = 0;
+  const existingCheckpoint = loadCheckpoint(cfg.checkpointDir);
+  if (existingCheckpoint) {
+    initialBestPnl = existingCheckpoint.metrics.totalPnl ?? 0;
+    initialBestIter = existingCheckpoint.iter;
+    const cpScore = computeScore(
+      existingCheckpoint.metrics,
+      paramCount,
+      existingCheckpoint.metrics.numTrades ?? 0,
+      cfg.scoring.weights,
+    );
+    initialBestScore = cpScore.weighted;
+    log(`Loaded checkpoint: bestPnl=$${initialBestPnl.toFixed(2)} score=${initialBestScore.toFixed(1)} from iter ${initialBestIter}`);
+  }
+
+  // Create xstate actor for state management
+  const actor = createActor(breakerMachine, {
+    input: {
+      initialPhase,
+      maxCycles: cfg.phases.maxCycles,
+      bestScore: initialBestScore,
+      bestPnl: initialBestPnl,
+      bestIter: initialBestIter,
+    },
+  });
+  actor.start();
+
+  // State not managed by the machine (iteration tracking, session metrics)
   const state: IterationState = {
     iter: 0,
     globalIter: existingHistory.iterations.length,
-    bestPnl: 0,
-    bestIter: 0,
+    bestPnl: initialBestPnl,
+    bestIter: initialBestIter,
     fixAttempts: 0,
     transientFailures: 0,
     noChangeCount: 0,
@@ -281,25 +316,10 @@ async function main(): Promise<void> {
     sessionMetrics: [],
     currentPhase: initialPhase,
     currentScore: 0,
-    bestScore: 0,
+    bestScore: initialBestScore,
     neutralStreak: 0,
     phaseCycles: 0,
   };
-
-  // Load existing checkpoint
-  const existingCheckpoint = loadCheckpoint(cfg.checkpointDir);
-  if (existingCheckpoint) {
-    state.bestPnl = existingCheckpoint.metrics.totalPnl ?? 0;
-    state.bestIter = existingCheckpoint.iter;
-    const cpScore = computeScore(
-      existingCheckpoint.metrics,
-      paramCount,
-      existingCheckpoint.metrics.numTrades ?? 0,
-      cfg.scoring.weights,
-    );
-    state.bestScore = cpScore.weighted;
-    log(`Loaded checkpoint: bestPnl=$${state.bestPnl.toFixed(2)} score=${state.bestScore.toFixed(1)} from iter ${state.bestIter}`);
-  }
 
   // Create artifacts dir
   if (!fs.existsSync(cfg.artifactsDir)) {
@@ -314,83 +334,75 @@ async function main(): Promise<void> {
     stage: "SESSION_START",
     status: "info",
     strategy: cfg.strategy,
-    message: `strategy=${cfg.strategy} maxIter=${cfg.maxIter} bestPnl=${state.bestPnl} phase=${state.currentPhase}`,
+    message: `strategy=${cfg.strategy} maxIter=${cfg.maxIter} bestPnl=${initialBestPnl} phase=${initialPhase}`,
   });
 
-  let researchBriefPath: string | undefined;
-  let phaseIterCount = 0;
   let lastContentHash: string | undefined;
-  let needsRebuild = false;
 
   for (let iter = 1; iter <= cfg.maxIter; iter++) {
     state.iter = iter;
     state.globalIter++;
-    phaseIterCount++;
-    log(`=== Iteration ${iter}/${cfg.maxIter} (phase: ${state.currentPhase}, phaseIter: ${phaseIterCount}) ===`);
+
+    // Send ITER_START to the machine (increments phaseIterCount)
+    actor.send({ type: "ITER_START" });
+    const mCtx = actor.getSnapshot().context;
+    const currentPhase = actor.getSnapshot().value as LoopPhase;
+    log(`=== Iteration ${iter}/${cfg.maxIter} (phase: ${currentPhase}, phaseIter: ${mCtx.phaseIterCount}) ===`);
+
+    // Sync IterationState from machine for backwards compat
+    state.currentPhase = currentPhase;
 
     // ---- Phase escalation check ----
-    if (shouldEscalatePhase(state, cfg)) {
-      if (state.currentPhase === "refine" && state.phaseCycles < cfg.phases.maxCycles) {
-        log(`Escalating: refine → research (neutralStreak=${state.neutralStreak}, noChange=${state.noChangeCount})`);
-        state.currentPhase = "research";
-        phaseIterCount = 0;
-        resetPhaseCounters(state);
-        emitEvent({
-          artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
-          stage: "PHASE_CHANGE", status: "info", message: "refine → research",
-        });
-      } else if (state.currentPhase === "research") {
-        log(`Escalating: research → restructure (noChange=${state.noChangeCount})`);
-        state.currentPhase = "restructure";
-        phaseIterCount = 0;
-        resetPhaseCounters(state);
-        emitEvent({
-          artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
-          stage: "PHASE_CHANGE", status: "info", message: "research → restructure",
-        });
-      } else if (state.currentPhase === "restructure") {
-        state.phaseCycles++;
-        if (state.phaseCycles < cfg.phases.maxCycles) {
-          log(`Escalating: restructure → refine (cycle ${state.phaseCycles}/${cfg.phases.maxCycles})`);
-          state.currentPhase = "refine";
-          phaseIterCount = 0;
-          resetPhaseCounters(state);
-          researchBriefPath = undefined;
-          emitEvent({
-            artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
-            stage: "PHASE_CHANGE", status: "info", message: `restructure → refine (cycle ${state.phaseCycles})`,
-          });
-        } else {
-          log(`Max phase cycles (${cfg.phases.maxCycles}) reached. Ending loop.`);
-          break;
-        }
-      }
+    const prevPhase = currentPhase;
+    actor.send({ type: "ESCALATE" });
+    let snap = actor.getSnapshot();
+    const phaseAfterEscalation = snap.value as LoopPhase | "done";
+
+    if (phaseAfterEscalation === "done") {
+      log(`Max phase cycles (${cfg.phases.maxCycles}) reached. Ending loop.`);
+      break;
+    }
+
+    if (phaseAfterEscalation !== prevPhase) {
+      log(`Escalating: ${prevPhase} -> ${phaseAfterEscalation} (neutralStreak=${mCtx.neutralStreak}, noChange=${mCtx.noChangeCount})`);
+      emitEvent({
+        artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+        stage: "PHASE_CHANGE", status: "info",
+        message: `${prevPhase} -> ${phaseAfterEscalation}`,
+      });
     }
 
     // Check phase iter limits
-    const phaseMaxIter = getPhaseMaxIter(state.currentPhase, cfg);
-    if (phaseIterCount > phaseMaxIter) {
-      const transition = transitionPhaseOnMaxIter(state.currentPhase, state.phaseCycles, cfg.phases.maxCycles);
-      if (transition.incrementCycles) state.phaseCycles++;
-      if (transition.shouldBreak) {
+    const activePhase = snap.value as LoopPhase;
+    const phaseMaxIter = getPhaseMaxIter(activePhase, cfg);
+    if (snap.context.phaseIterCount > phaseMaxIter) {
+      const prevPhase2 = activePhase;
+      actor.send({ type: "PHASE_TIMEOUT" });
+      snap = actor.getSnapshot();
+      const phaseAfterTimeout = snap.value as LoopPhase | "done";
+
+      if (phaseAfterTimeout === "done") {
         log(`Max phase cycles (${cfg.phases.maxCycles}) reached.`);
         break;
       }
-      log(`${state.currentPhase} phase complete (${phaseMaxIter} iters). Transitioning to ${transition.nextPhase}.`);
-      if (transition.nextPhase === "refine") researchBriefPath = undefined;
-      state.currentPhase = transition.nextPhase;
-      phaseIterCount = 1;
-      resetPhaseCounters(state);
+
+      log(`${prevPhase2} phase complete (${phaseMaxIter} iters). Transitioning to ${phaseAfterTimeout}.`);
     }
+
+    // Read fresh state from actor
+    snap = actor.getSnapshot();
+    const phase = snap.value as LoopPhase;
+    state.currentPhase = phase;
 
     emitEvent({
       artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
       stage: "ITER_START", status: "info",
-      message: `phase=${state.currentPhase}`,
+      message: `phase=${phase}`,
     });
 
     // ---- Research stage (if in research phase) ----
-    if (state.currentPhase === "research" && cfg.research.enabled && !researchBriefPath) {
+    const researchBriefPath = snap.context.researchBriefPath;
+    if (phase === "research" && cfg.research.enabled && !researchBriefPath) {
       log("Conducting research...");
       const exhaustedApproaches = (existingHistory.approaches ?? [])
         .filter((a) => a.verdict === "exhausted")
@@ -413,7 +425,8 @@ async function main(): Promise<void> {
       });
 
       if (researchResult.success) {
-        researchBriefPath = path.join(cfg.artifactsDir, "research-brief.json");
+        const briefPath = path.join(cfg.artifactsDir, "research-brief.json");
+        actor.send({ type: "RESEARCH_DONE", briefPath });
         log(`Research complete: ${researchResult.data!.suggestedApproaches.length} approaches found`);
       } else {
         log(`Research failed (non-blocking): ${researchResult.error}`);
@@ -425,22 +438,22 @@ async function main(): Promise<void> {
     const contentHash = computeContentHash(strategyContent);
 
     // Rebuild if strategy source changed (restructure phase)
+    const needsRebuild = actor.getSnapshot().context.needsRebuild;
     if (needsRebuild) {
       log("Rebuilding @trading/backtest after restructure...");
       try {
-        execSync("pnpm --filter @trading/backtest build", {
+        execaSync("pnpm", ["--filter", "@trading/backtest", "build"], {
           cwd: cfg.repoRoot,
-          encoding: "utf8",
           timeout: 30000,
           stdio: ["ignore", "pipe", "pipe"],
         });
-        needsRebuild = false;
+        actor.send({ type: "SET_NEEDS_REBUILD", value: false });
         log("Rebuild complete.");
       } catch (err) {
-        const errMsg = (err as Error).message.slice(0, 300);
+        const errMsg = ((err as { stderr?: string }).stderr || (err as Error).message).slice(0, 300);
         log(`Build failed: ${errMsg}`);
-        state.fixAttempts++;
-        if (state.fixAttempts > cfg.maxFixAttempts) {
+        actor.send({ type: "COMPILE_ERROR" });
+        if (actor.getSnapshot().context.fixAttempts > cfg.maxFixAttempts) {
           log(`Max fix attempts (${cfg.maxFixAttempts}) exceeded. Aborting.`);
           break;
         }
@@ -463,7 +476,7 @@ async function main(): Promise<void> {
 
     let engineResult;
     try {
-      if (state.currentPhase === "refine" || contentHash === lastContentHash) {
+      if (phase === "refine" || contentHash === lastContentHash) {
         // In-process: fast path (~2s)
         const strategy = factory(paramOverrides);
         log(`Running in-process backtest (params: ${JSON.stringify(paramOverrides)})...`);
@@ -489,7 +502,7 @@ async function main(): Promise<void> {
       }
     } catch (err) {
       const errClass = classifyError((err as Error).message || "");
-      log(`Backtest failed: ${errClass} — ${(err as Error).message.slice(0, 200)}`);
+      log(`Backtest failed: ${errClass} -- ${(err as Error).message.slice(0, 200)}`);
 
       emitEvent({
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
@@ -498,8 +511,9 @@ async function main(): Promise<void> {
       });
 
       if (errClass === "compile_error") {
-        state.fixAttempts++;
-        if (state.fixAttempts > cfg.maxFixAttempts) {
+        actor.send({ type: "COMPILE_ERROR" });
+        const mCtxErr = actor.getSnapshot().context;
+        if (mCtxErr.fixAttempts > cfg.maxFixAttempts) {
           log(`Max fix attempts (${cfg.maxFixAttempts}) exceeded. Aborting.`);
           break;
         }
@@ -508,25 +522,25 @@ async function main(): Promise<void> {
           errors: [],
           buildOutput: (err as Error).message,
         });
-        log(`Attempting fix (${state.fixAttempts}/${cfg.maxFixAttempts})...`);
+        log(`Attempting fix (${mCtxErr.fixAttempts}/${cfg.maxFixAttempts})...`);
         await fixStrategy({
           prompt: fixPrompt,
           strategyFile: cfg.strategyFile,
           repoRoot: cfg.repoRoot,
           model: cfg.modelRouting.fix,
         });
-        needsRebuild = true;
         continue;
       }
 
       if (errClass === "timeout" || errClass === "network" || errClass === "transient") {
-        state.transientFailures++;
-        if (state.transientFailures > cfg.maxTransientFailures) {
+        actor.send({ type: "TRANSIENT_ERROR" });
+        const mCtxErr = actor.getSnapshot().context;
+        if (mCtxErr.transientFailures > cfg.maxTransientFailures) {
           log(`Max transient failures (${cfg.maxTransientFailures}) exceeded. Aborting.`);
           break;
         }
-        const delay = backoffDelay(state.transientFailures);
-        log(`Transient error (${state.transientFailures}/${cfg.maxTransientFailures}). Waiting ${delay}ms...`);
+        const delay = backoffDelay(mCtxErr.transientFailures);
+        log(`Transient error (${mCtxErr.transientFailures}/${cfg.maxTransientFailures}). Waiting ${delay}ms...`);
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
@@ -535,22 +549,22 @@ async function main(): Promise<void> {
       break;
     }
 
-    state.transientFailures = 0;
-    state.fixAttempts = 0;
-    lastContentHash = contentHash;
-
+    // Backtest succeeded — reset error counters via BACKTEST_OK
     const { metrics, analysis, trades } = engineResult;
     const currentPnl = metrics.totalPnl ?? 0;
-    log(`Backtest OK: PnL=$${currentPnl.toFixed(2)} Trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)} WR=${metrics.winRate?.toFixed(1)}%`);
 
-    // ---- Step 2: Compute score ----
+    // Compute score
     const scoreResult = computeScore(
       metrics,
       paramCount,
       metrics.numTrades ?? 0,
       cfg.scoring.weights,
     );
-    state.currentScore = scoreResult.weighted;
+
+    actor.send({ type: "BACKTEST_OK", currentScore: scoreResult.weighted, currentPnl });
+    lastContentHash = contentHash;
+
+    log(`Backtest OK: PnL=$${currentPnl.toFixed(2)} Trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)} WR=${metrics.winRate?.toFixed(1)}%`);
     log(`Score: ${scoreResult.weighted.toFixed(1)}/100 (${scoreResult.breakdown})`);
 
     emitEvent({
@@ -576,22 +590,23 @@ async function main(): Promise<void> {
     }
 
     // ---- Determine verdict using score ----
+    const machCtx = actor.getSnapshot().context;
     const meetsMinTrades = (metrics.numTrades ?? 0) >= (cfg.criteria.minTrades ?? 0);
-    const scoreVerdict = state.bestScore > 0
-      ? compareScores(scoreResult.weighted, state.bestScore)
+    const scoreVerdict = machCtx.bestScore > 0
+      ? compareScores(scoreResult.weighted, machCtx.bestScore)
       : (scoreResult.weighted > 0 ? "accept" : "neutral");
     const effectiveVerdict = computeEffectiveVerdict(scoreVerdict, meetsMinTrades);
 
     let verdict: string;
     if (effectiveVerdict === "accept") {
       verdict = "improved";
-      state.neutralStreak = 0;
+      actor.send({ type: "VERDICT", verdict: "improved" });
     } else if (effectiveVerdict === "reject") {
       verdict = "degraded";
-      state.neutralStreak = 0;
+      actor.send({ type: "VERDICT", verdict: "degraded" });
     } else {
       verdict = "neutral";
-      state.neutralStreak++;
+      actor.send({ type: "VERDICT", verdict: "neutral" });
     }
 
     state.sessionMetrics.push({
@@ -613,6 +628,9 @@ async function main(): Promise<void> {
         pnl: currentPnl, message: "All criteria passed",
       });
       success = true;
+      actor.send({ type: "CHECKPOINT_SAVED", bestScore: scoreResult.weighted, bestPnl: currentPnl, bestIter: iter });
+      actor.send({ type: "CRITERIA_MET" });
+      // Sync state for summary
       state.bestScore = scoreResult.weighted;
       state.bestPnl = currentPnl;
       state.bestIter = iter;
@@ -621,16 +639,18 @@ async function main(): Promise<void> {
     }
 
     // ---- Step 4: Checkpoint / Rollback (score-based) ----
-    if (scoreResult.weighted > state.bestScore && meetsMinTrades) {
+    const bestScore = actor.getSnapshot().context.bestScore;
+    if (scoreResult.weighted > bestScore && meetsMinTrades) {
+      actor.send({ type: "CHECKPOINT_SAVED", bestScore: scoreResult.weighted, bestPnl: currentPnl, bestIter: iter });
       state.bestScore = scoreResult.weighted;
       state.bestPnl = currentPnl;
       state.bestIter = iter;
       saveCheckpoint(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides);
       log(`New best: Score=${scoreResult.weighted.toFixed(1)} PnL=$${currentPnl.toFixed(2)} at iter ${iter}`);
-    } else if (scoreResult.weighted > state.bestScore && !meetsMinTrades) {
-      log(`Score ${scoreResult.weighted.toFixed(1)} is best but trades=${metrics.numTrades} < minTrades=${cfg.criteria.minTrades} — not saving checkpoint`);
+    } else if (scoreResult.weighted > bestScore && !meetsMinTrades) {
+      log(`Score ${scoreResult.weighted.toFixed(1)} is best but trades=${metrics.numTrades} < minTrades=${cfg.criteria.minTrades} -- not saving checkpoint`);
     } else if (scoreVerdict === "reject") {
-      log(`Rolling back: Score ${scoreResult.weighted.toFixed(1)} dropped below threshold vs best ${state.bestScore.toFixed(1)}`);
+      log(`Rolling back: Score ${scoreResult.weighted.toFixed(1)} dropped below threshold vs best ${bestScore.toFixed(1)}`);
       // Restore best params
       const bestParams = loadCheckpointParams(cfg.checkpointDir);
       if (bestParams) {
@@ -639,26 +659,27 @@ async function main(): Promise<void> {
       // Restore best strategy source
       const restored = rollback(cfg.checkpointDir, cfg.strategyFile);
       if (!restored) {
-        log(`WARNING: Rollback failed — no checkpoint found.`);
-      } else if (state.currentPhase !== "refine") {
-        needsRebuild = true;
+        log(`WARNING: Rollback failed -- no checkpoint found.`);
+      } else if (phase !== "refine") {
+        actor.send({ type: "SET_NEEDS_REBUILD", value: true });
       }
       emitEvent({
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "ROLLBACK", status: "warn", pnl: currentPnl,
-        message: `Rolled back to best (iter ${state.bestIter}, score=${state.bestScore.toFixed(1)})`,
+        message: `Rolled back to best (iter ${state.bestIter}, score=${bestScore.toFixed(1)})`,
       });
     }
 
     state.previousPnl = currentPnl;
 
     // ---- Step 5: Optimize (Claude suggests next changes) ----
-    const isRestructure = state.currentPhase === "restructure" || !!researchBriefPath;
+    const currentResearchBriefPath = actor.getSnapshot().context.researchBriefPath;
+    const isRestructure = phase === "restructure" || !!currentResearchBriefPath;
     const optimizeModel = isRestructure && cfg.modelRouting.restructure
       ? cfg.modelRouting.restructure
       : cfg.modelRouting.optimize;
     const optimizeTimeout = isRestructure ? 1800000 : 900000;
-    const effectivePhase = researchBriefPath ? "restructure" : state.currentPhase;
+    const effectivePhase = currentResearchBriefPath ? "restructure" : phase;
 
     log(`Optimizing with ${optimizeModel} (phase=${effectivePhase}, timeout=${optimizeTimeout / 1000}s)...`);
 
@@ -679,7 +700,7 @@ async function main(): Promise<void> {
       globalIter: state.globalIter,
       paramHistoryPath: cfg.paramHistoryFile,
       artifactsDir: cfg.artifactsDir,
-      researchBriefPath,
+      researchBriefPath: currentResearchBriefPath,
     });
 
     emitEvent({
@@ -712,14 +733,15 @@ async function main(): Promise<void> {
     }
 
     if (!optResult.data?.changed) {
-      state.noChangeCount++;
-      log(`No change (${state.noChangeCount}/${cfg.maxNoChange})`);
-      if (state.noChangeCount >= cfg.maxNoChange) {
-        log(`No-change limit reached — will escalate phase at next iteration.`);
+      actor.send({ type: "NO_CHANGE" });
+      const noChangeCount = actor.getSnapshot().context.noChangeCount;
+      log(`No change (${noChangeCount}/${cfg.maxNoChange})`);
+      if (noChangeCount >= cfg.maxNoChange) {
+        log(`No-change limit reached -- will escalate phase at next iteration.`);
       }
       continue;
     }
-    state.noChangeCount = 0;
+    actor.send({ type: "CHANGE_APPLIED", isRestructure: effectivePhase !== "refine" });
 
     // ---- Step 6: Apply changes & guardrails ----
     if (effectivePhase === "refine" && optResult.data.paramOverrides) {
@@ -748,7 +770,7 @@ async function main(): Promise<void> {
       log(`Params updated: ${JSON.stringify(optResult.data.paramOverrides)}`);
     } else {
       // Restructure: file was changed + passed typecheck in optimize step
-      needsRebuild = true;
+      // needsRebuild already set by CHANGE_APPLIED with isRestructure=true
       log(`Strategy source modified (restructure). Will rebuild next iteration.`);
     }
 
@@ -757,7 +779,7 @@ async function main(): Promise<void> {
     let metadata: IterationMetadata | null = null;
     try {
       if (fs.existsSync(metadataPath)) {
-        metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as IterationMetadata;
+        metadata = safeJsonParse<IterationMetadata>(fs.readFileSync(metadataPath, "utf8"), { repair: true });
       }
     } catch {
       log("Could not read metadata JSON from Claude (non-blocking)");
@@ -775,7 +797,7 @@ async function main(): Promise<void> {
             pf: metrics.profitFactor ?? 0,
           },
           score: scoreResult.weighted,
-          phase: state.currentPhase,
+          phase,
         });
         log("Parameter history updated deterministically");
       } catch (err) {
@@ -786,10 +808,8 @@ async function main(): Promise<void> {
     // ---- Step 8: Auto-commit (optional) ----
     if (cfg.autoCommit) {
       try {
-        execSync(`git add "${cfg.strategyFile}" && git commit -m "iter${iter}: optimize ${cfg.asset}/${cfg.strategy} (${state.currentPhase})"`, {
-          cwd: cfg.repoRoot,
-          timeout: 10000,
-        });
+        execaSync("git", ["add", cfg.strategyFile], { cwd: cfg.repoRoot, timeout: 10000 });
+        execaSync("git", ["commit", "-m", `iter${iter}: optimize ${cfg.asset}/${cfg.strategy} (${phase})`], { cwd: cfg.repoRoot, timeout: 10000 });
       } catch {
         // Non-critical
       }
@@ -836,7 +856,7 @@ async function main(): Promise<void> {
     message: success ? "Criteria passed" : `Max iter reached (phase=${state.currentPhase}, bestScore=${state.bestScore.toFixed(1)})`,
   });
 
-  fs.writeFileSync(path.join(cfg.artifactsDir, "session-summary.txt"), summary, "utf8");
+  writeFileAtomic.sync(path.join(cfg.artifactsDir, "session-summary.txt"), summary, "utf8");
   log("Session summary:");
   console.log(summary);
 
@@ -855,6 +875,9 @@ async function main(): Promise<void> {
   } else {
     log("WhatsApp not configured (missing EVOLUTION_API_URL, EVOLUTION_API_KEY, or WHATSAPP_RECIPIENT)");
   }
+
+  // Stop the actor
+  actor.stop();
 
   } finally {
     releaseLock(cfg.asset);

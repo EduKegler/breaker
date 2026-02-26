@@ -3,8 +3,7 @@ import express from "express";
 import { timingSafeEqual, createHmac } from "node:crypto";
 import rateLimit from "express-rate-limit";
 import { LRUCache } from "lru-cache";
-import pRetry from "p-retry";
-import pTimeout from "p-timeout";
+import got from "got";
 
 import { AlertPayloadSchema } from "../types/alert.js";
 import type { AlertPayload } from "../types/alert.js";
@@ -103,33 +102,12 @@ export function formatWhatsAppMessage(alert: AlertPayload): string {
 // ---------------------
 // Send to WhatsApp Gateway
 // ---------------------
-async function sendToGateway(text: string): Promise<unknown> {
-  const res = await pTimeout(
-    fetch(`${env.GATEWAY_URL}/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    }),
-    { milliseconds: 10_000 },
-  );
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`Gateway ${res.status}: ${errText}`);
-  }
-
-  return await res.json();
-}
-
 async function sendWithRetry(text: string): Promise<unknown> {
-  return pRetry(() => sendToGateway(text), {
-    retries: 1,
-    minTimeout: 5000,
-    factor: 1,
-    onFailedAttempt: (ctx) => {
-      logger.warn({ error: ctx.error.message }, "Gateway send failed, retrying in 5s");
-    },
-  });
+  return got.post(`${env.GATEWAY_URL}/send`, {
+    json: { text },
+    timeout: { request: 10_000 },
+    retry: { limit: 1, backoffLimit: 5000 },
+  }).json();
 }
 
 // ---------------------

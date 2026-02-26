@@ -8,8 +8,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
+import writeFileAtomic from "write-file-atomic";
 import type { DashboardEvent } from "../types/events.js";
 import { detectAnomalies } from "./anomalies.js";
+import { safeJsonParse } from "../lib/safe-json.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");
@@ -45,15 +48,30 @@ export function getLatestRun(): string {
   return eventsFile;
 }
 
+const dashboardEventSchema = z.object({
+  ts: z.string(),
+  iter: z.number(),
+  stage: z.string(),
+  status: z.string(),
+  pnl: z.number().default(0),
+  pf: z.number().default(0),
+  dd: z.number().default(0),
+  trades: z.number().default(0),
+  message: z.string().default(""),
+  run_id: z.string(),
+  asset: z.string().default(""),
+  anomalies: z.array(z.string()).optional(),
+});
+
 export function parseEvents(file: string): DashboardEvent[] {
   const raw = fs.readFileSync(file, "utf8");
   const lines = raw.split("\n").filter((l) => l.trim().length > 0);
   const events: DashboardEvent[] = [];
   for (const line of lines) {
     try {
-      events.push(JSON.parse(line) as DashboardEvent);
+      events.push(safeJsonParse(line, { schema: dashboardEventSchema }) as DashboardEvent);
     } catch {
-      // Skip malformed lines
+      // Skip malformed lines or lines that fail schema validation
     }
   }
   return events;
@@ -337,7 +355,7 @@ if (isMain) {
   if (process.argv.includes("--html")) {
     const html = generateHTML(events);
     const outPath = path.join(ROOT, "dashboard.html");
-    fs.writeFileSync(outPath, html);
+    writeFileAtomic.sync(outPath, html);
     console.log("Dashboard written to " + outPath);
   } else {
     printSummary(events);

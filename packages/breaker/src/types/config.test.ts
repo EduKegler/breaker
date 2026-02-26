@@ -27,7 +27,7 @@ describe("BreakerConfigSchema", () => {
       },
       guardrails: { maxRiskTradeUsd: 25, protectedFields: ["entry"] },
       assets: {
-        BTC: { class: "crypto", chartUrl: "https://www.tradingview.com/chart/abc" },
+        BTC: { class: "crypto" },
       },
       phases: { refine: { maxIter: 5 }, research: { maxIter: 3 }, restructure: { maxIter: 5 }, maxCycles: 2 },
       scoring: { weights: { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 } },
@@ -61,7 +61,7 @@ describe("BreakerConfigSchema", () => {
     const result = BreakerConfigSchema.safeParse({
       assetClasses: {},
       assets: {
-        BTC: { class: "crypto", chartUrl: "https://example.com/chart" },
+        BTC: { class: "crypto" },
       },
     });
     expect(result.success).toBe(false);
@@ -151,23 +151,13 @@ describe("ScoringWeightsSchema", () => {
 });
 
 describe("StrategyEntrySchema", () => {
-  it("accepts valid entry with chartUrl", () => {
-    const result = StrategyEntrySchema.safeParse({
-      chartUrl: "https://www.tradingview.com/chart/abc",
-    });
+  it("accepts empty entry", () => {
+    const result = StrategyEntrySchema.safeParse({});
     expect(result.success).toBe(true);
-  });
-
-  it("rejects invalid URL", () => {
-    const result = StrategyEntrySchema.safeParse({
-      chartUrl: "not-a-url",
-    });
-    expect(result.success).toBe(false);
   });
 
   it("accepts entry with optional profile", () => {
     const result = StrategyEntrySchema.safeParse({
-      chartUrl: "https://www.tradingview.com/chart/abc",
       profile: "mean-reversion",
     });
     expect(result.success).toBe(true);
@@ -177,7 +167,6 @@ describe("StrategyEntrySchema", () => {
 
   it("accepts entry with optional dateRange", () => {
     const result = StrategyEntrySchema.safeParse({
-      chartUrl: "https://www.tradingview.com/chart/abc",
       dateRange: "custom:2025-08-01:2026-02-01",
     });
     expect(result.success).toBe(true);
@@ -187,7 +176,6 @@ describe("StrategyEntrySchema", () => {
 
   it("rejects entry with invalid dateRange", () => {
     const result = StrategyEntrySchema.safeParse({
-      chartUrl: "https://www.tradingview.com/chart/abc",
       dateRange: "last60",
     });
     expect(result.success).toBe(false);
@@ -200,7 +188,6 @@ describe("AssetConfigSchema", () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data.strategies).toEqual({});
-    expect(result.data.chartUrl).toBeUndefined();
     expect(result.data.strategy).toBeUndefined();
   });
 
@@ -208,27 +195,12 @@ describe("AssetConfigSchema", () => {
     const result = AssetConfigSchema.safeParse({
       class: "crypto",
       strategies: {
-        breakout: { chartUrl: "https://example.com/chart" },
+        breakout: {},
       },
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects invalid chartUrl", () => {
-    const result = AssetConfigSchema.safeParse({
-      class: "crypto",
-      chartUrl: "not-a-url",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts legacy flat chartUrl", () => {
-    const result = AssetConfigSchema.safeParse({
-      class: "crypto",
-      chartUrl: "https://example.com/chart",
-    });
-    expect(result.success).toBe(true);
-  });
 });
 
 describe("ResearchConfigSchema", () => {
@@ -273,7 +245,7 @@ describe("BreakerConfigSchema — strategyProfiles", () => {
       strategyProfiles: { breakout: {}, "mean-reversion": { minPF: 1.3 } },
       assetClasses: { "crypto-major": {} },
       assets: {
-        BTC: { class: "crypto-major", strategy: "breakout", chartUrl: "https://example.com" },
+        BTC: { class: "crypto-major", strategy: "breakout" },
       },
     });
     expect(result.success).toBe(true);
@@ -291,7 +263,7 @@ describe("BreakerConfigSchema — strategyProfiles", () => {
       strategyProfiles: {},
       assetClasses: { "crypto-major": {} },
       assets: {
-        BTC: { class: "crypto-major", strategy: "nonexistent", chartUrl: "https://example.com" },
+        BTC: { class: "crypto-major", strategy: "nonexistent" },
       },
     });
     expect(result.success).toBe(false);
@@ -306,7 +278,7 @@ describe("BreakerConfigSchema — strategyProfiles", () => {
     const result = BreakerConfigSchema.safeParse({
       assetClasses: { "crypto-major": {} },
       assets: {
-        BTC: { class: "crypto-major", chartUrl: "https://example.com" },
+        BTC: { class: "crypto-major" },
       },
     });
     expect(result.success).toBe(true);
@@ -320,7 +292,7 @@ describe("BreakerConfigSchema — strategyProfiles", () => {
         BTC: {
           class: "crypto-major",
           strategies: {
-            breakout: { chartUrl: "https://example.com", profile: "nonexistent-profile" },
+            breakout: { profile: "nonexistent-profile" },
           },
         },
       },
@@ -341,7 +313,7 @@ describe("BreakerConfigSchema — strategyProfiles", () => {
         BTC: {
           class: "crypto-major",
           strategies: {
-            breakout: { chartUrl: "https://example.com" },
+            breakout: {},
           },
         },
       },

@@ -17,7 +17,6 @@ export interface LoopConfig {
   phases: PhasesConfig;
   scoring: ScoringConfig;
   research: ResearchConfig;
-  // Data config (replaces chartUrl + dateRange string)
   coin: string;
   dataSource: DataSource;
   interval: CandleInterval;

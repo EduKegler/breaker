@@ -1,4 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+const { mockGot } = vi.hoisted(() => {
+  const mockGot = vi.fn();
+  return { mockGot };
+});
+
+vi.mock("got", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("got")>();
+  return {
+    ...actual,
+    default: mockGot,
+  };
+});
+
 import { CandleCache } from "./candle-cache.js";
 import type { Candle } from "../types/candle.js";
 
@@ -81,49 +95,40 @@ describe("CandleCache", () => {
   });
 
   it("sync fetches from API and caches", async () => {
-    const mockFetch = vi.fn().mockResolvedValueOnce({
-      ok: true,
+    mockGot.mockReturnValueOnce({
       json: () => Promise.resolve([
         { t: 1000, T: 1999, s: "BTC", i: "15m", o: "100", c: "105", h: "110", l: "90", v: "50", n: 20 },
         { t: 2000, T: 2999, s: "BTC", i: "15m", o: "105", c: "108", h: "112", l: "100", v: "30", n: 10 },
       ]),
-    });
-    globalThis.fetch = mockFetch;
+    } as never);
 
     const result = await cache.sync("BTC", "15m", 0, 5000, { source: "hyperliquid", baseUrl: "http://test" });
     expect(result.fetched).toBe(2);
     expect(result.cached).toBe(2);
     expect(cache.getCandles("BTC", "15m", 0, 5000, "hyperliquid")).toHaveLength(2);
 
-    globalThis.fetch = vi.fn();
+    mockGot.mockReset();
   });
 
   it("sync skips when already up to date", async () => {
     cache.insertCandles("BTC", "15m", [makeCandle(5000)], "hyperliquid");
 
-    const mockFetch = vi.fn();
-    globalThis.fetch = mockFetch;
-
     // startTime matches cached data, endTime within range → no fetch needed
     const result = await cache.sync("BTC", "15m", 5000, 5000, { source: "hyperliquid", baseUrl: "http://test" });
     expect(result.fetched).toBe(0);
-    expect(mockFetch).not.toHaveBeenCalled();
-
-    globalThis.fetch = vi.fn();
+    expect(mockGot).not.toHaveBeenCalled();
   });
 
   it("sync backfills earlier data", async () => {
     // Cache already has candle at t=5000
     cache.insertCandles("BTC", "15m", [makeCandle(5000)], "hyperliquid");
 
-    const mockFetch = vi.fn().mockResolvedValueOnce({
-      ok: true,
+    mockGot.mockReturnValueOnce({
       json: () => Promise.resolve([
         { t: 1000, T: 1999, s: "BTC", i: "15m", o: "100", c: "105", h: "110", l: "90", v: "50", n: 20 },
         { t: 2000, T: 2999, s: "BTC", i: "15m", o: "105", c: "108", h: "112", l: "100", v: "30", n: 10 },
       ]),
-    });
-    globalThis.fetch = mockFetch;
+    } as never);
 
     // Request data starting at t=0 → should backfill before t=5000
     const result = await cache.sync("BTC", "15m", 0, 5000, { source: "hyperliquid", baseUrl: "http://test" });
@@ -131,7 +136,7 @@ describe("CandleCache", () => {
     expect(result.cached).toBe(3); // 2 backfilled + 1 existing
     expect(cache.getCandles("BTC", "15m", 0, 6000, "hyperliquid")).toHaveLength(3);
 
-    globalThis.fetch = vi.fn();
+    mockGot.mockReset();
   });
 
   it("isolates data by source", () => {
