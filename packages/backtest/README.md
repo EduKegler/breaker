@@ -63,6 +63,6 @@ Strategies implement the `Strategy` interface and return typed `StrategyParam` o
 
 ```bash
 pnpm build       # Compile TypeScript
-pnpm test        # Run all tests (175 tests)
+pnpm test        # Run all tests (190 tests)
 pnpm typecheck   # Type-check without emitting
 ```

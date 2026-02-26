@@ -1,15 +1,16 @@
 # @trading/hl-broker
 
-Hyperliquid broker — order execution, position management, and WhatsApp notifications.
+> **Not yet implemented.** This package is an empty stub reserved for future development.
 
-## Usage
+Planned: Hyperliquid broker — order execution, position management, and WhatsApp notifications.
 
-```bash
-pnpm build
-pnpm start   # node dist/server.js
-```
+## Planned features
 
-## Configuration
+- Order placement and execution via Hyperliquid SDK/API
+- Position tracking and management
+- WhatsApp notifications via whatsapp-gateway (POST /send)
+
+## Planned configuration
 
 Required secrets (`.env`):
 
@@ -19,15 +20,10 @@ HL_PRIVATE_KEY=...
 GATEWAY_URL=http://localhost:3100   # whatsapp-gateway
 ```
 
-## Integration
-
-- **Hyperliquid**: order execution and position queries via HL SDK/API
-- **whatsapp-gateway**: sends notifications via `GATEWAY_URL` (POST /send)
-
 ## Commands
 
 ```bash
-pnpm build      # Compile TypeScript
-pnpm test       # Run tests
+pnpm build      # Compile TypeScript (stub only)
+pnpm test       # Run tests (none yet)
 pnpm typecheck  # Type-check without emitting
 ```

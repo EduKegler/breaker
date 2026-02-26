@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@trading/whatsapp-gateway", () => ({
-  sendWithRetry: vi.fn().mockResolvedValue(undefined),
+  sendWhatsApp: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../lib/config.js", () => ({

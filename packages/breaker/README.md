@@ -89,7 +89,7 @@ src/
 
 ```bash
 pnpm build          # Compile TypeScript
-pnpm test           # Run all tests (315 tests)
+pnpm test           # Run all tests (377 tests)
 pnpm typecheck      # Type-check without emitting
 pnpm test:coverage  # Run with coverage report
 ```

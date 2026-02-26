@@ -16,7 +16,7 @@ import writeFileAtomic from "write-file-atomic";
 import { createActor } from "xstate";
 
 import { cac } from "cac";
-import { sendWithRetry as sendWhatsAppWithRetry } from "@trading/whatsapp-gateway";
+import { sendWhatsApp as sendWhatsAppWithRetry } from "@trading/whatsapp-gateway";
 import { loadConfig, resolveAssetCriteria, resolveDataConfig, resolveDateRange } from "../lib/config.js";
 import { buildStrategyDir, getStrategySourcePath } from "../lib/strategy-path.js";
 import { getStrategyFactory } from "../lib/strategy-registry.js";

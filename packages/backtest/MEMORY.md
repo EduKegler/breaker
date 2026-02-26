@@ -2,7 +2,7 @@
 
 ## Current state
 - Full implementation complete: types, indicators (7), engine (5 modules), analysis (4), data layer (2), strategy (donchian-adx), CLI, barrel
-- 174 tests passing, 20 test files, clean build
+- 190 tests passing, 21 test files, clean build
 - Strategies: donchian-adx, keltner-rsi2 (both TypeScript ports of Pine scripts)
 - Data sources: Bybit (default, perp USDT), Coinbase spot, Coinbase perp, Hyperliquid — all via CCXT `fetchOHLCV()`
 - Cache keyed by (source, coin, interval, t) — different sources stored separately
@@ -25,6 +25,7 @@
 - **Performance fix**: Strategy `init?(candles, higherTimeframes)` lifecycle pre-computes all indicators once; `onCandle`/`shouldExit` do O(1) index lookups. Strategies fall back to on-the-fly computation if `init()` wasn't called.
 - Metrics types defined locally in `types/metrics.ts` (compatible with breaker scoring)
 - Indicators: EMA, SMA, ATR, RSI, ADX via `trading-signals` library wrappers; Donchian and Keltner are custom
+- `@ixjb94/indicators` é dep de referência (não importada em src/) — mantida para validar futuras implementações de indicadores
 - **Pine's ta.kc uses EMA of True Range for band width (not ATR/RMA)**. Confirmed via Pine docs + @ixjb94/indicators library
 - EMA: library uses first-value seed (not SMA seed); converges after ~5x period
 - Engine daily reset uses UTC (matches Pine's `dayofmonth(time, "UTC")`)

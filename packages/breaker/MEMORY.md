@@ -16,7 +16,7 @@ Updated: 2026-02-26
 
 ## Pending items
 - Dashboard may need updates to reflect new metric sources
-- `breaker-loop.sh` / `breaker-queue.sh` shell scripts still reference old flow — update or remove
+- `breaker-loop.sh` / `breaker-queue.sh` shell scripts are functional wrappers for orchestrator
 - `run-engine-child.ts` child-process path not yet E2E tested (only in-process path validated)
 
 ## Known pitfalls

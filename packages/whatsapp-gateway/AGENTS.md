@@ -23,7 +23,7 @@ Lightweight REST service that sends and receives WhatsApp messages via the Evolu
 
 ## Error handling
 - Zod `safeParse()` for all incoming payloads; 400 on validation errors with field-level details.
-- `sendWithRetry()` in evolution.ts: automatic retry with 5s delay on gateway failures.
+- `sendWhatsApp()` in evolution.ts: sends messages via Evolution API (no built-in retry; callers handle retries).
 - 502 status for Evolution API failures.
 
 ## Additional deps
