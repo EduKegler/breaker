@@ -16,6 +16,7 @@ import writeFileAtomic from "write-file-atomic";
 import { createActor } from "xstate";
 
 import { cac } from "cac";
+import { isMainModule } from "@trading/shared";
 import { sendWhatsApp as sendWhatsAppWithRetry } from "@trading/whatsapp-gateway";
 import { loadConfig, resolveAssetCriteria, resolveDataConfig, resolveDateRange } from "../lib/config.js";
 import { buildStrategyDir, getStrategySourcePath } from "../lib/strategy-path.js";
@@ -888,11 +889,7 @@ async function main(): Promise<void> {
 }
 
 // Only run when executed directly
-const isMain =
-  import.meta.url === `file://${process.argv[1]}` ||
-  process.argv[1]?.endsWith("orchestrator.js");
-
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     console.error("Orchestrator error:", err);
     process.exit(1);

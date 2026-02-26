@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@trading/backtest": "workspace:*",
+    "@trading/shared": "workspace:*",
     "@trading/whatsapp-gateway": "workspace:^",
     "cac": "^6.7.14",
     "execa": "^9.6.1",

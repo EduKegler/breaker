@@ -13,6 +13,7 @@ export interface KeltnerRsi2Params {
   rsi2Short: StrategyParam;
   maxTradesDay: StrategyParam;
   timeoutBars: StrategyParam;
+  atrStopMult: StrategyParam;
 }
 
 const DEFAULT_PARAMS: KeltnerRsi2Params = {
@@ -21,6 +22,7 @@ const DEFAULT_PARAMS: KeltnerRsi2Params = {
   rsi2Short: { value: 80, min: 70, max: 90, step: 5, optimizable: true, description: "RSI2 overbought threshold for shorts" },
   maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
   timeoutBars: { value: 8, min: 4, max: 16, step: 2, optimizable: true, description: "Bars before timeout exit" },
+  atrStopMult: { value: 1.5, min: 1.0, max: 2.5, step: 0.25, optimizable: true, description: "ATR multiplier for safety stop" },
 };
 
 /**
@@ -104,7 +106,7 @@ export function createKeltnerRsi2(
       }
       if (isNaN(atr1h)) return null;
 
-      const stopDist = atr1h * 1.5;
+      const stopDist = atr1h * params.atrStopMult.value;
       const close = currentCandle.c;
 
       // LONG: close below KC lower + RSI2 oversold (no EMA200 direction gate — matches Pine)

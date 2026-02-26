@@ -16,6 +16,7 @@ import {
 } from "../lib/redis.js";
 import type { RedisInitResult } from "../lib/redis.js";
 import { logger, httpLogger } from "../lib/logger.js";
+import { isMainModule, formatZodErrors } from "@trading/shared";
 
 export type RedisStartupPolicy = "ready" | "degraded" | "fail_fast";
 
@@ -116,9 +117,7 @@ async function sendWithRetry(text: string): Promise<unknown> {
 export function validateAlert(body: unknown): string[] {
   const result = AlertPayloadSchema.safeParse(body);
   if (result.success) return [];
-  return result.error.issues.map(
-    (i) => `${i.path.join(".")}: ${i.message}`,
-  );
+  return formatZodErrors(result.error);
 }
 
 // ---------------------
@@ -283,11 +282,7 @@ app.post("/debug", debugLimiter, (req, res) => {
   res.json({ status: "logged" });
 });
 
-const isMain =
-  import.meta.url === `file://${process.argv[1]}` ||
-  process.argv[1]?.endsWith("server.js");
-
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   const bootstrap = async (): Promise<void> => {
     if (!env.GATEWAY_URL || env.GATEWAY_URL === "http://localhost:3100") {
       logger.warn("GATEWAY_URL not set — using default localhost:3100");

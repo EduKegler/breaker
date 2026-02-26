@@ -13,6 +13,9 @@ importers:
       '@ixjb94/indicators':
         specifier: ^1.2.4
         version: 1.2.4
+      '@trading/shared':
+        specifier: workspace:*
+        version: link:../shared
       better-sqlite3:
         specifier: ^11.0.0
         version: 11.10.0
@@ -47,6 +50,9 @@ importers:
       '@trading/backtest':
         specifier: workspace:*
         version: link:../backtest
+      '@trading/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@trading/whatsapp-gateway':
         specifier: workspace:^
         version: link:../whatsapp-gateway
@@ -110,8 +116,27 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@22.19.11)
 
+  packages/shared:
+    dependencies:
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.11
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@22.19.11)
+
   packages/webhook:
     dependencies:
+      '@trading/shared':
+        specifier: workspace:*
+        version: link:../shared
       dotenv:
         specifier: ^17.3.1
         version: 17.3.1
@@ -164,6 +189,9 @@ importers:
 
   packages/whatsapp-gateway:
     dependencies:
+      '@trading/shared':
+        specifier: workspace:*
+        version: link:../shared
       express:
         specifier: ^4.21.0
         version: 4.22.1

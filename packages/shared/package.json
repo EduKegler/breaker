@@ -1,7 +1,7 @@
 {
-  "name": "@trading/backtest",
-  "version": "1.0.0",
-  "description": "Local backtesting engine — candle fetch, indicators, trade simulation, analysis",
+  "name": "@trading/shared",
+  "version": "0.1.0",
+  "description": "Shared utilities — isMain guard, Zod helpers, env parsing",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -16,20 +16,12 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@trading/shared": "workspace:*",
-    "@ixjb94/indicators": "^1.2.4",
-    "better-sqlite3": "^11.0.0",
-    "cac": "^6.7.14",
-    "ccxt": "^4.4.0",
-    "trading-signals": "^7.4.3",
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

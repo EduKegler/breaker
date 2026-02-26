@@ -15,6 +15,10 @@
 - No tests yet (supertest is a devDependency but no test files exist).
 - No unit tests for formatWhatsAppMessage, isDuplicate, validateAlert, or safeCompare.
 
+## Known pitfalls
+- `env.ts` loads dotenv from `infra/.env` at import time — file must exist or env vars must be set before import
+- Redis fail-fast: if REDIS_URL is set but Redis is down, server exits immediately
+
 ## Non-obvious decisions
 - Redis fail-fast policy: if REDIS_URL is set but Redis is unreachable at startup, the server exits (fail_fast). Without REDIS_URL, it starts in degraded memory-only mode.
 - Memory-only fallback has a 1000-entry LRU limit; oldest entries are evicted first.

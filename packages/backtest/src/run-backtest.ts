@@ -8,12 +8,9 @@ import { createDonchianAdx } from "./strategies/donchian-adx.js";
 import { createKeltnerRsi2 } from "./strategies/keltner-rsi2.js";
 import path from "node:path";
 import fs from "node:fs";
+import { isMainModule } from "@trading/shared";
 
-const isMain =
-  import.meta.url === `file://${process.argv[1]}` ||
-  process.argv[1]?.endsWith("/run-backtest.js");
-
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     console.error("Fatal:", err);
     process.exit(1);

@@ -5,7 +5,7 @@ import type { StrategyParam } from "@trading/backtest";
 
 const defaultGuardrails: Guardrails = {
   maxRiskTradeUsd: 25,
-  protectedFields: ["commission_value", "initial_capital"],
+  protectedFields: ["maxTradesDay"],
 };
 
 function mkParam(value: number, min = 0, max = 100, step = 1): StrategyParam {
@@ -61,18 +61,18 @@ describe("validateParamGuardrails", () => {
 
 describe("validateGuardrails (legacy)", () => {
   it("returns empty when no violations", () => {
-    const before = `commission_value = 0.06\ninitial_capital = 1000\nriskTradeUsd = 5`;
-    const after = `commission_value = 0.06\ninitial_capital = 1000\nriskTradeUsd = 10`;
+    const before = `maxTradesDay = 3\nriskTradeUsd = 5`;
+    const after = `maxTradesDay = 3\nriskTradeUsd = 10`;
     const v = validateGuardrails(before, after, defaultGuardrails);
     expect(v).toEqual([]);
   });
 
   it("detects protected field change", () => {
-    const before = `commission_value = 0.06\ninitial_capital = 1000`;
-    const after = `commission_value = 0.10\ninitial_capital = 1000`;
+    const before = `maxTradesDay = 3`;
+    const after = `maxTradesDay = 5`;
     const v = validateGuardrails(before, after, defaultGuardrails);
     expect(v).toHaveLength(1);
-    expect(v[0].field).toBe("commission_value");
+    expect(v[0].field).toBe("maxTradesDay");
   });
 
   it("detects riskTradeUsd exceeding cap", () => {

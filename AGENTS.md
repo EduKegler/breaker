@@ -1,7 +1,7 @@
 # AGENTS Instructions — Monorepo Root
 
 ## Project memory
-- Each package has its own `MEMORY.md` (~50 lines max, 3 sections: current state, pending items, non-obvious decisions).
+- Each package has its own `MEMORY.md` (~50 lines max, 4 sections: current state, pending items, known pitfalls, non-obvious decisions).
 - AT THE START of each session: read the relevant `MEMORY.md` (it's short).
 - AT THE END of each session: update `MEMORY.md` if anything changed.
 - DO NOT record session changelog — git log is the source of truth.
@@ -18,6 +18,7 @@ trading/
 │   ├── backtest/         — backtesting engine, indicators, strategies & candle data
 │   ├── breaker/          — automated strategy optimization loop
 │   ├── hl-broker/        — Hyperliquid order execution & position management
+│   ├── shared/           — shared utilities (isMainModule, parseEnv, formatZodErrors)
 │   ├── webhook/          — TradingView alert receiver & forwarder
 │   └── whatsapp-gateway/ — WhatsApp messaging via Evolution API
 ├── package.json          — root (private, workspaces)
@@ -43,7 +44,7 @@ trading/
 - **Mandatory validation**: every code change (`src/`, `*.ts`) MUST end with `pnpm build && pnpm test`. Do not consider the task complete until tests pass.
 - **Regression rule**: every bug fix MUST include at least 1 test that reproduces the bug and verifies the fix.
 - **TDD-first**: write or update tests BEFORE implementing the feature/fix.
-- Mandatory pattern: every executable module in src/ must have an `isMain` guard (do not execute when imported in tests).
+- Mandatory pattern: every executable module in src/ must have an `isMainModule(import.meta.url)` guard from `@trading/shared` (do not execute when imported in tests).
 
 ## Tech stack (shared)
 - TypeScript (strict, ES2022, NodeNext modules)

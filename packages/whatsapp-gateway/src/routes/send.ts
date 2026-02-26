@@ -1,15 +1,14 @@
 import { Router, type Router as RouterType } from "express";
 import { sendWhatsApp } from "../lib/evolution.js";
 import { SendMessageSchema } from "../types/message.js";
+import { formatZodErrors } from "@trading/shared";
 
 export const sendRouter: RouterType = Router();
 
 sendRouter.post("/", async (req, res) => {
   const result = SendMessageSchema.safeParse(req.body);
   if (!result.success) {
-    const errors = result.error.issues.map(
-      (i) => `${i.path.join(".")}: ${i.message}`,
-    );
+    const errors = formatZodErrors(result.error);
     res.status(400).json({ error: "validation failed", details: errors });
     return;
   }

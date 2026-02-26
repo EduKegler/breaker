@@ -10,6 +10,7 @@
  * Output: JSON on stdout with { metrics, analysis, trades }
  */
 
+import { isMainModule } from "@trading/shared";
 import {
   CandleCache,
   runBacktest,
@@ -75,11 +76,7 @@ async function main(): Promise<void> {
   }
 }
 
-const isMain =
-  import.meta.url === `file://${process.argv[1]}` ||
-  process.argv[1]?.endsWith("run-engine-child.js");
-
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(`run-engine-child error: ${(err as Error).message}\n`);
     process.exit(1);

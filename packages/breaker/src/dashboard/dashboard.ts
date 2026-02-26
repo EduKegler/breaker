@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
+import { isMainModule } from "@trading/shared";
 import type { DashboardEvent } from "../types/events.js";
 import { detectAnomalies } from "./anomalies.js";
 import { safeJsonParse } from "../lib/safe-json.js";
@@ -344,11 +345,7 @@ ${tableRows}
 }
 
 // Only run when executed directly
-const isMain =
-  import.meta.url === `file://${process.argv[1]}` ||
-  process.argv[1]?.endsWith("dashboard.js");
-
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   const eventsFile = getLatestRun();
   const events = parseEvents(eventsFile);
 

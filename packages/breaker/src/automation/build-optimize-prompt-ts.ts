@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import { z } from "zod";
+import { isMainModule } from "@trading/shared";
 
 import type { Metrics, TradeAnalysis, StrategyParam, SessionName } from "@trading/backtest";
 import type { ResolvedCriteria, CoreParameterDef } from "../types/config.js";
@@ -416,11 +417,7 @@ export function buildDesignChecklistSection(checklist: string[] | undefined, glo
 }
 
 // Only run main() when executed directly
-const isMain =
-  import.meta.url === `file://${process.argv[1]}` ||
-  process.argv[1]?.endsWith("build-optimize-prompt-ts.js");
-
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   console.error("This module is imported by the orchestrator, not run directly.");
   process.exit(1);
 }

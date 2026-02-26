@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseEnv } from "@trading/shared";
 
 const EnvSchema = z.object({
   PORT: z.coerce.number().default(3100),
@@ -9,4 +10,4 @@ const EnvSchema = z.object({
 });
 
 export type Env = z.infer<typeof EnvSchema>;
-export const env = EnvSchema.parse(process.env);
+export const env = parseEnv(EnvSchema);

@@ -22,7 +22,7 @@
 
 ## Strategy Taxonomy
 
-### Testable in BREAKER (Pine + TradingView + BTC multi-timeframe)
+### Testable in BREAKER (TypeScript local engine + BTC multi-timeframe)
 
 | Type | What it does | Signal/Regime TF | BREAKER profile |
 |------|-------------|-----------------|-----------------|
@@ -31,7 +31,7 @@
 | **Trend Continuation** | Trend already exists, waits for a temporary correction, enters on resumption. ABCD, flags, "buy the dip" at EMA. | 15m / 4H | `trend-continuation` |
 | **Trend Following** | Follows the dominant direction without waiting for pullback. MA crossovers, supertrend. Swing-style, holds hours to days. | 4H / Daily | `trend-following` |
 
-> **Reversal discarded.** Bets the entire trend reverses (double top/bottom, RSI divergence). Discarded because: (1) insufficient sample size on intraday BTC, (2) highest degradation backtest->live (~35%), (3) hardest to mechanize -- most reversal setups depend on discretionary context (liquidity sweeps, order flow) that Pine cannot capture reliably.
+> **Reversal discarded.** Bets the entire trend reverses (double top/bottom, RSI divergence). Discarded because: (1) insufficient sample size on intraday BTC, (2) highest degradation backtest->live (~35%), (3) hardest to mechanize -- most reversal setups depend on discretionary context (liquidity sweeps, order flow) that automated backtesting cannot capture reliably.
 
 ### Not testable in BREAKER (need different infrastructure)
 
@@ -39,9 +39,9 @@
 |------|-------------|---------|
 | **Scalping** | Micro-moves of 1-5 candles. Edge from low costs and speed. | Needs 1m/tick, maker-only, low latency. 15m does not work. |
 | **Arbitrage** | Price difference between markets (spot vs perp, exchange A vs B). | Needs bots, APIs, low latency. Does not depend on indicators. |
-| **Market Making** | Orders on both sides of the book, profits from spread. | Needs HFT, inventory management. Does not work in TradingView. |
-| **Pairs / Stat Arb** | Two correlated assets diverge, bets they converge back. | Needs multiple simultaneous assets. Pine does not support well. |
-| **Order Flow** | Reads order book, volume delta, footprint charts. | TradingView does not have order book data. |
+| **Market Making** | Orders on both sides of the book, profits from spread. | Needs HFT, inventory management. Not viable in candle-based backtesting. |
+| **Pairs / Stat Arb** | Two correlated assets diverge, bets they converge back. | Needs multiple simultaneous assets. Out of scope for single-asset BTC system. |
+| **Order Flow** | Reads order book, volume delta, footprint charts. | Requires tick/L2 data not available in OHLCV-based backtesting. |
 | **Event-Driven** | Trades around events (FOMC, CPI, halving). | Edge is in the reaction, not indicators. Hard to backtest mechanically. |
 
 ### Coverage by regime
@@ -112,6 +112,8 @@ When multiple modules are active, signals may coincide. This is not a problem --
 
 > **Warning:** At PF 1.3 backtest, live PF after degradation is near breakeven. PF 1.5+ in backtest is needed for real margin (~1.05-1.12 live). Strategies that converge at PF 1.3-1.4 should be treated as marginal. MR degrades less (frequent trades, predictable fills). TF degrades more (longer holds, regime changes mid-trade).
 
+> **KB vs BREAKER config:** The criteria above are the **minimum floor** defined by this playbook. The BREAKER operational config (`breaker-config.json`) may use stricter thresholds (e.g. PF 1.6 instead of 1.3 for breakout, DD 6% instead of 10%). If the config is stricter than the KB, the config prevails. If the config is less strict than the KB, that is a bug -- fix the config.
+
 ### Promotion Gates
 
 The stopping criteria above are **Research Pass** -- the minimum to keep investigating. A strategy that meets them is not ready for money. Three gates, each harder:
@@ -133,7 +135,7 @@ There are 3 distinct validation methods. They test different things and should n
 Splits exported trades from the backtest period into 70% train / 30% test. Computes `pfRatio = PF_test / PF_train`. If < 0.6, sets `overfitFlag: true`.
 
 - **What it tests:** Whether performance is consistent across the backtest period
-- **Limitation:** TradingView runs the strategy over the entire period -- the optimization loop indirectly "sees" the 30% test data through parameter selection. This is a diagnostic, not a true out-of-sample test
+- **Limitation:** The engine runs the strategy over the entire period -- the optimization loop indirectly "sees" the 30% test data through parameter selection. This is a diagnostic, not a true out-of-sample test
 - **Caveat:** Only activates with >= 10 trades in the WF split
 
 **2. OOS Historical Holdout (manual, pre-loop)**
@@ -164,7 +166,7 @@ Run the final strategy on a period **after** the optimization window (e.g. if BR
 - **Max iterations per strategy:** defined in config (recommendation: 15)
 - **Walk-forward:** 70/30 split + pfRatio + automatic overfitFlag (>= 10 trades)
 - **Session breakdown:** Asia/London/NY/Off-peak with count, WR, PF, PnL in prompt
-- **Include real costs:** commission 0.045% (Hyperliquid taker) + slippage 2 ticks in Pine
+- **Include real costs:** commission 0.045% (Hyperliquid taker) + slippage 2 ticks in backtest config
 - **Category lock:** BREAKER cannot change strategy type (e.g. breakout -> trend continuation) without explicit user approval. RESTRUCTURE may change indicators/logic within the same category only
 
 ### Session breakdown sanity checks
@@ -205,7 +207,7 @@ Run the final strategy on a period **after** the optimization window (e.g. if BR
 | `quantifiedstrategies.com` | 1000+ articles with real backtests, no opinion. Crypto + equities |
 | `quantpedia.com` | Database of 900+ strategies extracted from academic papers |
 | `quantconnect.com` | Open source algo trading platform. Docs + research |
-| `quantnomad.com` | Pine Script + backtest. Practical, with code |
+| `quantnomad.com` | Backtest articles. Practical, with code |
 | `quantra.quantinsti.com` | Quant courses + articles. Institutional |
 | `robotwealth.com` | Professional quant trader blog. Articles with code and data |
 | `quantstart.com` | Backtesting biases, walk-forward, transaction costs. Classic quant retail reference |
@@ -215,10 +217,8 @@ Run the final strategy on a period **after** the optimization window (e.g. if BR
 
 | Domain | What it offers |
 |---------|---------------|
-| `tradingview.com/pine-script-docs` | Official Pine Script v6 documentation |
-| `tradingview.com/pine-script-reference` | Complete API reference |
+| `tradingview.com/chart` | Charting and visual analysis (not used for backtesting) |
 | `luxalgo.com/blog` | Articles on indicators, overfit, algo trading |
-| `pinecoders.com` | Official Pine Script community. FAQ + best practices |
 | `strategyquant.com/doc` | Walk-forward optimization, Monte Carlo degradation, robustness testing docs |
 
 **Tier 4 -- Crypto-specific**
@@ -275,15 +275,15 @@ The argument is: "Asian session has lower volume, so BTC trades sideways, so MR 
 
 **Mitigation:** Session breakdown will show whether the edge actually exists in Asia. If MR has similar PF across all sessions, the session filter is not adding value.
 
-### 4. The TradingView backtester has real limitations
+### 4. Candle-based backtesting has real limitations
 
 - **Does not model the order book.** In MR, you enter at extremes -- exactly where liquidity is lowest. The real fill may be worse than the backtest assumes.
-- **Slippage is an estimate.** TradingView uses fixed or zero slippage. In BTC perp during Asian session (low liquidity), real slippage can be 2-5x the estimate.
-- **15m candles hide microstructure.** A candle that "touched VWAP -2sigma and bounced back" may have been a 2-second wick that you would never catch with a real order.
+- **Slippage is an estimate.** The engine uses configured slippage (2 ticks). In BTC perp during Asian session (low liquidity), real slippage can be 2-5x the estimate.
+- **15m candles hide microstructure.** A candle that "touched KC lower band and bounced back" may have been a 2-second wick that you would never catch with a real order.
 
 **Real risk:** Pretty backtest -> ugly live trading. The backtest-live gap is larger in strategies that trade at extremes (like MR). Degradation of 20-30% is a base estimate; in volatile regimes (cascades, regime shifts), it can reach 40-50%.
 
-**Mitigation:** After BREAKER validates, do real paper trading for at least 2 weeks before committing capital. Paper trading with real orders (not backtest) reveals true slippage. Slippage checklist is part of the Paper Trade Pass gate.
+**Mitigation:** After BREAKER validates, do real paper trading for at least 2 weeks before committing capital. Paper trading with real orders (not backtest) reveals true slippage. Slippage checklist is part of the Capital Deployment gate.
 
 ### 5. BREAKER's research phase may introduce noise
 
@@ -304,16 +304,16 @@ Psychologically, it is much harder NOT to trade than to trade poorly. Especially
 
 **Real risk:** Ignoring the no-trade rule and trading in an uncertain regime, destroying the edge of the other modules.
 
-**Mitigation:** The webhook (TradingView -> WhatsApp) is the solution. If the alert did not arrive, do not trade. No discretionary trading. The system decides, not the human. The orchestrator (Phase 3) will enforce this automatically.
+**Mitigation:** The orchestrator is the solution. If the system did not generate a signal, do not trade. No discretionary trading. The system decides, not the human. The orchestrator enforces this automatically.
 
 ### 7. Temporal overfit risk
 
-BREAKER runs on TradingView with a fixed date range. If that range includes an atypical period (crash, rally, chop), the strategy may be optimized for that specific regime.
+BREAKER runs on a fixed date range of historical data. If that range includes an atypical period (crash, rally, chop), the strategy may be optimized for that specific regime.
 
 **Real risk:** Strategy that works in "BTC chopping between 90k-100k" but breaks when BTC is in a strong trend.
 
 **Mitigation:**
-- Use the longest possible range in TradingView (6+ months)
+- Use the longest possible range (6+ months)
 - OOS Historical + OOS Future validation on different periods
 - If possible, test across 2-3 different regimes (one trending, one ranging, one mixed)
 
@@ -323,7 +323,7 @@ BREAKER's research and restructure phases are powerful but dangerous. Each can a
 
 **Real risk:** Death by a thousand cuts. Each individual change seemed reasonable, but the accumulation is a fragile strategy with too many moving parts.
 
-**Mitigation:** The `maxFreeVariables` gate (MR=6, Breakout=8) + rejection of +2/iteration in refine limits this. Before declaring success, count the `input()` calls in the final Pine. If it exceeded the profile limit, simplify by removing those with the least impact (ablation test: remove 1 at a time and see which makes the least difference -> candidate to cut).
+**Mitigation:** The `maxFreeVariables` gate (MR=6, Breakout=8) + rejection of +2/iteration in refine limits this. Before declaring success, count the tunable parameters in the final strategy config. If it exceeded the profile limit, simplify by removing those with the least impact (ablation test: remove 1 at a time and see which makes the least difference -> candidate to cut).
 
 ### 9. Leverage amplifies behavioral errors
 
@@ -502,13 +502,13 @@ All trades are in perpetual contracts on Hyperliquid. No gas fees, only trading 
 
 > **Impact on MR:** With fixed $ risk, tight stop = larger notional = more fees. Monitor `stopAtrMult` -- if too low, fees can dominate. Use limit orders (maker) when possible.
 
-**In Pine Script, configure:**
+**In BREAKER engine config:**
 ```
-commission_value = 0.045  // taker fee (conservative -- assumes worst case)
-slippage = 2              // protectedField -- conservative to cover microstructure
+takerFee: 0.045%    // conservative -- assumes worst case
+slippage: 2 ticks   // conservative to cover microstructure
 ```
 
-**Funding rate:** Paid/received every hour. Not modeled in TradingView backtest. For MR (short trades of 1-2h), impact is minimal. For trend following (trades lasting hours/days), consider it.
+**Funding rate:** Paid/received every hour. Not modeled in backtest by default. For MR (short trades of 1-2h), impact is minimal. For trend following (trades lasting hours/days), consider adding to cost model.
 
 ### Sizing
 - **Risk per trade:** 1% of capital (max 2% on A+ setup)
@@ -574,77 +574,73 @@ Maintenance margin = initial margin at max leverage / 2 = (1/40) / 2 = **1.25% o
 
 ### Enforceability Matrix
 
-Some rules are enforceable per-module in Pine Script. Others require an external orchestrator (webhook handler, Python bot, or manual discipline). This distinction matters because TradingView runs each module as an independent script with no shared state.
+Some rules are enforceable per-module in the BREAKER engine. Others require the orchestrator. This distinction matters because each module runs as an independent strategy instance.
 
-| Rule | Enforceable in Pine? | How it works |
-|------|---------------------|-------------|
-| Per-module maxTradesDay | **Yes** -- counter resets daily in each script | Per-module |
-| Per-module consecutive loss gate (2) | **Yes** -- counter in each script | Per-module |
-| ATR-based stop | **Yes** -- per-trade in Pine | Per-trade |
-| Timeout (N bars) | **Yes** -- per-trade in Pine | Per-trade |
-| Global 5 trades/day across modules | **No** -- scripts don't share state | Orchestrator (Phase 3) |
-| One position at a time across modules | **No** -- scripts don't see each other | Orchestrator (Phase 3) |
-| Daily loss 2R shutdown | **No** -- scripts don't share P&L | Orchestrator (Phase 3) |
-| Macro event blackout (CPI/FOMC/NFP) | **No** -- Pine has no calendar | Orchestrator (Phase 3) |
-| Leverage cap (5x max) | **No** -- Pine backtests don't model leverage/margin | Manual on Hyperliquid UI or orchestrator sets per-position |
+| Rule | Enforceable in engine? | How it works |
+|------|----------------------|-------------|
+| Per-module maxTradesDay | **Yes** -- counter resets daily in each strategy | Per-module |
+| Per-module consecutive loss gate (2) | **Yes** -- counter in each strategy | Per-module |
+| ATR-based stop | **Yes** -- per-trade in strategy | Per-trade |
+| Timeout (N bars) | **Yes** -- per-trade in strategy | Per-trade |
+| Global 5 trades/day across modules | **No** -- strategies don't share state | Orchestrator |
+| One position at a time across modules | **No** -- strategies don't see each other | Orchestrator |
+| Daily loss 2R shutdown | **No** -- strategies don't share P&L | Orchestrator |
+| Macro event blackout (CPI/FOMC/NFP) | **Yes** -- orchestrator has economic calendar API | Orchestrator |
+| Leverage cap (5x max) | **No** -- backtests don't model leverage/margin | Orchestrator sets per-position via Hyperliquid API |
 
-> **Implication:** The orchestrator is planned for Phase 3 (first item before parallel testing). A simple Python script receiving webhooks + economic calendar API solves 80% of these gaps.
+> **Implication:** The orchestrator is implemented (TypeScript). Handles mutex, daily P&L limits, macro blackout, leverage enforcement via Hyperliquid API.
 
 ---
 
-## Pine v6 -- Reference Snippets
+## Strategy Logic Reference (TypeScript pseudocode)
 
-### ATR 1H anti-repaint
-```pine
-atr1h = request.security(syminfo.tickerid, "60", ta.atr(14)[1], lookahead=barmerge.lookahead_on)
+### ATR 1H (higher timeframe, anti-repaint)
+```typescript
+// Use completed 1H candle only (no lookahead)
+const atr1h = indicators.atr({ source: '1H', period: 14, offset: 1 })
 ```
 
 ### Keltner Channels + RSI(2) (MR)
-```pine
-[kcMid, kcUp, kcLo] = ta.kc(close, 20, kcMultiplier, true)
-rsi2 = ta.rsi(close, 2)
-bool longSignal  = close < kcLo and rsi2 < rsi2Long
-bool shortSignal = close > kcUp and rsi2 > rsi2Short
+```typescript
+const { mid, upper, lower } = indicators.keltnerChannels({ period: 20, mult: params.kcMultiplier })
+const rsi2 = indicators.rsi({ period: 2 })
+const longSignal  = close < lower && rsi2 < params.rsi2Long
+const shortSignal = close > upper && rsi2 > params.rsi2Short
 ```
 
 ### Donchian Channel + ADX + Regime Filter (Breakout)
-```pine
-// Donchian Channels
-dcSlowUpper = ta.highest(high, dcSlow)
-dcSlowLower = ta.lowest(low, dcSlow)
-dcFastUpper = ta.highest(high, dcFast)
-dcFastLower = ta.lowest(low, dcFast)
+```typescript
+const dcSlow = indicators.donchian({ period: params.dcSlow })
+const dcFast = indicators.donchian({ period: params.dcFast })
+const { adx, diPlus, diMinus } = indicators.dmi({ period: 14 })
 
-// ADX
-[diPlus, diMinus, adxVal] = ta.dmi(14, 14)
+// Higher-TF regime filter (completed candle only)
+const ema50daily = indicators.ema({ source: 'D', period: 50, offset: 1 })
+const bullRegime = close > ema50daily
+const bearRegime = close < ema50daily
 
-// Higher-TF regime filter (anti-repaint) -- example: EMA50 Daily
-ema50daily = request.security(syminfo.tickerid, "D", ta.ema(close, 50)[1], lookahead=barmerge.lookahead_on)
-bool bullRegime = close > ema50daily
-bool bearRegime = close < ema50daily
+const longSignal  = close > dcSlow.upper && adx < params.adxThreshold && bullRegime
+const shortSignal = close < dcSlow.lower && adx < params.adxThreshold && bearRegime
 
-// Entry signals
-bool longSignal  = close > dcSlowUpper[1] and adxVal < adxThreshold and bullRegime
-bool shortSignal = close < dcSlowLower[1] and adxVal < adxThreshold and bearRegime
-
-// Trailing exit via fast Donchian
-bool longExit  = close < dcFastLower[1]
-bool shortExit = close > dcFastUpper[1]
+const longExit  = close < dcFast.lower
+const shortExit = close > dcFast.upper
 ```
 
 ### Squeeze detection (reference)
-```pine
-[bbMid, bbUp, bbLo] = ta.bb(close, 20, 2.0)
-[kcMid, kcUp, kcLo] = ta.kc(close, 20, 1.5, true)
-bool squeezeOn = bbLo > kcLo and bbUp < kcUp
+```typescript
+const bb = indicators.bollingerBands({ period: 20, mult: 2.0 })
+const kc = indicators.keltnerChannels({ period: 20, mult: 1.5 })
+const squeezeOn = bb.lower > kc.lower && bb.upper < kc.upper
 ```
 
 ### Session tracking (reference)
-```pine
-string tz = "America/New_York"
-bool inAsia = not na(time(timeframe.period, "1800-0300:1234567", tz))
-bool inNY   = not na(time(timeframe.period, "0930-1600:23456", tz))
-bool asiaStart = inAsia and not inAsia[1]
+```typescript
+const sessions = {
+  asia:    timeUtils.inSession('18:00-03:00', 'America/New_York'),
+  london:  timeUtils.inSession('03:00-12:00', 'America/New_York'),
+  ny:      timeUtils.inSession('09:30-16:00', 'America/New_York'),
+  offPeak: timeUtils.inSession('16:00-18:00', 'America/New_York'),
+}
 ```
 
 ---
@@ -661,7 +657,7 @@ bool asiaStart = inAsia and not inAsia[1]
 - Each module must pass Paper Trade Gate before moving to Phase 3
 
 ### Phase 3 -- Integrate
-- Build simple orchestrator (Python): webhook receiver -> daily P&L check -> cross-module mutex -> forward to Hyperliquid. Integrate economic calendar API for auto-blackout (CPI, FOMC, NFP)
+- Orchestrator implemented (TypeScript): daily P&L check, cross-module mutex, economic calendar API for auto-blackout (CPI, FOMC, NFP), leverage enforcement via Hyperliquid API
 - Run modules in parallel
 - Verify signal overlap and mutex behavior
 - Measure combined result (portfolio PF, combined DD)
@@ -672,7 +668,7 @@ bool asiaStart = inAsia and not inAsia[1]
 - Trend Following: 4H signal, Daily regime. Swing trading, not day trading. Profile `trend-following`
 
 ### Phase 5 -- Infra
-- Automatic regime switcher (Python, not Pine)
+- Automatic regime switcher (orchestrator)
 - Add more assets if desired (ETH, SOL -- same logic, different parameters)
 
 ## References
@@ -690,4 +686,4 @@ bool asiaStart = inAsia and not inAsia[1]
 
 ### External data
 - Kaiko 2025: BTC volume concentration in US hours (institutional crypto data)
-- Wen et al. 2022: momentum + reversion coexist in crypto (academic paper)****
+- Wen et al. 2022: momentum + reversion coexist in crypto (academic paper)

@@ -13,6 +13,9 @@
 - Tests (none exist).
 - Actual dependencies (only zod is listed; will need Hyperliquid SDK).
 
+## Known pitfalls
+- Empty stub — no runtime code exists yet
+
 ## Non-obvious decisions
 - Package was scaffolded early to reserve the namespace and establish the monorepo slot.
 - The `start` script was removed because there is no server.js to run.

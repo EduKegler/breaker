@@ -14,6 +14,9 @@
 - No structured logging (uses console.log).
 - No Docker/deploy infra (infra/ directory reserved but empty).
 
+## Known pitfalls
+- Env schema has safe defaults for all fields — module can be imported without env vars (needed because breaker imports at build time)
+
 ## Non-obvious decisions
 - The Evolution API instance name defaults to "sexta-feira" (hardcoded in env schema).
 - Env schema uses safe defaults for all fields so the module can be imported without env vars (important because breaker imports the library export at build time).

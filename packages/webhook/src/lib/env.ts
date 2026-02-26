@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { parseEnv } from "@trading/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, "../../infra/.env") });
@@ -15,4 +16,4 @@ const EnvSchema = z.object({
 });
 
 export type Env = z.infer<typeof EnvSchema>;
-export const env = EnvSchema.parse(process.env);
+export const env = parseEnv(EnvSchema);
