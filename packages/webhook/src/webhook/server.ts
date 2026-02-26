@@ -1,10 +1,10 @@
+import { env } from "../lib/env.js";
 import express from "express";
-import { readFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { timingSafeEqual, createHmac } from "node:crypto";
 import rateLimit from "express-rate-limit";
 import { LRUCache } from "lru-cache";
+import pRetry from "p-retry";
+import pTimeout from "p-timeout";
 
 import { AlertPayloadSchema } from "../types/alert.js";
 import type { AlertPayload } from "../types/alert.js";
@@ -16,36 +16,7 @@ import {
   getRedisRuntimeState,
 } from "../lib/redis.js";
 import type { RedisInitResult } from "../lib/redis.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// ---------------------
-// Config (from .env or defaults)
-// ---------------------
-function loadEnv(): void {
-  try {
-    const envPath = join(__dirname, "../../infra/.env");
-    const lines = readFileSync(envPath, "utf8").split("\n");
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eqIdx = trimmed.indexOf("=");
-      if (eqIdx < 0) continue;
-      const key = trimmed.slice(0, eqIdx);
-      const val = trimmed.slice(eqIdx + 1);
-      if (!process.env[key]) process.env[key] = val;
-    }
-  } catch {
-    // .env missing is fine
-  }
-}
-loadEnv();
-
-const PORT = parseInt(process.env.PORT || "3000");
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
-const GATEWAY_URL = process.env.GATEWAY_URL || "http://localhost:3100";
-const TTL_SECONDS = parseInt(process.env.TTL_SECONDS || "1200");
-const REDIS_REQUIRED = Boolean(process.env.REDIS_URL);
+import { logger, httpLogger } from "../lib/logger.js";
 
 export type RedisStartupPolicy = "ready" | "degraded" | "fail_fast";
 
@@ -66,27 +37,9 @@ function getDedupHealthState(): {
   return {
     redis: redisConnected ? "connected" : "fallback_memory",
     dedup_mode: dedupMode,
-    redis_configured: REDIS_REQUIRED,
+    redis_configured: Boolean(env.REDIS_URL),
     dedup_degraded: dedupMode !== "redis",
   };
-}
-
-// ---------------------
-// Logging
-// ---------------------
-const LOG_DIR = process.env.LOG_DIR || join(__dirname, "../../infra/logs");
-if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
-
-function log(
-  level: string,
-  msg: string,
-  data?: Record<string, unknown>,
-): void {
-  const ts = new Date().toISOString();
-  const entry = JSON.stringify({ ts, level, msg, ...data });
-  console.log(entry);
-  const dateStr = ts.slice(0, 10);
-  appendFileSync(join(LOG_DIR, `${dateStr}.ndjson`), entry + "\n");
 }
 
 // ---------------------
@@ -141,7 +94,7 @@ export function formatWhatsAppMessage(alert: AlertPayload): string {
   if (alert.margin_usdc) lines.push(`\u{1F4B3} *Margin:* $${alert.margin_usdc.toFixed(2)}`);
   lines.push("");
 
-  const ttlMin = Math.round(TTL_SECONDS / 60);
+  const ttlMin = Math.round(env.TTL_SECONDS / 60);
   lines.push(`\u{23F1} _Expira em ${ttlMin}min_`);
 
   return lines.join("\n");
@@ -151,11 +104,14 @@ export function formatWhatsAppMessage(alert: AlertPayload): string {
 // Send to WhatsApp Gateway
 // ---------------------
 async function sendToGateway(text: string): Promise<unknown> {
-  const res = await fetch(`${GATEWAY_URL}/send`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-  });
+  const res = await pTimeout(
+    fetch(`${env.GATEWAY_URL}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }),
+    { milliseconds: 10_000 },
+  );
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
@@ -166,15 +122,14 @@ async function sendToGateway(text: string): Promise<unknown> {
 }
 
 async function sendWithRetry(text: string): Promise<unknown> {
-  try {
-    return await sendToGateway(text);
-  } catch (err) {
-    log("warn", "Gateway send failed, retrying in 5s", {
-      error: (err as Error).message,
-    });
-    await new Promise((r) => setTimeout(r, 5000));
-    return await sendToGateway(text);
-  }
+  return pRetry(() => sendToGateway(text), {
+    retries: 1,
+    minTimeout: 5000,
+    factor: 1,
+    onFailedAttempt: (ctx) => {
+      logger.warn({ error: ctx.error.message }, "Gateway send failed, retrying in 5s");
+    },
+  });
 }
 
 // ---------------------
@@ -210,6 +165,7 @@ const debugLimiter = rateLimit({ windowMs: 60_000, max: 5, standardHeaders: fals
 export const app: express.Express = express();
 app.use(express.json({ limit: "100kb" }));
 app.use(express.text({ type: "text/plain", limit: "100kb" }));
+app.use(httpLogger);
 
 app.get("/health", healthLimiter, (_req, res) => {
   const dedup = getDedupHealthState();
@@ -232,9 +188,7 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
     try {
       alert = JSON.parse(req.body);
     } catch {
-      log("error", "Invalid JSON in text body", {
-        raw: (req.body as string).slice(0, 500),
-      });
+      logger.error({ raw: (req.body as string).slice(0, 500) }, "Invalid JSON in text body");
       res.status(400).json({ error: "invalid JSON" });
       return;
     }
@@ -243,18 +197,11 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
   }
 
   const alertObj = alert as Record<string, unknown>;
-  log("info", "Webhook received", {
-    alert_id: alertObj.alert_id,
-    asset: alertObj.asset,
-    side: alertObj.side,
-  });
+  logger.info({ alert_id: alertObj.alert_id, asset: alertObj.asset, side: alertObj.side }, "Webhook received");
 
   const errors = validateAlert(alert);
   if (errors.length > 0) {
-    log("error", "Validation failed", {
-      alert_id: alertObj.alert_id,
-      errors,
-    });
+    logger.error({ alert_id: alertObj.alert_id, errors }, "Validation failed");
     res.status(400).json({ error: "validation failed", details: errors });
     return;
   }
@@ -263,11 +210,8 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
 
   if (typedAlert.signal_ts) {
     const ageSeconds = receiveTs / 1000 - typedAlert.signal_ts;
-    if (ageSeconds > TTL_SECONDS) {
-      log("warn", "Alert expired (TTL)", {
-        alert_id: typedAlert.alert_id,
-        age_s: +ageSeconds.toFixed(1),
-      });
+    if (ageSeconds > env.TTL_SECONDS) {
+      logger.warn({ alert_id: typedAlert.alert_id, age_s: +ageSeconds.toFixed(1) }, "Alert expired (TTL)");
       res.json({
         status: "expired",
         alert_id: typedAlert.alert_id,
@@ -280,35 +224,24 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
   const redisState = getRedisRuntimeState();
   if (redisState.configured && !redisState.connected && !dedupRuntimeAlarmActive) {
     dedupRuntimeAlarmActive = true;
-    log("error", "ALARM: distributed dedup unavailable, fallback to memory", {
-      alarm: "DEDUP_DEGRADED_RUNTIME",
-      dedup_mode: "memory",
-      last_error: redisState.lastError || "unknown",
-    });
+    logger.error({ alarm: "DEDUP_DEGRADED_RUNTIME", dedup_mode: "memory", last_error: redisState.lastError || "unknown" }, "ALARM: distributed dedup unavailable, fallback to memory");
   } else if (
     redisState.configured &&
     redisState.connected &&
     dedupRuntimeAlarmActive
   ) {
     dedupRuntimeAlarmActive = false;
-    log("info", "Redis dedup recovered", {
-      alarm: "DEDUP_RECOVERED",
-      dedup_mode: "redis",
-    });
+    logger.info({ alarm: "DEDUP_RECOVERED", dedup_mode: "redis" }, "Redis dedup recovered");
   }
 
   const redisIsDup = await redisHasDedup(typedAlert.alert_id);
   if (redisIsDup) {
-    log("info", "Duplicate alert (redis), skipping", {
-      alert_id: typedAlert.alert_id,
-    });
+    logger.info({ alert_id: typedAlert.alert_id }, "Duplicate alert (redis), skipping");
     res.json({ status: "duplicate", alert_id: typedAlert.alert_id });
     return;
   }
   if (sentAlerts.has(typedAlert.alert_id)) {
-    log("info", "Duplicate alert (memory), skipping", {
-      alert_id: typedAlert.alert_id,
-    });
+    logger.info({ alert_id: typedAlert.alert_id }, "Duplicate alert (memory), skipping");
     res.json({ status: "duplicate", alert_id: typedAlert.alert_id });
     return;
   }
@@ -318,13 +251,10 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
     await sendWithRetry(message);
     await redisSetDedup(typedAlert.alert_id);
     isDuplicate(typedAlert.alert_id);
-    log("info", "WhatsApp sent", { alert_id: typedAlert.alert_id });
+    logger.info({ alert_id: typedAlert.alert_id }, "WhatsApp sent");
     res.json({ status: "sent", alert_id: typedAlert.alert_id });
   } catch (err) {
-    log("error", "WhatsApp send failed after retry", {
-      alert_id: typedAlert.alert_id,
-      error: (err as Error).message,
-    });
+    logger.error({ alert_id: typedAlert.alert_id, error: (err as Error).message }, "WhatsApp send failed after retry");
     res.status(502).json({
       status: "send_failed",
       alert_id: typedAlert.alert_id,
@@ -333,10 +263,10 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
 }
 
 app.post("/webhook/:token", webhookLimiter, async (req, res) => {
-  if (WEBHOOK_SECRET) {
+  if (env.WEBHOOK_SECRET) {
     const token = req.params.token;
-    if (!token || !safeCompare(token, WEBHOOK_SECRET)) {
-      log("warn", "Invalid URL token", { path: req.path });
+    if (!token || !safeCompare(token, env.WEBHOOK_SECRET)) {
+      logger.warn({ path: req.path }, "Invalid URL token");
       res.status(403).json({ error: "invalid token" });
       return;
     }
@@ -345,7 +275,7 @@ app.post("/webhook/:token", webhookLimiter, async (req, res) => {
 });
 
 app.post("/webhook", webhookLimiter, async (req, res) => {
-  if (WEBHOOK_SECRET) {
+  if (env.WEBHOOK_SECRET) {
     let body: Record<string, unknown>;
     if (typeof req.body === "string") {
       try { body = JSON.parse(req.body); } catch { body = {}; }
@@ -353,8 +283,8 @@ app.post("/webhook", webhookLimiter, async (req, res) => {
       body = req.body as Record<string, unknown>;
     }
     const provided = typeof body.secret === "string" ? body.secret : "";
-    if (!provided || !safeCompare(provided, WEBHOOK_SECRET)) {
-      log("warn", "Invalid or missing secret", { alert_id: body.alert_id });
+    if (!provided || !safeCompare(provided, env.WEBHOOK_SECRET)) {
+      logger.warn({ alert_id: body.alert_id }, "Invalid or missing secret");
       res.status(403).json({ error: "invalid secret" });
       return;
     }
@@ -364,14 +294,14 @@ app.post("/webhook", webhookLimiter, async (req, res) => {
 
 app.post("/debug", debugLimiter, (req, res) => {
   const body = req.body as Record<string, unknown>;
-  if (WEBHOOK_SECRET) {
+  if (env.WEBHOOK_SECRET) {
     const provided = typeof body?.secret === "string" ? body.secret : "";
-    if (!provided || !safeCompare(provided, WEBHOOK_SECRET)) {
+    if (!provided || !safeCompare(provided, env.WEBHOOK_SECRET)) {
       res.status(403).json({ error: "forbidden" });
       return;
     }
   }
-  log("debug", "Raw payload", { body: body as unknown });
+  logger.debug({ body: body as unknown }, "Raw payload");
   res.json({ status: "logged" });
 });
 
@@ -381,55 +311,35 @@ const isMain =
 
 if (isMain) {
   const bootstrap = async (): Promise<void> => {
-    if (!GATEWAY_URL || GATEWAY_URL === "http://localhost:3100") {
-      console.error(
-        "WARNING: GATEWAY_URL not set — using default localhost:3100",
-      );
+    if (!env.GATEWAY_URL || env.GATEWAY_URL === "http://localhost:3100") {
+      logger.warn("GATEWAY_URL not set — using default localhost:3100");
     }
-    if (!WEBHOOK_SECRET) {
-      console.error(
-        "WARNING: WEBHOOK_SECRET not set — webhook accepts unauthenticated requests",
-      );
+    if (!env.WEBHOOK_SECRET) {
+      logger.warn("WEBHOOK_SECRET not set — webhook accepts unauthenticated requests");
     }
 
     const redisInit = await initRedis();
     const redisPolicy = getRedisStartupPolicy(redisInit);
 
     if (redisPolicy === "fail_fast") {
-      log("error", "ALARM: Redis configured but unavailable; refusing startup", {
-        alarm: "REDIS_REQUIRED_UNAVAILABLE",
-        dedup_mode: "memory",
-        reason: redisInit.reason,
-        error: redisInit.error || "unknown",
-      });
+      logger.error({ alarm: "REDIS_REQUIRED_UNAVAILABLE", dedup_mode: "memory", reason: redisInit.reason, error: redisInit.error || "unknown" }, "ALARM: Redis configured but unavailable; refusing startup");
       process.exit(1);
       return;
     }
 
     if (redisPolicy === "degraded") {
-      log("warn", "ALARM: Redis not configured; dedup is memory-only", {
-        alarm: "DEDUP_DEGRADED_STARTUP",
-        dedup_mode: "memory",
-      });
+      logger.warn({ alarm: "DEDUP_DEGRADED_STARTUP", dedup_mode: "memory" }, "ALARM: Redis not configured; dedup is memory-only");
     } else {
-      log("info", "Redis connected; distributed dedup enabled", {
-        dedup_mode: "redis",
-      });
+      logger.info({ dedup_mode: "redis" }, "Redis connected; distributed dedup enabled");
     }
 
-    app.listen(PORT, () => {
-      log("info", `Webhook server started on port ${PORT}`, {
-        ttl: TTL_SECONDS,
-        gateway_url: GATEWAY_URL,
-        dedup_mode: getDedupHealthState().dedup_mode,
-      });
+    app.listen(env.PORT, () => {
+      logger.info({ ttl: env.TTL_SECONDS, gateway_url: env.GATEWAY_URL, dedup_mode: getDedupHealthState().dedup_mode }, `Webhook server started on port ${env.PORT}`);
     });
   };
 
   bootstrap().catch((err: unknown) => {
-    log("error", "Webhook startup failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logger.error({ error: err instanceof Error ? err.message : String(err) }, "Webhook startup failed");
     process.exit(1);
   });
 }

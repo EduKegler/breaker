@@ -5,9 +5,9 @@ import { acquireLock, acquireLockBlocking, releaseLock, readLock, lockPath } fro
 const TEST_ASSET = "TEST_LOCK_" + process.pid;
 
 afterEach(() => {
-  // Clean up test locks
   const file = lockPath(TEST_ASSET);
   try { fs.unlinkSync(file); } catch { /* ignore */ }
+  try { fs.rmSync(file + ".lock", { recursive: true }); } catch { /* ignore */ }
 });
 
 describe("acquireLock / releaseLock", () => {
@@ -20,47 +20,32 @@ describe("acquireLock / releaseLock", () => {
     releaseLock(TEST_ASSET);
   });
 
-  it("throws when lock is held by a live process (self)", () => {
+  it("throws when lock is already held", () => {
     acquireLock(TEST_ASSET);
-    expect(() => acquireLock(TEST_ASSET)).toThrow(/Lock held by PID/);
+    expect(() => acquireLock(TEST_ASSET)).toThrow(/already held/);
     releaseLock(TEST_ASSET);
   });
 
-  it("removes stale lock when PID is dead", () => {
-    // Write a lock with a non-existent PID
-    const file = lockPath(TEST_ASSET);
-    fs.writeFileSync(file, JSON.stringify({ pid: 999999, ts: Date.now(), asset: TEST_ASSET }));
-
-    // Should not throw — stale lock gets cleaned up
+  it("releases lock and allows re-acquire", () => {
+    acquireLock(TEST_ASSET);
+    releaseLock(TEST_ASSET);
     acquireLock(TEST_ASSET);
     const data = readLock(TEST_ASSET);
+    expect(data).not.toBeNull();
     expect(data!.pid).toBe(process.pid);
     releaseLock(TEST_ASSET);
-  });
-
-  it("handles corrupted lock file gracefully", () => {
-    const file = lockPath(TEST_ASSET);
-    fs.writeFileSync(file, "not json{{{");
-
-    // Should not throw — corrupted lock gets removed
-    acquireLock(TEST_ASSET);
-    const data = readLock(TEST_ASSET);
-    expect(data!.pid).toBe(process.pid);
-    releaseLock(TEST_ASSET);
-  });
-
-  it("releaseLock only removes own lock", () => {
-    const file = lockPath(TEST_ASSET);
-    const foreignLock = { pid: 999999, ts: Date.now(), asset: TEST_ASSET };
-    fs.writeFileSync(file, JSON.stringify(foreignLock));
-
-    // Should NOT remove — not our PID
-    releaseLock(TEST_ASSET);
-    expect(fs.existsSync(file)).toBe(true);
   });
 
   it("releaseLock is safe when no lock exists", () => {
-    // Should not throw
+    expect(() => releaseLock(TEST_ASSET)).not.toThrow();
+  });
+
+  it("releaseLock does not remove lock held by another acquirer", () => {
+    // Write a sentinel file without actually acquiring via proper-lockfile
+    const file = lockPath(TEST_ASSET);
+    fs.writeFileSync(file, JSON.stringify({ pid: 999999, ts: Date.now(), asset: TEST_ASSET }));
+
+    // releaseLock should not throw (we don't hold this lock)
     expect(() => releaseLock(TEST_ASSET)).not.toThrow();
   });
 
@@ -68,24 +53,23 @@ describe("acquireLock / releaseLock", () => {
     expect(readLock(TEST_ASSET)).toBeNull();
   });
 
-  it("readLock returns null for corrupted lock file", () => {
-    const file = lockPath(TEST_ASSET);
-    fs.writeFileSync(file, "not valid json{{{");
-    expect(readLock(TEST_ASSET)).toBeNull();
-  });
-
-  it("releaseLock removes corrupted lock file", () => {
-    const file = lockPath(TEST_ASSET);
-    fs.writeFileSync(file, "corrupted data!!!");
+  it("readLock returns LockData when lock is held", () => {
+    acquireLock(TEST_ASSET);
+    const data = readLock(TEST_ASSET);
+    expect(data).not.toBeNull();
+    expect(data!.pid).toBe(process.pid);
+    expect(typeof data!.ts).toBe("number");
+    expect(data!.asset).toBe(TEST_ASSET);
     releaseLock(TEST_ASSET);
-    expect(fs.existsSync(file)).toBe(false);
   });
 });
 
 const BLOCKING_ASSET = "TEST_BLOCKING_" + process.pid;
 
 afterEach(() => {
-  try { fs.unlinkSync(lockPath(BLOCKING_ASSET)); } catch { /* ignore */ }
+  const file = lockPath(BLOCKING_ASSET);
+  try { fs.unlinkSync(file); } catch { /* ignore */ }
+  try { fs.rmSync(file + ".lock", { recursive: true }); } catch { /* ignore */ }
 });
 
 describe("acquireLockBlocking", () => {
@@ -98,26 +82,24 @@ describe("acquireLockBlocking", () => {
   });
 
   it("waits and acquires when lock is released", async () => {
-    // Simulate a lock held by a "live" PID (ourselves)
     acquireLock(BLOCKING_ASSET);
 
     // Release after 150ms
     setTimeout(() => releaseLock(BLOCKING_ASSET), 150);
 
-    // Should wait and acquire (poll every 50ms, so picks it up within ~200ms)
     await acquireLockBlocking(BLOCKING_ASSET, { timeoutMs: 2000, pollMs: 50 });
     const data = readLock(BLOCKING_ASSET);
+    expect(data).not.toBeNull();
     expect(data!.pid).toBe(process.pid);
     releaseLock(BLOCKING_ASSET);
   });
 
   it("throws on timeout when lock is never released", async () => {
-    // Write a lock with our own PID (alive, won't be cleaned as stale)
     acquireLock(BLOCKING_ASSET);
 
     await expect(
       acquireLockBlocking(BLOCKING_ASSET, { timeoutMs: 200, pollMs: 50 }),
-    ).rejects.toThrow(/Timeout waiting for lock/);
+    ).rejects.toThrow(/Timeout/);
 
     releaseLock(BLOCKING_ASSET);
   });

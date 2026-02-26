@@ -7,7 +7,7 @@ B.R.E.A.K.E.R. — Backtesting Runtime for Evolutionary Analysis, Kernel Executi
 - `src/automation/` — Prompt builders for Claude optimization/fix (`build-optimize-prompt-ts.ts`, `build-fix-prompt-ts.ts`)
 - `src/dashboard/` — Dashboard and anomaly detection
 - `src/lib/` — Config, lock, strategy-registry, candle-loader, strategy-path
-- `src/loop/` — Orchestrator + stages (optimize, scoring, checkpoint, guardrails, integrity, events, research, summary, param-writer, run-engine)
+- `src/loop/` — Orchestrator + stages (optimize, scoring, checkpoint, guardrails, integrity, events, research, summary, param-writer, run-engine, run-claude)
 - `src/types/` — Zod config schemas
 - `assets/{ASSET}/{CATEGORY}/{IMPLEMENTATION}/` — Strategy artifacts (checkpoints, param history, optimization log)
 - Strategies live in `packages/backtest/src/strategies/` (shared library)
@@ -36,5 +36,5 @@ B.R.E.A.K.E.R. — Backtesting Runtime for Evolutionary Analysis, Kernel Executi
 
 ## Build and test (breaker-specific)
 - Coverage: `pnpm vitest run --coverage`
-- Tests: `pnpm test` (315 tests across 19 files)
+- Tests: `pnpm test` (314 tests across 20 files)
 - After strategy code changes in restructure phase: `pnpm --filter @trading/backtest typecheck` then `pnpm --filter @trading/backtest build`

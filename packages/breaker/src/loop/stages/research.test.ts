@@ -1,9 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
-// Mock child_process before importing the module
-vi.mock("node:child_process", () => ({
-  spawn: vi.fn(),
-  execSync: vi.fn(),
+vi.mock("./run-claude.js", () => ({
+  runClaude: vi.fn(),
 }));
 
 import fs from "node:fs";
@@ -11,19 +9,8 @@ import path from "node:path";
 import os from "node:os";
 import { conductResearch } from "./research.js";
 import type { ResearchBrief } from "./research.js";
-import { spawn } from "node:child_process";
-import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
+import { runClaude } from "./run-claude.js";
 
-function createMockProcess(exitCode: number) {
-  const proc = new EventEmitter() as any;
-  proc.stdout = new Readable({ read() {} });
-  proc.stderr = new Readable({ read() {} });
-  proc.kill = vi.fn();
-  // Emit close asynchronously
-  setTimeout(() => proc.emit("close", exitCode), 10);
-  return proc;
-}
 
 describe("conductResearch", () => {
   let tmpDir: string;
@@ -46,10 +33,9 @@ describe("conductResearch", () => {
       timestamp: new Date().toISOString(),
     };
 
-    // Mock spawn to create the file and exit 0
-    (spawn as any).mockImplementation(() => {
+    vi.mocked(runClaude).mockImplementation(async () => {
       fs.writeFileSync(briefPath, JSON.stringify(brief));
-      return createMockProcess(0);
+      return { status: 0, stdout: "", stderr: "" };
     });
 
     const result = await conductResearch({
@@ -67,7 +53,7 @@ describe("conductResearch", () => {
   });
 
   it("returns failure when Claude exits non-zero", async () => {
-    (spawn as any).mockImplementation(() => createMockProcess(1));
+    vi.mocked(runClaude).mockResolvedValue({ status: 1, stdout: "", stderr: "" });
 
     const result = await conductResearch({
       asset: "BTC",
@@ -84,7 +70,7 @@ describe("conductResearch", () => {
   });
 
   it("returns failure when brief file not created", async () => {
-    (spawn as any).mockImplementation(() => createMockProcess(0));
+    vi.mocked(runClaude).mockResolvedValue({ status: 0, stdout: "", stderr: "" });
 
     const result = await conductResearch({
       asset: "BTC",
@@ -103,9 +89,9 @@ describe("conductResearch", () => {
   it("returns failure when brief is invalid JSON", async () => {
     const briefPath = path.join(tmpDir, "research-brief.json");
 
-    (spawn as any).mockImplementation(() => {
+    vi.mocked(runClaude).mockImplementation(async () => {
       fs.writeFileSync(briefPath, "not json {{{");
-      return createMockProcess(0);
+      return { status: 0, stdout: "", stderr: "" };
     });
 
     const result = await conductResearch({
@@ -123,10 +109,10 @@ describe("conductResearch", () => {
   });
 
   it("includes exhausted approaches in prompt", async () => {
-    (spawn as any).mockImplementation((_cmd: string, args: string[]) => {
+    vi.mocked(runClaude).mockImplementation(async (args) => {
       const prompt = args.find((a: string) => a.includes("Exhausted approaches"));
       expect(prompt).toBeDefined();
-      return createMockProcess(1); // Will fail but we check the prompt
+      return { status: 1, stdout: "", stderr: "" };
     });
 
     await conductResearch({
@@ -141,16 +127,11 @@ describe("conductResearch", () => {
   });
 
   it("timeout triggers SIGTERM and returns failure", async () => {
-    // Create a process that never closes on its own
-    const proc = new EventEmitter() as any;
-    proc.stdout = new Readable({ read() {} });
-    proc.stderr = new Readable({ read() {} });
-    proc.kill = vi.fn(() => {
-      // Simulate process being killed
-      proc.emit("close", null);
+    vi.mocked(runClaude).mockResolvedValue({
+      status: null,
+      stdout: "",
+      stderr: "\nKilled: timeout",
     });
-
-    (spawn as any).mockImplementation(() => proc);
 
     const result = await conductResearch({
       asset: "BTC",
@@ -158,7 +139,7 @@ describe("conductResearch", () => {
       exhaustedApproaches: [],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
-      timeoutMs: 50, // Very short timeout
+      timeoutMs: 50,
       repoRoot: tmpDir,
     });
 
@@ -174,9 +155,9 @@ describe("conductResearch", () => {
       // missing suggestedApproaches
     };
 
-    (spawn as any).mockImplementation(() => {
+    vi.mocked(runClaude).mockImplementation(async () => {
       fs.writeFileSync(briefPath, JSON.stringify(badBrief));
-      return createMockProcess(0);
+      return { status: 0, stdout: "", stderr: "" };
     });
 
     const result = await conductResearch({
@@ -199,9 +180,9 @@ describe("conductResearch", () => {
     fs.writeFileSync(briefPath, JSON.stringify({ stale: true }));
     expect(fs.existsSync(briefPath)).toBe(true);
 
-    // Mock spawn that does NOT create a new brief → should fail with "not created"
+    // Mock runClaude that does NOT create a new brief → should fail with "not created"
     // because the stale one was deleted
-    (spawn as any).mockImplementation(() => createMockProcess(0));
+    vi.mocked(runClaude).mockResolvedValue({ status: 0, stdout: "", stderr: "" });
 
     const result = await conductResearch({
       asset: "BTC",
@@ -226,9 +207,9 @@ describe("conductResearch", () => {
       timestamp: new Date().toISOString(),
     };
 
-    (spawn as any).mockImplementation(() => {
+    vi.mocked(runClaude).mockImplementation(async () => {
       fs.writeFileSync(briefPath, JSON.stringify(badBrief));
-      return createMockProcess(0);
+      return { status: 0, stdout: "", stderr: "" };
     });
 
     const result = await conductResearch({

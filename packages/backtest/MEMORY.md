@@ -2,12 +2,12 @@
 
 ## Current state
 - Full implementation complete: types, indicators (7), engine (5 modules), analysis (4), data layer (2), strategy (donchian-adx), CLI, barrel
-- 175 tests passing, 20 test files, clean build
+- 183 tests passing, 20 test files, clean build
 - Strategies: donchian-adx, keltner-rsi2 (both TypeScript ports of Pine scripts)
 - Data sources: Bybit (default, perp USDT), Coinbase spot (BTC-USD), Coinbase perp (BTC-PERP-INTX via Advanced Trade API), Hyperliquid
 - Cache keyed by (source, coin, interval, t) — different sources stored separately
 - `shouldExit` deferred exit: places market order filling at next bar open (matches Pine `process_orders_on_close=false`)
-- CLI supports `--start YYYY-MM-DD --end YYYY-MM-DD`, `--warmup N` (default 60), `--strategy` flag, `--cash`/risk sizing
+- CLI uses `cac` library (named import `{ cac }` for NodeNext compat); supports `--start`, `--end`, `--days`, `--source`, `--warmup`, `--strategy`, `--cash`, `--no-limits`, `--help`
 - **TV validation (Jul16 2025–Feb19 2026, coinbase-perp):**
   - Donchian ADX: 88/95 unique entries matched (92.6%), 40 extra borderline Donchian breakouts
   - Keltner RSI2: 101/104 unique entries matched (97.1%), 298 extra borderline KC crossings (66% within 0.1% of band)
@@ -37,7 +37,7 @@
 - Higher-TF candles aggregated from source candles, not fetched separately
 - Strategy uses previous-bar Donchian values ([1] in Pine) to avoid look-ahead
 - Daily EMA and 1H ATR use anti-repaint equivalent (previous completed HTF bar)
-- candle-client: fetchWithRetry helper deduplicates HTTP 429 retry logic; Bybit has separate fetchBybitWithRetry for body-level rate limit
+- candle-client: uses p-retry + p-timeout for all HTTP calls; fetchWithRetry (Coinbase, CB-perp, HL) and fetchBybitWithRetry (body-level rate limit). AbortError for non-retryable errors, normal Error for 429/rate-limit (retries). 30s timeout per request.
 - Coinbase perp uses Advanced Trade API (api.coinbase.com/api/v3/brokerage), not Exchange API
 - Coinbase perp product ID format: `{COIN}-PERP-INTX` (e.g. BTC-PERP-INTX)
 - Coinbase Advanced Trade granularity uses string enums (FIFTEEN_MINUTE, ONE_HOUR, etc.)

@@ -1,3 +1,6 @@
+import pRetry, { AbortError } from "p-retry";
+import pTimeout from "p-timeout";
+import { setTimeout as sleep } from "node:timers/promises";
 import type { Candle, CandleInterval } from "../types/candle.js";
 
 export type DataSource = "hyperliquid" | "bybit" | "coinbase" | "coinbase-perp";
@@ -17,30 +20,20 @@ export interface CandleClientOptions {
   coinbasePerpProductId?: string;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Fetch with automatic retry on HTTP 429. Backoff: 2s, 4s, 6s.
- * Throws immediately on non-429 errors.
- */
 async function fetchWithRetry(
   url: string,
   init: RequestInit | undefined,
   label: string,
 ): Promise<Response> {
-  let lastResponse: Response | undefined;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    lastResponse = await fetch(url, init);
-    if (lastResponse.ok) return lastResponse;
-    if (lastResponse.status === 429) {
-      await sleep(2000 * (attempt + 1));
-      continue;
-    }
-    throw new Error(`${label} API error: ${lastResponse.status} ${lastResponse.statusText}`);
-  }
-  throw new Error(`${label} API error: rate limit exceeded after retries`);
+  return pRetry(
+    async () => {
+      const response = await pTimeout(fetch(url, init), { milliseconds: 30_000 });
+      if (response.ok) return response;
+      if (response.status === 429) throw new Error(`${label} API error: rate limit exceeded after retries`);
+      throw new AbortError(`${label} API error: ${response.status} ${response.statusText}`);
+    },
+    { retries: 2, minTimeout: 2000, factor: 2 },
+  );
 }
 
 /** Deduplicate candles by timestamp and sort oldest-first. */
@@ -95,29 +88,23 @@ function toBybitInterval(interval: CandleInterval): string {
 
 type BybitResponse = { retCode: number; retMsg: string; result: { list: string[][] } };
 
-/** Bybit-specific retry: also retries on retMsg "Rate Limit" (200 OK but body-level error). */
 async function fetchBybitWithRetry(url: string): Promise<BybitResponse> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const response = await fetch(url);
-    if (!response.ok) {
-      if (response.status === 429) {
-        await sleep(2000 * (attempt + 1));
-        continue;
+  return pRetry(
+    async () => {
+      const response = await pTimeout(fetch(url), { milliseconds: 30_000 });
+      if (!response.ok) {
+        if (response.status === 429) throw new Error("Bybit API error: rate limit exceeded after retries");
+        throw new AbortError(`Bybit API error: ${response.status} ${response.statusText}`);
       }
-      throw new Error(`Bybit API error: ${response.status} ${response.statusText}`);
-    }
-
-    const json = (await response.json()) as BybitResponse;
-    if (json.retCode !== 0) {
-      if (json.retMsg.includes("Rate Limit")) {
-        await sleep(2000 * (attempt + 1));
-        continue;
+      const json = (await response.json()) as BybitResponse;
+      if (json.retCode !== 0) {
+        if (json.retMsg.includes("Rate Limit")) throw new Error("Bybit API error: rate limit exceeded after retries");
+        throw new AbortError(`Bybit API error: ${json.retMsg}`);
       }
-      throw new Error(`Bybit API error: ${json.retMsg}`);
-    }
-    return json;
-  }
-  throw new Error(`Bybit API error: rate limit exceeded after retries`);
+      return json;
+    },
+    { retries: 2, minTimeout: 2000, factor: 2 },
+  );
 }
 
 async function fetchBybit(
@@ -199,15 +186,15 @@ async function fetchHyperliquid(
       req: { coin, interval, startTime: currentStart, endTime },
     };
 
-    const response = await fetch(baseUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      throw new Error(`HL API error: ${response.status} ${response.statusText}`);
-    }
+    const response = await fetchWithRetry(
+      baseUrl,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      "HL",
+    );
 
     const data = (await response.json()) as Array<{
       t: number; T: number; s: string; i: string;

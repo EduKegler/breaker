@@ -97,6 +97,25 @@ describe("emitEvent", () => {
     expect(event.strategy).toBe("breakout");
   });
 
+  it("does not include pino metadata fields (level, pid, hostname, time)", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pine-events-"));
+    emitEvent({
+      artifactsDir: tmpDir,
+      runId: "r1",
+      asset: "BTC",
+      iter: 1,
+      stage: "X",
+      status: "info",
+    });
+    const event = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "events.ndjson"), "utf8").trim(),
+    );
+    expect(event).not.toHaveProperty("level");
+    expect(event).not.toHaveProperty("pid");
+    expect(event).not.toHaveProperty("hostname");
+    expect(event).not.toHaveProperty("time");
+  });
+
   it("defaults numeric fields to 0", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pine-events-"));
     emitEvent({

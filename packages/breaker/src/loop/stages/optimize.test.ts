@@ -1,119 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
 
 // Mock child_process BEFORE importing the module under test
 vi.mock("node:child_process", () => ({
   execSync: vi.fn(),
-  spawn: vi.fn(),
 }));
 
-import { execSync, spawn } from "node:child_process";
+vi.mock("execa", () => ({
+  execa: vi.fn(),
+}));
+
+import { execSync } from "node:child_process";
+import { execa } from "execa";
 import fs from "node:fs";
-import { runClaudeAsync, extractParamOverrides, optimizeStrategy, fixStrategy } from "./optimize.js";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function createMockProcess(
-  exitCode: number,
-  stdoutData?: string,
-  stderrData?: string,
-) {
-  const proc = new EventEmitter() as any;
-  proc.stdout = new Readable({ read() {} });
-  proc.stderr = new Readable({ read() {} });
-  proc.kill = vi.fn();
-  setTimeout(() => {
-    if (stdoutData) proc.stdout.push(stdoutData);
-    if (stderrData) proc.stderr.push(stderrData);
-    proc.stdout.push(null);
-    proc.stderr.push(null);
-    proc.emit("close", exitCode);
-  }, 10);
-  return proc;
-}
-
-const defaultOpts = {
-  env: process.env as NodeJS.ProcessEnv,
-  cwd: "/tmp",
-  timeoutMs: 5000,
-  label: "test",
-};
-
-// ---------------------------------------------------------------------------
-// runClaudeAsync
-// ---------------------------------------------------------------------------
-
-describe("runClaudeAsync", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("resolves with exit code 0 and collected stdout", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "hello world") as any);
-
-    const result = await runClaudeAsync(["--model", "opus"], defaultOpts);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("hello world");
-    expect(spawn).toHaveBeenCalledWith("claude", ["--model", "opus"], expect.objectContaining({ cwd: "/tmp" }));
-  });
-
-  it("resolves with non-zero exit code", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(1, "", "bad input") as any);
-
-    const result = await runClaudeAsync(["arg"], defaultOpts);
-
-    expect(result.status).toBe(1);
-  });
-
-  it("collects stderr data", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "", "warning msg") as any);
-
-    const result = await runClaudeAsync([], defaultOpts);
-
-    expect(result.stderr).toBe("warning msg");
-  });
-
-  it("timeout kills process with SIGTERM and returns status null", async () => {
-    const proc = new EventEmitter() as any;
-    proc.stdout = new Readable({ read() {} });
-    proc.stderr = new Readable({ read() {} });
-    proc.kill = vi.fn(() => {
-      setTimeout(() => {
-        proc.stdout.push(null);
-        proc.stderr.push(null);
-      }, 5);
-    });
-    vi.mocked(spawn).mockReturnValue(proc as any);
-
-    const result = await runClaudeAsync([], {
-      ...defaultOpts,
-      timeoutMs: 20,
-    });
-
-    expect(result.status).toBeNull();
-    expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
-  });
-
-  it("returns stderr with timeout marker on timeout", async () => {
-    const proc = new EventEmitter() as any;
-    proc.stdout = new Readable({ read() {} });
-    proc.stderr = new Readable({ read() {} });
-    proc.kill = vi.fn();
-    vi.mocked(spawn).mockReturnValue(proc as any);
-
-    const result = await runClaudeAsync([], {
-      ...defaultOpts,
-      timeoutMs: 20,
-    });
-
-    expect(result.status).toBeNull();
-    expect(result.stderr).toContain("Killed: timeout");
-  });
-});
+import { extractParamOverrides, optimizeStrategy, fixStrategy } from "./optimize.js";
 
 // ---------------------------------------------------------------------------
 // extractParamOverrides
@@ -169,9 +68,7 @@ describe("optimizeStrategy", () => {
   });
 
   it("refine: returns paramOverrides from Claude's output", async () => {
-    vi.mocked(spawn).mockReturnValue(
-      createMockProcess(0, '```json\n{ "paramOverrides": { "dcSlow": 55 } }\n```') as any,
-    );
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: '```json\n{ "paramOverrides": { "dcSlow": 55 } }\n```', stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// same content")
       .mockReturnValueOnce("// same content");
@@ -186,7 +83,7 @@ describe("optimizeStrategy", () => {
   });
 
   it("refine: returns changed=false when no paramOverrides in output", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "no changes needed") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "no changes needed", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// same")
       .mockReturnValueOnce("// same");
@@ -199,9 +96,7 @@ describe("optimizeStrategy", () => {
   });
 
   it("refine: reverts file if Claude unexpectedly edited it", async () => {
-    vi.mocked(spawn).mockReturnValue(
-      createMockProcess(0, '{ "paramOverrides": { "dcSlow": 55 } }') as any,
-    );
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: '{ "paramOverrides": { "dcSlow": 55 } }', stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before content")
       .mockReturnValueOnce("// after changed unexpectedly");
@@ -217,7 +112,7 @@ describe("optimizeStrategy", () => {
   });
 
   it("restructure: returns changed=true when file changed and typecheck passes", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "restructured") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "restructured", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before")
       .mockReturnValueOnce("// after changed");
@@ -235,7 +130,7 @@ describe("optimizeStrategy", () => {
   });
 
   it("restructure: reverts and returns error when typecheck fails", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "restructured") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "restructured", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before")
       .mockReturnValueOnce("// after changed");
@@ -254,7 +149,7 @@ describe("optimizeStrategy", () => {
   });
 
   it("returns changed=false when restructure produces no file change", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "done", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// same")
       .mockReturnValueOnce("// same");
@@ -267,7 +162,7 @@ describe("optimizeStrategy", () => {
   });
 
   it("returns failure when Claude exits non-zero", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(1, "", "claude error") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 1, stdout: "", stderr: "claude error", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync").mockReturnValue("// content");
 
     const result = await optimizeStrategy(baseOpts);
@@ -278,12 +173,12 @@ describe("optimizeStrategy", () => {
   });
 
   it("invokes Claude with correct model and flags", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "done", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync").mockReturnValue("// same");
 
     await optimizeStrategy(baseOpts);
 
-    expect(spawn).toHaveBeenCalledWith(
+    expect(execa).toHaveBeenCalledWith(
       "claude",
       expect.arrayContaining([
         "--model", "sonnet",
@@ -297,12 +192,12 @@ describe("optimizeStrategy", () => {
   });
 
   it("uses max-turns 25 for restructure phase", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "done") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "done", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync").mockReturnValue("// same");
 
     await optimizeStrategy({ ...baseOpts, phase: "restructure" });
 
-    expect(spawn).toHaveBeenCalledWith(
+    expect(execa).toHaveBeenCalledWith(
       "claude",
       expect.arrayContaining(["--max-turns", "25"]),
       expect.any(Object),
@@ -328,7 +223,7 @@ describe("fixStrategy", () => {
   });
 
   it("returns success when Claude fixes and typecheck passes", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "fixed") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "fixed", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before")
       .mockReturnValueOnce("// after fixed");
@@ -342,7 +237,7 @@ describe("fixStrategy", () => {
   });
 
   it("reverts and returns failure when typecheck still fails after fix", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "tried fixing") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "tried fixing", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// before")
       .mockReturnValueOnce("// after still broken");
@@ -359,7 +254,7 @@ describe("fixStrategy", () => {
   });
 
   it("returns success with changed=false when file unchanged", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(0, "no changes") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "no changes", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// same")
       .mockReturnValueOnce("// same");
@@ -372,7 +267,7 @@ describe("fixStrategy", () => {
   });
 
   it("returns failure when Claude exits non-zero", async () => {
-    vi.mocked(spawn).mockReturnValue(createMockProcess(1, "", "fix error") as any);
+    vi.mocked(execa).mockResolvedValue({ exitCode: 1, stdout: "", stderr: "fix error", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync").mockReturnValue("// content");
 
     const result = await fixStrategy(fixOpts);

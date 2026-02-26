@@ -1,25 +1,26 @@
-const EVOLUTION_API_URL =
-  process.env.EVOLUTION_API_URL || "http://localhost:8080";
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || "";
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || "sexta-feira";
-const DEFAULT_RECIPIENT = process.env.WHATSAPP_RECIPIENT || "";
+import pRetry from "p-retry";
+import pTimeout from "p-timeout";
+import { env } from "./env.js";
 
 export async function sendWhatsApp(
   text: string,
   recipient?: string,
 ): Promise<unknown> {
-  const number = recipient || DEFAULT_RECIPIENT;
+  const number = recipient || env.WHATSAPP_RECIPIENT;
   if (!number) throw new Error("No recipient specified");
 
-  const url = `${EVOLUTION_API_URL}/message/sendText/${EVOLUTION_INSTANCE}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: EVOLUTION_API_KEY,
-    },
-    body: JSON.stringify({ number, text }),
-  });
+  const url = `${env.EVOLUTION_API_URL}/message/sendText/${env.EVOLUTION_INSTANCE}`;
+  const res = await pTimeout(
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: env.EVOLUTION_API_KEY,
+      },
+      body: JSON.stringify({ number, text }),
+    }),
+    { milliseconds: 10_000 },
+  );
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
@@ -33,10 +34,9 @@ export async function sendWithRetry(
   text: string,
   recipient?: string,
 ): Promise<unknown> {
-  try {
-    return await sendWhatsApp(text, recipient);
-  } catch {
-    await new Promise((r) => setTimeout(r, 5000));
-    return await sendWhatsApp(text, recipient);
-  }
+  return pRetry(() => sendWhatsApp(text, recipient), {
+    retries: 1,
+    minTimeout: 5000,
+    factor: 1,
+  });
 }

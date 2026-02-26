@@ -1,8 +1,7 @@
 import express from "express";
 import { sendRouter } from "./routes/send.js";
 import { healthRouter } from "./routes/health.js";
-
-const PORT = parseInt(process.env.PORT || "3100");
+import { env } from "./lib/env.js";
 
 export const app: express.Express = express();
 app.use(express.json({ limit: "100kb" }));
@@ -15,7 +14,7 @@ const isMain =
   process.argv[1]?.endsWith("server.js");
 
 if (isMain) {
-  app.listen(PORT, () => {
-    console.log(`WhatsApp Gateway listening on port ${PORT}`);
+  app.listen(env.PORT, () => {
+    console.log(`WhatsApp Gateway listening on port ${env.PORT}`);
   });
 }

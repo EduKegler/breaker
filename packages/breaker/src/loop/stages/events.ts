@@ -1,6 +1,26 @@
 import fs from "node:fs";
 import path from "node:path";
+import pino from "pino";
 import type { DashboardEvent } from "../../types/events.js";
+
+const loggers = new Map<string, pino.Logger>();
+
+function getLogger(filePath: string): pino.Logger {
+  let instance = loggers.get(filePath);
+  if (!instance) {
+    instance = pino(
+      {
+        base: undefined,
+        level: "info",
+        formatters: { level: () => ({ ts: new Date().toISOString() }) },
+        timestamp: false,
+      },
+      pino.destination({ dest: filePath, sync: true, append: true }),
+    );
+    loggers.set(filePath, instance);
+  }
+  return instance;
+}
 
 /**
  * Emit a structured event to the NDJSON events log.
@@ -20,8 +40,15 @@ export function emitEvent(opts: {
   trades?: number;
   message?: string;
 }): void {
-  const event: DashboardEvent & { strategy?: string } = {
-    ts: new Date().toISOString(),
+  const dir = opts.artifactsDir;
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  const filePath = path.join(dir, "events.ndjson");
+  const log = getLogger(filePath);
+
+  const event: Omit<DashboardEvent, "ts"> & { strategy?: string } = {
     run_id: opts.runId,
     asset: opts.asset,
     ...(opts.strategy ? { strategy: opts.strategy } : {}),
@@ -35,11 +62,5 @@ export function emitEvent(opts: {
     message: opts.message ?? "",
   };
 
-  const dir = opts.artifactsDir;
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  const filePath = path.join(dir, "events.ndjson");
-  fs.appendFileSync(filePath, JSON.stringify(event) + "\n");
+  log.info(event, "");
 }

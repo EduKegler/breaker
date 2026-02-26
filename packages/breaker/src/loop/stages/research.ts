@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { StageResult } from "../types.js";
+import { runClaude } from "./run-claude.js";
 
 export interface ResearchBrief {
   queries: string[];
@@ -79,7 +79,7 @@ Write your findings as a JSON file to ${briefPath} with this exact structure:
 Write ONLY the JSON file. Do not modify any other files.`;
 
   try {
-    const result = await runClaudeForResearch(
+    const result = await runClaude(
       ["--model", model, "--dangerously-skip-permissions", "--allowedTools", "WebSearch,mcp__context7__resolve-library-id,mcp__context7__query-docs,Read,Write", "-p", prompt],
       { cwd: repoRoot, timeoutMs, label: "research" },
     );
@@ -113,45 +113,4 @@ Write ONLY the JSON file. Do not modify any other files.`;
   } catch (err) {
     return { success: false, error: (err as Error).message };
   }
-}
-
-function runClaudeForResearch(
-  args: string[],
-  opts: { cwd: string; timeoutMs: number; label: string },
-): Promise<{ status: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn("claude", args, {
-      env: process.env as NodeJS.ProcessEnv,
-      cwd: opts.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    const startTime = Date.now();
-
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-
-    const ticker = setInterval(() => {
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      log(`  [${opts.label}] Research still running... (${elapsed}s)`);
-    }, 60000);
-
-    const timeout = setTimeout(() => {
-      child.stdout.destroy();
-      child.stderr.destroy();
-      child.kill("SIGTERM");
-      clearInterval(ticker);
-      resolve({ status: null, stdout, stderr: stderr + "\nKilled: timeout" });
-    }, opts.timeoutMs);
-
-    child.on("close", (code) => {
-      clearInterval(ticker);
-      clearTimeout(timeout);
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      log(`  [${opts.label}] Research finished in ${elapsed}s`);
-      resolve({ status: code, stdout, stderr });
-    });
-  });
 }

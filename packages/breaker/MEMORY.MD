@@ -4,7 +4,7 @@ Updated: 2026-02-26
 
 ## Current state
 - Playwright/TradingView/XLSX/Pine Script fully removed — replaced by in-process `@trading/backtest` engine
-- 19 test files, 315 tests, all passing
+- 20 test files, 314 tests, all passing
 - Builds clean with `pnpm build`
 - Strategy registry maps config names (`createDonchianAdx`, `createKeltnerRsi2`) to backtest factories
 - Candle loading via `CandleCache` (SQLite), synced once per session

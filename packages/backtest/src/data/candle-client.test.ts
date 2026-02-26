@@ -361,3 +361,175 @@ describe("fetchCandles — Coinbase Perpetual", () => {
     expect(candles).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Retry / timeout behaviour (p-retry + p-timeout)
+// ---------------------------------------------------------------------------
+describe("fetchWithRetry — HTTP 429 retry", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
+  it("retries on 429 then succeeds (Coinbase)", async () => {
+    const mockData = [[1, 95, 110, 100, 105, 50]];
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, statusText: "Too Many Requests" })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(mockData) });
+
+    const candles = await fetchCandles("BTC", "15m", 1000, 2000000, {
+      source: "coinbase",
+      baseUrl: "http://test",
+    });
+
+    expect(candles).toHaveLength(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws after exhausting retries on persistent 429 (Coinbase)", async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValue({ ok: false, status: 429, statusText: "Too Many Requests" });
+
+    await expect(
+      fetchCandles("BTC", "15m", 1000, 2000000, { source: "coinbase", baseUrl: "http://test" }),
+    ).rejects.toThrow();
+
+    // 3 total attempts (1 initial + 2 retries)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  }, 15_000);
+
+  it("does NOT retry on non-429 HTTP errors (Coinbase)", async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, statusText: "Internal Server Error" });
+
+    await expect(
+      fetchCandles("BTC", "15m", 1000, 2000000, { source: "coinbase", baseUrl: "http://test" }),
+    ).rejects.toThrow("Coinbase API error: 500");
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fetchBybitWithRetry — body-level rate limit retry", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
+  it("retries on Bybit body-level Rate Limit then succeeds", async () => {
+    const rateLimitResponse = {
+      retCode: 10006,
+      retMsg: "Too many visits! Rate Limit",
+      result: { list: [] },
+    };
+    const successResponse = {
+      retCode: 0,
+      retMsg: "OK",
+      result: { list: [["1000", "100", "110", "95", "105", "50", "5250"]] },
+    };
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(rateLimitResponse) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(successResponse) });
+
+    const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
+      source: "bybit",
+      baseUrl: "http://test",
+    });
+
+    expect(candles).toHaveLength(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries on Bybit HTTP 429 then succeeds", async () => {
+    const successResponse = {
+      retCode: 0,
+      retMsg: "OK",
+      result: { list: [["1000", "100", "110", "95", "105", "50", "5250"]] },
+    };
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, statusText: "Too Many Requests" })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(successResponse) });
+
+    const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
+      source: "bybit",
+      baseUrl: "http://test",
+    });
+
+    expect(candles).toHaveLength(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT retry on non-rate-limit Bybit body errors", async () => {
+    const errorResponse = {
+      retCode: 10001,
+      retMsg: "params error",
+      result: { list: [] },
+    };
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(errorResponse) });
+
+    await expect(
+      fetchCandles("BTC", "15m", 1000, 5000, { source: "bybit", baseUrl: "http://test" }),
+    ).rejects.toThrow("Bybit API error: params error");
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fetchCandles — Hyperliquid with retry", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
+  it("retries on 429 from Hyperliquid API", async () => {
+    const mockData = [
+      { t: 1000, T: 1999, s: "BTC", i: "15m", o: "100", c: "105", h: "110", l: "95", v: "50", n: 20 },
+    ];
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, statusText: "Too Many Requests" })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(mockData) });
+
+    const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
+      source: "hyperliquid",
+      baseUrl: "http://test",
+    });
+
+    expect(candles).toHaveLength(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT retry on non-429 HL errors", async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, statusText: "Internal Server Error" });
+
+    await expect(
+      fetchCandles("BTC", "15m", 1000, 5000, { source: "hyperliquid", baseUrl: "http://test" }),
+    ).rejects.toThrow("HL API error: 500");
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+});

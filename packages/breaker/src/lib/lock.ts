@@ -1,5 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import lockfile from "proper-lockfile";
+
+const LOCK_DIR = "/tmp";
+const STALE_MS = 600_000;
 
 export interface LockData {
   pid: number;
@@ -7,76 +11,38 @@ export interface LockData {
   asset: string;
 }
 
-const LOCK_DIR = "/tmp";
-
 export function lockPath(asset: string): string {
-  return path.join(LOCK_DIR, `breaker-${asset}.lock`);
+  return path.join(LOCK_DIR, `breaker-${asset}`);
 }
 
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+function ensureSentinel(asset: string): string {
+  const sentinel = lockPath(asset);
+  if (!fs.existsSync(sentinel)) {
+    fs.writeFileSync(sentinel, "");
   }
+  return sentinel;
 }
 
 export function acquireLock(asset: string): void {
-  const file = lockPath(asset);
-
-  // Try atomic create first (O_EXCL fails if file exists)
+  const sentinel = ensureSentinel(asset);
   try {
-    const data: LockData = { pid: process.pid, ts: Date.now(), asset };
-    fs.writeFileSync(file, JSON.stringify(data), { flag: "wx" });
-    return; // Lock acquired atomically
-  } catch {
-    // File exists — check if stale
+    lockfile.lockSync(sentinel, { stale: STALE_MS, realpath: false });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ELOCKED") {
+      throw new Error(`Lock already held for asset ${asset}`);
+    }
+    throw err;
   }
-
-  let existing: LockData;
-  try {
-    existing = JSON.parse(fs.readFileSync(file, "utf8")) as LockData;
-  } catch {
-    // Corrupted lock file — remove and retry atomically
-    try { fs.unlinkSync(file); } catch { /* ignore */ }
-    const data: LockData = { pid: process.pid, ts: Date.now(), asset };
-    fs.writeFileSync(file, JSON.stringify(data), { flag: "wx" });
-    return;
-  }
-
-  if (isPidAlive(existing.pid)) {
-    throw new Error(
-      `Lock held by PID ${existing.pid} for asset ${asset} (since ${new Date(existing.ts).toISOString()})`,
-    );
-  }
-
-  // Stale lock — PID is dead. Remove and retry atomically.
-  console.warn(
-    `[lock] Removing stale lock for ${asset} (PID ${existing.pid} is dead)`,
-  );
-  try { fs.unlinkSync(file); } catch { /* ignore */ }
-  const data: LockData = { pid: process.pid, ts: Date.now(), asset };
-  try {
-    fs.writeFileSync(file, JSON.stringify(data), { flag: "wx" });
-  } catch {
-    throw new Error(`Lock race: another process acquired lock for ${asset}`);
-  }
+  // Write metadata to sentinel for readLock
+  fs.writeFileSync(sentinel, JSON.stringify({ pid: process.pid, ts: Date.now(), asset }));
 }
 
 export function releaseLock(asset: string): void {
-  const file = lockPath(asset);
-  if (fs.existsSync(file)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(file, "utf8")) as LockData;
-      // Only remove if we own it
-      if (data.pid === process.pid) {
-        fs.unlinkSync(file);
-      }
-    } catch {
-      // Corrupted — safe to remove
-      try { fs.unlinkSync(file); } catch { /* ignore */ }
-    }
+  const sentinel = lockPath(asset);
+  try {
+    lockfile.unlockSync(sentinel, { realpath: false });
+  } catch {
+    // Already unlocked or doesn't exist — safe to ignore
   }
 }
 
@@ -84,27 +50,33 @@ export async function acquireLockBlocking(
   name: string,
   opts?: { timeoutMs?: number; pollMs?: number },
 ): Promise<void> {
-  const timeoutMs = opts?.timeoutMs ?? 600000; // 10min default
-  const pollMs = opts?.pollMs ?? 5000; // 5s poll
-  const deadline = Date.now() + timeoutMs;
+  const timeoutMs = opts?.timeoutMs ?? 600_000;
+  const pollMs = opts?.pollMs ?? 5000;
+  const sentinel = ensureSentinel(name);
+  const retries = Math.ceil(timeoutMs / pollMs);
 
-  while (Date.now() < deadline) {
-    try {
-      acquireLock(name);
-      return; // got it
-    } catch {
-      // lock held — wait and retry
-      await new Promise((r) => setTimeout(r, pollMs));
+  try {
+    await lockfile.lock(sentinel, {
+      stale: STALE_MS,
+      realpath: false,
+      retries: { retries, factor: 1, minTimeout: pollMs, maxTimeout: pollMs },
+    });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ELOCKED") {
+      throw new Error(`Timeout waiting for lock "${name}" after ${timeoutMs}ms`);
     }
+    throw err;
   }
-  throw new Error(`Timeout waiting for lock "${name}" after ${timeoutMs}ms`);
+  fs.writeFileSync(sentinel, JSON.stringify({ pid: process.pid, ts: Date.now(), asset: name }));
 }
 
 export function readLock(asset: string): LockData | null {
-  const file = lockPath(asset);
-  if (!fs.existsSync(file)) return null;
+  const sentinel = lockPath(asset);
+  if (!fs.existsSync(sentinel)) return null;
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8")) as LockData;
+    const locked = lockfile.checkSync(sentinel, { stale: STALE_MS, realpath: false });
+    if (!locked) return null;
+    return JSON.parse(fs.readFileSync(sentinel, "utf8")) as LockData;
   } catch {
     return null;
   }

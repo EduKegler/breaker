@@ -5,7 +5,9 @@ TradingView alert receiver that validates payloads, deduplicates signals (Redis 
 
 ## Project structure
 - `src/webhook/server.ts` — main Express server, webhook handlers, message formatting
+- `src/lib/env.ts` — dotenv + Zod env loading (loads `infra/.env`, validates and exports typed `env` object)
 - `src/lib/redis.ts` — Redis connection and deduplication operations
+- `src/lib/logger.ts` — pino logger instance and pino-http middleware
 - `src/types/alert.ts` — Zod schema for alert payload validation
 - `infra/` — deploy config (Dockerfile, docker-compose.yml, Caddyfile, healthcheck.sh)
 
@@ -33,13 +35,17 @@ TradingView alert receiver that validates payloads, deduplicates signals (Redis 
 ## Additional deps
 - Express.js for HTTP server
 - ioredis for Redis client
+- pino + pino-http + pino-roll for structured logging
 - Supertest for testing
 - Docker (multi-stage build) + Caddy reverse proxy
 
 ## Logging
-- JSON-based logging (NDJSON format).
-- Log levels: `info`, `warn`, `error`, `debug`.
-- Files written to `LOG_DIR` with date-based naming (`YYYY-MM-DD.ndjson`).
+- **pino** for structured JSON logging (async I/O, no sync writes on event loop).
+- **pino-http** middleware for automatic request/response logging.
+- **pino-roll** for date-based file rotation (`LOG_DIR/webhook.YYYY-MM-DD.ndjson`).
+- Dual output: stdout (for Docker log capture) + date-rotated NDJSON files.
+- Logger instance and middleware exported from `src/lib/logger.ts`.
+- Log levels: `debug`, `info`, `warn`, `error`.
 
 ## Integration points
 - **TradingView**: receives alert webhooks (POST with secret auth)

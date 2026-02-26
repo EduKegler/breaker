@@ -13,6 +13,8 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { cac } from "cac";
+import { sendWithRetry as sendWhatsAppWithRetry } from "@trading/whatsapp-gateway";
 import { loadConfig, resolveAssetCriteria, resolveDataConfig, resolveDateRange } from "../lib/config.js";
 import { buildStrategyDir, getStrategySourcePath } from "../lib/strategy-path.js";
 import { getStrategyFactory } from "../lib/strategy-registry.js";
@@ -40,18 +42,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, "../..");
 
 export function parseArgs(): Partial<LoopConfig> & { initialPhase?: LoopPhase } {
-  const args: Record<string, string> = {};
-  for (const arg of process.argv.slice(2)) {
-    const m = arg.match(/^--([^=]+)=(.+)$/);
-    if (m) args[m[1]] = m[2];
-  }
+  const cli = cac("breaker");
+  cli.option("--asset <asset>", "Asset to optimize (e.g. BTC, ETH)");
+  cli.option("--strategy <name>", "Strategy name (e.g. breakout, mean-reversion)");
+  cli.option("--max-iter <n>", "Maximum optimization iterations");
+  cli.option("--repo-root <path>", "Repository root path");
+  cli.option("--auto-commit", "Auto-commit strategy changes after each iteration");
+  cli.option("--phase <phase>", "Starting phase (refine|research|restructure)");
+  cli.help();
+
+  const { options } = cli.parse(process.argv);
+
   return {
-    asset: args["asset"] || process.env.ASSET,
-    strategy: args["strategy"] || process.env.STRATEGY || "breakout",
-    maxIter: parseInt(args["max-iter"] || process.env.MAX_ITER || "10"),
-    repoRoot: args["repo-root"] || process.env.REPO_ROOT || DEFAULT_REPO_ROOT,
-    autoCommit: (args["auto-commit"] || process.env.AUTO_COMMIT || "false") === "true",
-    initialPhase: (args["phase"] as LoopPhase) || undefined,
+    asset: options.asset || process.env.ASSET,
+    strategy: options.strategy || process.env.STRATEGY || "breakout",
+    maxIter: parseInt(String(options.maxIter || process.env.MAX_ITER || "10")),
+    repoRoot: options.repoRoot || process.env.REPO_ROOT || DEFAULT_REPO_ROOT,
+    autoCommit: Boolean(options.autoCommit) || process.env.AUTO_COMMIT === "true",
+    initialPhase: (options.phase as LoopPhase) || undefined,
   };
 }
 
@@ -832,26 +840,15 @@ async function main(): Promise<void> {
   log("Session summary:");
   console.log(summary);
 
-  // Send WhatsApp summary via Evolution API
+  // Send WhatsApp summary via @trading/whatsapp-gateway
   const evoUrl = process.env.EVOLUTION_API_URL;
   const evoKey = process.env.EVOLUTION_API_KEY;
-  const evoInstance = process.env.EVOLUTION_INSTANCE || "sexta-feira";
   const recipient = process.env.WHATSAPP_RECIPIENT;
 
   if (evoUrl && evoKey && recipient) {
     try {
-      log("Sending WhatsApp summary...");
-      const res = await fetch(`${evoUrl}/message/sendText/${evoInstance}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: evoKey },
-        body: JSON.stringify({ number: recipient, text: summary }),
-      });
-      if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        log(`WhatsApp send failed: ${res.status} ${errText}`);
-      } else {
-        log("WhatsApp summary sent");
-      }
+      await sendWhatsAppWithRetry(summary);
+      log("WhatsApp summary sent");
     } catch (err) {
       log(`WhatsApp send failed: ${(err as Error).message}`);
     }

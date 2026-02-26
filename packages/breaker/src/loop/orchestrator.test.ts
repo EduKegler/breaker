@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+vi.mock("@trading/whatsapp-gateway", () => ({
+  sendWithRetry: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../lib/config.js", () => ({
   loadConfig: vi.fn(() => ({
     criteria: {},
@@ -83,7 +87,7 @@ describe("parseArgs", () => {
       "--strategy=mean-reversion",
       "--max-iter=20",
       "--repo-root=/tmp/test",
-      "--auto-commit=true",
+      "--auto-commit",
       "--phase=research",
     ];
     const result = parseArgs();
@@ -133,11 +137,10 @@ describe("parseArgs", () => {
     expect(result.maxIter).toBe(15);
   });
 
-  it("ignores malformed flags without = sign", () => {
-    process.argv = ["node", "orchestrator.js", "--asset", "BTC", "--max-iter"];
+  it("parses space-separated flags (--asset BTC)", () => {
+    process.argv = ["node", "orchestrator.js", "--asset", "BTC"];
     const result = parseArgs();
-    expect(result.asset).toBeUndefined();
-    expect(result.maxIter).toBe(10); // default
+    expect(result.asset).toBe("BTC");
   });
 });
 

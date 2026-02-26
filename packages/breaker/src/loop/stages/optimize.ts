@@ -1,7 +1,8 @@
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { StageResult } from "../types.js";
+import { runClaude } from "./run-claude.js";
 
 export interface OptimizeResult {
   changed: boolean;
@@ -12,54 +13,6 @@ export interface OptimizeResult {
 
 function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
-}
-
-/**
- * Run Claude CLI as async child process with periodic "still thinking" logs.
- */
-export function runClaudeAsync(
-  args: string[],
-  opts: { env: NodeJS.ProcessEnv; cwd: string; timeoutMs: number; label: string },
-): Promise<{ status: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn("claude", args, {
-      env: opts.env,
-      cwd: opts.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    const startTime = Date.now();
-
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-
-    const ticker = setInterval(() => {
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      log(`  [${opts.label}] Claude still thinking... (${elapsed}s, stdout=${stdout.length}B, stderr=${stderr.length}B)`);
-    }, 60000);
-
-    const timeout = setTimeout(() => {
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      log(`  [${opts.label}] TIMEOUT after ${elapsed}s (stdout=${stdout.length}B, stderr=${stderr.length}B)`);
-      if (stdout) log(`  [${opts.label}] partial stdout (last 500): ${stdout.slice(-500)}`);
-      if (stderr) log(`  [${opts.label}] partial stderr (last 500): ${stderr.slice(-500)}`);
-      child.stdout.destroy();
-      child.stderr.destroy();
-      child.kill("SIGTERM");
-      clearInterval(ticker);
-      resolve({ status: null, stdout, stderr: stderr + "\nKilled: timeout" });
-    }, opts.timeoutMs);
-
-    child.on("close", (code) => {
-      clearInterval(ticker);
-      clearTimeout(timeout);
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      log(`  [${opts.label}] Claude finished in ${elapsed}s`);
-      resolve({ status: code, stdout, stderr });
-    });
-  });
 }
 
 /**
@@ -114,9 +67,9 @@ export async function optimizeStrategy(opts: {
     const maxTurns = phase === "restructure" ? 25 : 12;
     log(`  [optimize] prompt size: ${prompt.length} chars, model: ${model}, max-turns: ${maxTurns}`);
 
-    const result = await runClaudeAsync(
+    const result = await runClaude(
       ["--model", model, "--dangerously-skip-permissions", "--max-turns", String(maxTurns), "-p", prompt],
-      { env: process.env as NodeJS.ProcessEnv, cwd: repoRoot, timeoutMs, label: "optimize" },
+      { cwd: repoRoot, timeoutMs, label: "optimize" },
     );
 
     if (result.status !== 0) {
@@ -222,9 +175,9 @@ export async function fixStrategy(opts: {
   try {
     const beforeContent = fs.readFileSync(strategyFile, "utf8");
 
-    const result = await runClaudeAsync(
+    const result = await runClaude(
       ["--model", model, "--dangerously-skip-permissions", "-p", prompt],
-      { env: process.env as NodeJS.ProcessEnv, cwd: repoRoot, timeoutMs: 180000, label: "fix" },
+      { cwd: repoRoot, timeoutMs: 180000, label: "fix" },
     );
 
     if (result.status !== 0) {

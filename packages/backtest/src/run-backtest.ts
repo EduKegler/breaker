@@ -1,3 +1,4 @@
+import { cac } from "cac";
 import { CandleCache } from "./data/candle-cache.js";
 import type { CandleClientOptions } from "./data/candle-client.js";
 import { runBacktest, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
@@ -20,31 +21,31 @@ if (isMain) {
 }
 
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const warmupIdx = argv.indexOf("--warmup");
-  const WARMUP_DAYS = warmupIdx !== -1 ? parseInt(argv[warmupIdx + 1], 10) : 60;
+  const cli = cac("run-backtest");
 
-  // Parse named flags
-  const startIdx = argv.indexOf("--start");
-  const endIdx = argv.indexOf("--end");
-  const startDate = startIdx !== -1 ? argv[startIdx + 1] : undefined;
-  const endDate = endIdx !== -1 ? argv[endIdx + 1] : undefined;
+  cli.option("--start <date>", "Start date YYYY-MM-DD");
+  cli.option("--end <date>", "End date YYYY-MM-DD (default: today)");
+  cli.option("--days <n>", "Days to backtest (default: 180, ignored if --start given)");
+  cli.option("--source <source>", "Data source: bybit|coinbase|coinbase-perp|hyperliquid (default: bybit)");
+  cli.option("--warmup <days>", "Warmup days for indicators (default: 60)");
+  cli.option("--strategy <name>", "Strategy: donchian-adx|keltner-rsi2 (default: donchian-adx)");
+  cli.option("--cash", "Use cash sizing mode ($100 per trade)");
+  cli.option("--limits", "Enable trade limits (use --no-limits to disable)");
 
-  // Positional args: filter out --flag and their values
-  const positional: string[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--start" || argv[i] === "--end" || argv[i] === "--warmup" || argv[i] === "--strategy") {
-      i++; // skip value
-    } else if (!argv[i].startsWith("--")) {
-      positional.push(argv[i]);
-    }
-  }
+  cli.help();
 
-  const coin = positional[0] ?? "BTC";
-  const source = (startDate
-    ? positional[1] ?? "bybit"
-    : positional[2] ?? "bybit") as "bybit" | "coinbase" | "coinbase-perp" | "hyperliquid";
+  const { args, options } = cli.parse();
+
+  const coin = args[0] ?? "BTC";
+  const source = (options.source ?? "bybit") as "bybit" | "coinbase" | "coinbase-perp" | "hyperliquid";
   const interval = "15m" as const;
+  const WARMUP_DAYS = Number(options.warmup ?? 60);
+  const strategyName = options.strategy ?? "donchian-adx";
+  const useCash = options.cash === true;
+  const noLimits = options.limits === false;
+
+  const startDate: string | undefined = options.start;
+  const endDate: string | undefined = options.end;
 
   let startTime: number;
   let endTime: number;
@@ -55,7 +56,7 @@ async function main(): Promise<void> {
     endTime = endDate ? new Date(endDate + "T23:59:59Z").getTime() : Date.now();
     days = Math.ceil((endTime - startTime) / 86_400_000);
   } else {
-    days = parseInt(positional[1] ?? "180", 10);
+    days = Number(options.days ?? 180);
     endTime = Date.now();
     startTime = endTime - days * 86_400_000;
   }
@@ -96,11 +97,7 @@ async function main(): Promise<void> {
   }
 
   // Run backtest
-  const strategyIdx = argv.indexOf("--strategy");
-  const strategyName = strategyIdx !== -1 ? argv[strategyIdx + 1] : "donchian-adx";
   const strategy = strategyName === "keltner-rsi2" ? createKeltnerRsi2() : createDonchianAdx();
-  const useCash = process.argv.includes("--cash");
-  const noLimits = process.argv.includes("--no-limits");
   const config = {
     ...DEFAULT_BACKTEST_CONFIG,
     ...(useCash ? { sizingMode: "cash" as const, cashPerTrade: 100 } : {}),
