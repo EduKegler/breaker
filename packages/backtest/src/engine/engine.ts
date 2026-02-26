@@ -6,6 +6,7 @@ import { PositionTracker } from "./position-tracker.js";
 import { OrderManager, createOrderId, resetOrderIdCounter } from "./order-manager.js";
 import { EquityCurve, type EquityPoint } from "./equity-curve.js";
 import { applySlippage, calculateCommission, type ExecutionConfig, DEFAULT_EXECUTION } from "./execution-model.js";
+import { buildContext as buildCtx, canTrade as checkCanTrade, createUtcDayFormatter } from "./engine-shared.js";
 
 export type SizingMode = "risk" | "cash";
 
@@ -121,11 +122,7 @@ export function runBacktest(
   let pendingExitComment = "";
 
   // UTC day-of-month for daily reset (matches Pine's dayofmonth(time, "UTC"))
-  const utcDayFormatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: "UTC",
-    day: "numeric",
-    month: "numeric",
-  });
+  const utcDayFormatter = createUtcDayFormatter();
 
   for (let i = 0; i < candles.length; i++) {
     const candle = candles[i];
@@ -197,10 +194,10 @@ export function runBacktest(
     // Step 3: Strategy-driven exit check (deferred: process_orders_on_close = false)
     // Places a market order that fills at NEXT bar's open, matching Pine Script behavior.
     if (!positionTracker.isFlat() && strategy.shouldExit) {
-      const ctx = buildContext(
-        candles, i, positionTracker, higherTimeframes,
-        dailyPnl, tradesToday, barsSinceExit, consecutiveLosses,
-      );
+      const ctx = buildCtx({
+        candles, index: i, position: positionTracker.getPosition(),
+        higherTimeframes, dailyPnl, tradesToday, barsSinceExit, consecutiveLosses,
+      });
       const exitSignal = strategy.shouldExit(ctx);
       if (exitSignal?.exit) {
         const pos = positionTracker.getPosition()!;
@@ -226,17 +223,20 @@ export function runBacktest(
     if (positionTracker.isFlat()) {
       barsSinceExit++;
 
-      const canTrade =
-        barsSinceExit >= config.cooldownBars &&
-        consecutiveLosses < config.maxConsecutiveLosses &&
-        dailyPnl > -(config.maxDailyLossR * config.initialCapital * 0.01) &&
-        tradesToday < Math.min(config.maxTradesPerDay, config.maxGlobalTradesDay);
+      const tradingAllowed = checkCanTrade({
+        barsSinceExit, cooldownBars: config.cooldownBars,
+        consecutiveLosses, maxConsecutiveLosses: config.maxConsecutiveLosses,
+        dailyPnl, maxDailyLossR: config.maxDailyLossR,
+        initialCapital: config.initialCapital,
+        tradesToday, maxTradesPerDay: config.maxTradesPerDay,
+        maxGlobalTradesDay: config.maxGlobalTradesDay,
+      });
 
-      if (canTrade) {
-        const ctx = buildContext(
-          candles, i, positionTracker, higherTimeframes,
-          dailyPnl, tradesToday, barsSinceExit, consecutiveLosses,
-        );
+      if (tradingAllowed) {
+        const ctx = buildCtx({
+          candles, index: i, position: positionTracker.getPosition(),
+          higherTimeframes, dailyPnl, tradesToday, barsSinceExit, consecutiveLosses,
+        });
         const signal = strategy.onCandle(ctx);
 
         if (signal) {
@@ -288,32 +288,6 @@ export function runBacktest(
     maxDrawdownPct: equityCurve.getMaxDrawdownPct(),
     finalEquity: equityCurve.getEquity(),
     barsProcessed: candles.length,
-  };
-}
-
-function buildContext(
-  candles: Candle[],
-  index: number,
-  positionTracker: PositionTracker,
-  higherTimeframes: Record<string, Candle[]>,
-  dailyPnl: number,
-  tradesToday: number,
-  barsSinceExit: number,
-  consecutiveLosses: number,
-): StrategyContext {
-  const pos = positionTracker.getPosition();
-  return {
-    candles,
-    index,
-    currentCandle: candles[index],
-    positionDirection: pos?.direction ?? null,
-    positionEntryPrice: pos?.entryPrice ?? null,
-    positionEntryBarIndex: pos?.entryBarIndex ?? null,
-    higherTimeframes,
-    dailyPnl,
-    tradesToday,
-    barsSinceExit,
-    consecutiveLosses,
   };
 }
 

@@ -37,6 +37,8 @@ export type { KeltnerResult } from "./indicators/keltner.js";
 // Engine
 export { runBacktest, aggregateCandles, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
 export type { BacktestConfig, BacktestResult, SizingMode } from "./engine/engine.js";
+export { buildContext, canTrade, createUtcDayFormatter } from "./engine/engine-shared.js";
+export type { BuildContextParams, CanTradeParams } from "./engine/engine-shared.js";
 export { EquityCurve } from "./engine/equity-curve.js";
 export type { EquityPoint } from "./engine/equity-curve.js";
 export { applySlippage, calculateCommission, DEFAULT_EXECUTION } from "./engine/execution-model.js";

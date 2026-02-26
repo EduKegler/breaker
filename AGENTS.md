@@ -17,10 +17,10 @@ trading/
 ├── packages/
 │   ├── backtest/         — B · backtesting engine, indicators, strategies & candle data
 │   ├── refiner/          — R · automated strategy optimization loop
-│   ├── exchange/         — E · Hyperliquid order execution & position management
+│   ├── exchange/         — E · Hyperliquid trading daemon (strategy runner, risk engine, execution)
 │   ├── alerts/           — A · WhatsApp messaging via Evolution API
 │   ├── kit/              — K · shared utilities (isMainModule, parseEnv, formatZodErrors)
-│   ├── explorer/         — E · local analysis dashboard (stub)
+│   ├── explorer/         — E · live trading dashboard (Vite + React)
 │   └── router/           — R · TradingView alert receiver & forwarder
 ├── package.json          — root (private, workspaces)
 ├── pnpm-workspace.yaml   — declares packages/*

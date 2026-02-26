@@ -1,66 +1,48 @@
 # AGENTS Instructions — explorer
 
-## Status: Stub / Planned
-
-This package is an empty stub. No runtime functionality exists yet.
-
 ## Project overview
-Local analysis dashboard for visualizing backtest results, optimization history, and strategy performance metrics. Runs on localhost — no remote infra needed.
+Live trading dashboard — Vite + React SPA that visualizes exchange positions, orders, and equity curve. Consumes APIs from @breaker/exchange via Vite dev proxy.
 
-## Architecture (planned)
-
+## Project structure
 ```
-┌─────────────────────────────────────────┐
-│         Data sources (read-only)        │
-│  • SQLite candle cache (backtest)       │
-│  • Breaker event JSON files             │
-│  • Checkpoint / param-history files     │
-└──────────────┬──────────────────────────┘
-               │ reads directly
-               ▼
-┌─────────────────────────────────────────┐
-│         Local API server                │
-│  • Express or Hono on localhost         │
-│  • Endpoints: /strategies, /trades,     │
-│    /equity-curve, /optimizations        │
-└──────────────┬──────────────────────────┘
-               │ serves
-               ▼
-┌─────────────────────────────────────────┐
-│         Web UI (Vite + React)           │
-│  • Dashboard per strategy               │
-│  • Equity curve + drawdown chart        │
-│  • Win rate, PF, trades table           │
-│  • Optimization history timeline        │
-└─────────────────────────────────────────┘
+├── src/
+│   ├── main.tsx            # React root
+│   ├── app.tsx             # App shell with nav (Dashboard/Orders/Equity)
+│   ├── pages/
+│   │   ├── dashboard.tsx   # Positions + equity + status bar
+│   │   ├── orders.tsx      # Order history table
+│   │   └── equity.tsx      # Full equity chart
+│   ├── components/
+│   │   ├── position-card.tsx  # Position card with PnL
+│   │   ├── order-table.tsx    # Sortable order table
+│   │   └── equity-chart.tsx   # recharts line chart
+│   ├── lib/
+│   │   ├── api.ts          # Fetch wrapper for exchange APIs
+│   │   └── use-poll.ts     # Generic polling hook
+│   └── index.css           # Tailwind imports
+├── index.html              # SPA entry
+├── vite.config.ts          # Vite + React plugin + proxy to :3200
+├── tailwind.config.js
+├── postcss.config.js
+└── tsconfig.json           # Bundler resolution (not NodeNext)
 ```
 
-## Data model
+## Stack
+- Vite 6 + React 19 + TypeScript
+- Tailwind CSS 3 for styling
+- recharts for equity curve
+- Polling every 5-10s (no WebSocket)
 
-All data already exists locally — no remote DB needed:
-
-- **Trades**: from backtest engine runs (strategy, asset, side, entry/exit prices, PnL)
-- **Metrics**: computed by `@breaker/backtest` analysis module (PF, WR, DD, etc.)
-- **Optimization history**: breaker event JSON files + checkpoint dirs
-- **Candles**: SQLite cache in `.cache/candles.db`
-
-## Planned features
-
-1. **Strategy comparison** — side-by-side metrics for all strategies
-2. **Equity curve** — per-strategy with drawdown overlay
-3. **Trade table** — filterable by strategy, date, session, direction
-4. **Optimization timeline** — iteration-by-iteration metrics from breaker runs
-5. **Session breakdown** — PF/WR by Asia/London/NY/Off-peak
-
-## Tech decisions (planned)
-
-- **No Convex** — data is local, no need for remote reactive DB
-- **No Next.js** — no SSR needed for localhost tool
-- **Vite + React** — fast local dev, simple build
-- **API server** — lightweight (Express or Hono), reads from existing data files
-- **Charts** — lightweight-charts (TradingView) or recharts
+## Data flow
+- Vite dev proxy: `/api/*` → `http://localhost:3200/*`
+- Exchange endpoints: /health, /positions, /orders, /equity, /config
 
 ## Build and test
-- `pnpm build` — compile TypeScript
-- `pnpm test` — run tests (passWithNoTests until implemented)
-- `pnpm typecheck` — type-check without emitting
+- `pnpm dev` — Vite dev server on port 5173
+- `pnpm build` — tsc + vite build (output in dist/)
+- `pnpm test` — vitest (passWithNoTests, frontend is manually tested)
+
+## Key patterns
+- usePoll hook: auto-refresh with configurable interval, error/loading state
+- No backend server needed — Vite proxy handles API routing in dev
+- Dark theme (gray-950 bg, gray-100 text) — consistent with terminal aesthetic

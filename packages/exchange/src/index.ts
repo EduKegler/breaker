@@ -1,4 +1,28 @@
-// hl-broker — Hyperliquid order execution and position management
-// TODO: implement order placement, position tracking, and WhatsApp notifications
+// Types
+export type { ExchangeConfig, Guardrails, Sizing } from "./types/config.js";
+export { ExchangeConfigSchema, GuardrailsSchema, SizingSchema } from "./types/config.js";
+export type { ExchangeEvent, EventType } from "./types/events.js";
 
-export {};
+// Domain
+export { checkRisk } from "./domain/risk-engine.js";
+export type { RiskCheckInput, RiskCheckResult } from "./domain/risk-engine.js";
+export { signalToIntent } from "./domain/order-intent.js";
+export type { OrderIntent } from "./domain/order-intent.js";
+export { PositionBook } from "./domain/position-book.js";
+export type { LivePosition } from "./domain/position-book.js";
+
+// Adapters
+export type { HlClient, HlPosition, HlOrderResult } from "./adapters/hyperliquid-client.js";
+export { HyperliquidClient } from "./adapters/hyperliquid-client.js";
+export { SqliteStore } from "./adapters/sqlite-store.js";
+export { EventLog } from "./adapters/event-log.js";
+export { CandlePoller } from "./adapters/candle-poller.js";
+export { HttpAlertsClient, formatOpenMessage } from "./adapters/alerts-client.js";
+
+// Application
+export { handleSignal } from "./application/signal-handler.js";
+export { StrategyRunner } from "./application/strategy-runner.js";
+export { ReconcileLoop, reconcile } from "./application/reconcile-loop.js";
+
+// Server
+export { createApp } from "./server.js";

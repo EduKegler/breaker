@@ -1,0 +1,25 @@
+{
+  "mode": "testnet",
+  "port": 3200,
+  "gatewayUrl": "http://localhost:3100",
+  "asset": "BTC",
+  "strategy": "donchian-adx",
+  "interval": "15m",
+  "dataSource": "hyperliquid",
+  "warmupBars": 200,
+  "leverage": 5,
+  "marginType": "isolated",
+  "guardrails": {
+    "maxNotionalUsd": 5000,
+    "maxLeverage": 5,
+    "maxOpenPositions": 1,
+    "maxDailyLossUsd": 100,
+    "maxTradesPerDay": 5,
+    "cooldownBars": 4
+  },
+  "sizing": {
+    "mode": "risk",
+    "riskPerTradeUsd": 10,
+    "cashPerTrade": 100
+  }
+}
