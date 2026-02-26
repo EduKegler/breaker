@@ -6,21 +6,21 @@ Automated crypto trading pipeline — from strategy backtesting and optimization
 
 | Package | Description |
 |---------|-------------|
-| [`@trading/backtest`](packages/backtest/) | Local backtesting engine — candle fetch, indicators, trade simulation, analysis |
-| [`@trading/breaker`](packages/breaker/) | B.R.E.A.K.E.R. — automated strategy optimization loop powered by Claude |
-| [`@trading/hl-broker`](packages/hl-broker/) | Hyperliquid order execution and position management |
-| [`@trading/webhook`](packages/webhook/) | TradingView alert receiver, deduplication, and forwarding |
-| [`@trading/whatsapp-gateway`](packages/whatsapp-gateway/) | WhatsApp messaging via Evolution API |
+| [`@breaker/backtest`](packages/backtest/) | Local backtesting engine — candle fetch, indicators, trade simulation, analysis |
+| [`@breaker/refiner`](packages/refiner/) | B.R.E.A.K.E.R. — automated strategy optimization loop powered by Claude |
+| [`@breaker/exchange`](packages/exchange/) | Hyperliquid order execution and position management |
+| [`@breaker/router`](packages/router/) | TradingView alert receiver, deduplication, and forwarding |
+| [`@breaker/alerts`](packages/alerts/) | WhatsApp messaging via Evolution API |
 
 ## Architecture
 
 ```
-TradingView Alerts ──▶ webhook ──▶ whatsapp-gateway ──▶ WhatsApp
-                                        ▲
-                                        │
-backtest ◀── breaker (optimization)     │
-                                        │
-              hl-broker ────────────────┘
+TradingView Alerts ──▶ router ──▶ alerts ──▶ WhatsApp
+                                    ▲
+                                    │
+backtest ◀── refiner (optimization) │
+                                    │
+              exchange ─────────────┘
               (Hyperliquid execution + notifications)
 ```
 
@@ -53,11 +53,11 @@ pnpm typecheck
 
 ```bash
 # Build a single package
-pnpm --filter @trading/breaker build
+pnpm --filter @breaker/refiner build
 
 # Test a single package
-pnpm --filter @trading/backtest test
+pnpm --filter @breaker/backtest test
 
 # Run with coverage
-pnpm --filter @trading/breaker test:coverage
+pnpm --filter @breaker/refiner test:coverage
 ```

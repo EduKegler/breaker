@@ -15,13 +15,13 @@
 ```
 trading/
 ├── packages/
+│   ├── alerts/           — WhatsApp messaging via Evolution API
 │   ├── backtest/         — backtesting engine, indicators, strategies & candle data
-│   ├── breaker/          — automated strategy optimization loop
-│   ├── dashboard/        — local analysis dashboard (stub)
-│   ├── hl-broker/        — Hyperliquid order execution & position management
-│   ├── shared/           — shared utilities (isMainModule, parseEnv, formatZodErrors)
-│   ├── webhook/          — TradingView alert receiver & forwarder
-│   └── whatsapp-gateway/ — WhatsApp messaging via Evolution API
+│   ├── exchange/         — Hyperliquid order execution & position management
+│   ├── explorer/         — local analysis dashboard (stub)
+│   ├── kit/              — shared utilities (isMainModule, parseEnv, formatZodErrors)
+│   ├── refiner/          — automated strategy optimization loop
+│   └── router/           — TradingView alert receiver & forwarder
 ├── package.json          — root (private, workspaces)
 ├── pnpm-workspace.yaml   — declares packages/*
 ├── tsconfig.base.json    — shared TypeScript config
@@ -41,11 +41,11 @@ trading/
 - Build all: `pnpm build` (root runs `pnpm -r build`)
 - Test all: `pnpm test` (root runs `pnpm -r test`)
 - Type check all: `pnpm typecheck` (root runs `pnpm -r typecheck`)
-- Run for a single package: `pnpm --filter @trading/breaker build`
+- Run for a single package: `pnpm --filter @breaker/refiner build`
 - **Mandatory validation**: every code change (`src/`, `*.ts`) MUST end with `pnpm build && pnpm test`. Do not consider the task complete until tests pass.
 - **Regression rule**: every bug fix MUST include at least 1 test that reproduces the bug and verifies the fix.
 - **TDD-first**: write or update tests BEFORE implementing the feature/fix.
-- Mandatory pattern: every executable module in src/ must have an `isMainModule(import.meta.url)` guard from `@trading/shared` (do not execute when imported in tests).
+- Mandatory pattern: every executable module in src/ must have an `isMainModule(import.meta.url)` guard from `@breaker/kit` (do not execute when imported in tests).
 
 ## Tech stack (shared)
 - TypeScript (strict, ES2022, NodeNext modules)

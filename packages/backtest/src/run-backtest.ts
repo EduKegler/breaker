@@ -8,7 +8,7 @@ import { createDonchianAdx } from "./strategies/donchian-adx.js";
 import { createKeltnerRsi2 } from "./strategies/keltner-rsi2.js";
 import path from "node:path";
 import fs from "node:fs";
-import { isMainModule } from "@trading/shared";
+import { isMainModule } from "@breaker/kit";
 
 if (isMainModule(import.meta.url)) {
   main().catch((err) => {

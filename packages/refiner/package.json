@@ -1,0 +1,37 @@
+{
+  "name": "@breaker/refiner",
+  "version": "1.0.0",
+  "description": "B.R.E.A.K.E.R. — Backtesting Runtime for Evolutionary Analysis, Kernel Execution & Refinement",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "dashboard": "node dist/dashboard/dashboard.js",
+    "dashboard:open": "node dist/dashboard/dashboard.js --html && open dashboard.html"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "@types/write-file-atomic": "^4.0.3",
+    "@vitest/coverage-v8": "^3.2.4",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@breaker/backtest": "workspace:*",
+    "@breaker/kit": "workspace:*",
+    "@breaker/alerts": "workspace:^",
+    "cac": "^6.7.14",
+    "execa": "^9.6.1",
+    "jsonrepair": "^3.13.2",
+    "pino": "^10.3.1",
+    "proper-lockfile": "^4.1.2",
+    "write-file-atomic": "^7.0.0",
+    "xstate": "^5.28.0",
+    "zod": "^3.24.0"
+  }
+}

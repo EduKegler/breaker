@@ -1,4 +1,4 @@
-# @trading/backtest — Memory
+# @breaker/backtest — Memory
 
 ## Current state
 - Full implementation complete: types, indicators (7), engine (5 modules), analysis (4), data layer (2), strategy (donchian-adx), CLI, barrel
@@ -14,7 +14,7 @@
   - Extra trades in both cases caused by tiny candle data differences between Coinbase API and TV feed — not logic bugs
 
 ## Pending items
-- BREAKER integration complete — breaker imports `@trading/backtest` directly, scoring uses param count from Strategy object
+- BREAKER integration complete — refiner imports `@breaker/backtest` directly, scoring uses param count from Strategy object
 
 ## Known pitfalls
 - Strategies must call `init()` before `onCandle()`/`shouldExit()` when used outside the engine (e.g. in tests)

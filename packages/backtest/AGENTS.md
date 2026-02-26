@@ -14,7 +14,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 
 ## Key conventions
 - Strategies implement the `Strategy` interface from `types/strategy.ts`
-- Metrics types are identical to `@trading/breaker` parse-results types for compatibility
+- Metrics types are identical to `@breaker/refiner` parse-results types for compatibility
 - SQLite cache lives in `.cache/candles.db` (gitignored)
 - All indicators are pure functions operating on number arrays
 - Engine uses worst-case assumption: if SL and TP both trigger in same bar, SL wins

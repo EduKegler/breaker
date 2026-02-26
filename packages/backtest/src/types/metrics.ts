@@ -1,4 +1,4 @@
-// BREAKER-compatible types — must match @trading/breaker/src/types/parse-results.ts
+// BREAKER-compatible types — must match @breaker/refiner/src/types/parse-results.ts
 
 export interface Metrics {
   totalPnl: number | null;

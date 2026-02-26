@@ -1,4 +1,4 @@
-# @trading/backtest
+# @breaker/backtest
 
 Local backtesting engine replacing TradingView automation. Fetches candles from Hyperliquid, caches in SQLite, runs strategies as TypeScript, simulates trades with realistic execution.
 
@@ -26,7 +26,7 @@ import {
   computeMetrics,
   analyzeTradeList,
   CandleCache,
-} from "@trading/backtest";
+} from "@breaker/backtest";
 
 const cache = new CandleCache("candles.db");
 const candles = cache.getCandles("BTC", "coinbase-perp", "15m", startTime, endTime);
