@@ -9,6 +9,11 @@ import {
 } from "recharts";
 import type { EquitySnapshot } from "../lib/api.js";
 
+/** SQLite datetime('now') returns UTC without 'Z' — append it so JS parses as UTC */
+function parseUtc(dt: string): Date {
+  return new Date(dt.endsWith("Z") ? dt : dt + "Z");
+}
+
 export function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
   if (snapshots.length === 0) {
     return (
@@ -21,7 +26,7 @@ export function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
   }
 
   const data = [...snapshots].reverse().map((s) => ({
-    time: new Date(s.timestamp).toLocaleTimeString([], {
+    time: parseUtc(s.timestamp).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     }),

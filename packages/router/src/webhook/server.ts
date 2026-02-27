@@ -138,9 +138,10 @@ function safeCompare(a: string, b: string): boolean {
 // ---------------------
 // Rate limiters (express-rate-limit)
 // ---------------------
-const webhookLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: false, legacyHeaders: false });
-const healthLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: false, legacyHeaders: false });
-const debugLimiter = rateLimit({ windowMs: 60_000, max: 5, standardHeaders: false, legacyHeaders: false });
+const webhookLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: false, legacyHeaders: false }) as unknown as express.RequestHandler;
+const sendLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: false, legacyHeaders: false }) as unknown as express.RequestHandler;
+const healthLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: false, legacyHeaders: false }) as unknown as express.RequestHandler;
+const debugLimiter = rateLimit({ windowMs: 60_000, max: 5, standardHeaders: false, legacyHeaders: false }) as unknown as express.RequestHandler;
 
 // ---------------------
 // Express app
@@ -294,6 +295,49 @@ app.post("/webhook", webhookLimiter, async (req, res) => {
     }
   }
   await handleWebhook(req, res);
+});
+
+async function handleSend(req: express.Request, res: express.Response): Promise<void> {
+  const body = req.body as Record<string, unknown>;
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  if (!text) {
+    res.status(400).json({ error: "text required" });
+    return;
+  }
+
+  try {
+    await sendWithRetry(text);
+    logger.info({ text_length: text.length }, "Message proxied");
+    res.json({ status: "sent" });
+  } catch (err) {
+    logger.error({ error: (err as Error).message }, "Send proxy failed");
+    res.status(502).json({ status: "send_failed" });
+  }
+}
+
+app.post("/send/:token", sendLimiter, async (req, res) => {
+  if (env.WEBHOOK_SECRET) {
+    const token = req.params.token;
+    if (!token || !safeCompare(token, env.WEBHOOK_SECRET)) {
+      logger.warn({ path: req.path }, "Invalid URL token");
+      res.status(403).json({ error: "invalid token" });
+      return;
+    }
+  }
+  await handleSend(req, res);
+});
+
+app.post("/send", sendLimiter, async (req, res) => {
+  if (env.WEBHOOK_SECRET) {
+    const body = req.body as Record<string, unknown>;
+    const provided = typeof body?.secret === "string" ? body.secret : "";
+    if (!provided || !safeCompare(provided, env.WEBHOOK_SECRET)) {
+      logger.warn("Invalid or missing secret on /send");
+      res.status(403).json({ error: "invalid secret" });
+      return;
+    }
+  }
+  await handleSend(req, res);
 });
 
 app.post("/debug", debugLimiter, (req, res) => {

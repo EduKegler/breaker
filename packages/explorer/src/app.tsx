@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
-import { api, type HealthResponse, type LivePosition, type OrderRow, type EquitySnapshot, type ConfigResponse, type OpenOrder, type CandleData, type SignalRow } from "./lib/api.js";
+import { api, type HealthResponse, type LivePosition, type OrderRow, type EquitySnapshot, type ConfigResponse, type OpenOrder, type CandleData, type SignalRow, type ReplaySignal } from "./lib/api.js";
 import { useWebSocket, type WsMessage, type WsStatus } from "./lib/use-websocket.js";
+import { useToasts } from "./lib/use-toasts.js";
 import { EquityChart } from "./components/equity-chart.js";
 import { CandlestickChart } from "./components/candlestick-chart.js";
 import { PositionCard } from "./components/position-card.js";
 import { OrderTable } from "./components/order-table.js";
 import { OpenOrdersTable } from "./components/open-orders-table.js";
+import { SignalPopover } from "./components/signal-popover.js";
+import { ToastContainer } from "./components/toast-container.js";
 
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -30,6 +33,11 @@ function wsUrl(): string {
   return `${proto}://${window.location.host}/ws`;
 }
 
+function errorMsg(err: unknown): string {
+  const e = err as { data?: { error?: string }; message?: string };
+  return e?.data?.error ?? e?.message ?? "unknown error";
+}
+
 export function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [config, setConfig] = useState<ConfigResponse | null>(null);
@@ -39,7 +47,28 @@ export function App() {
   const [equity, setEquity] = useState<EquitySnapshot[]>([]);
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [signals, setSignals] = useState<SignalRow[]>([]);
+  const [replaySignals, setReplaySignals] = useState<ReplaySignal[]>([]);
   const [httpError, setHttpError] = useState(false);
+  const [showSignalPopover, setShowSignalPopover] = useState(false);
+  const { addToast } = useToasts();
+
+  const handleClosePosition = useCallback(async (coin: string) => {
+    try {
+      await api.closePosition(coin);
+      addToast(`${coin} position closed`, "success");
+    } catch (err) {
+      addToast(`Close ${coin}: ${errorMsg(err)}`, "error");
+    }
+  }, [addToast]);
+
+  const handleCancelOrder = useCallback(async (_coin: string, oid: number) => {
+    try {
+      await api.cancelOrder(oid);
+      addToast(`Order ${oid} cancelled`, "success");
+    } catch (err) {
+      addToast(`Cancel #${oid}: ${errorMsg(err)}`, "error");
+    }
+  }, [addToast]);
 
   const handleLoadMoreCandles = useCallback((before: number) => {
     api.candles(before, 500).then((r) => {
@@ -49,6 +78,16 @@ export function App() {
         const newCandles = r.candles.filter((c) => !existingTimes.has(c.t));
         if (newCandles.length === 0) return prev;
         return [...newCandles, ...prev].sort((a, b) => a.t - b.t);
+      });
+    }).catch(() => {});
+    // Also fetch replay signals for the new range
+    api.strategySignals(before).then((r) => {
+      if (r.signals.length === 0) return;
+      setReplaySignals((prev) => {
+        const existingTimes = new Set(prev.map((s) => s.t));
+        const newSignals = r.signals.filter((s) => !existingTimes.has(s.t));
+        if (newSignals.length === 0) return prev;
+        return [...newSignals, ...prev].sort((a, b) => a.t - b.t);
       });
     }).catch(() => {});
   }, []);
@@ -64,6 +103,7 @@ export function App() {
       api.equity().then((r) => setEquity(r.snapshots)).catch(() => {}),
       api.candles().then((r) => setCandles(r.candles)).catch(() => {}),
       api.signals().then((r) => setSignals(r.signals)).catch(() => {}),
+      api.strategySignals().then((r) => setReplaySignals(r.signals)).catch(() => {}),
     ]);
   }, []);
 
@@ -107,8 +147,13 @@ export function App() {
       case "candle": {
         const newCandle = msg.data as CandleData;
         setCandles((prev) => {
-          const exists = prev.some((c) => c.t === newCandle.t);
-          if (exists) return prev;
+          const idx = prev.findIndex((c) => c.t === newCandle.t);
+          if (idx >= 0) {
+            // Update in-progress candle with new OHLCV
+            const updated = [...prev];
+            updated[idx] = newCandle;
+            return updated;
+          }
           return [...prev, newCandle];
         });
         break;
@@ -180,29 +225,52 @@ export function App() {
           )}
 
           {/* Right side */}
-          <div className="ml-auto flex items-center gap-4">
-            {/* WS status */}
-            <span className={`text-xs font-mono font-semibold ${wsStatusColor[wsStatus]}`}>
-              {wsStatusLabel[wsStatus]}
-            </span>
+          <div className="ml-auto flex items-center gap-3">
+            {/* ── Actionable buttons ── */}
+            <div className="relative">
+              <button
+                type="button"
+                disabled={!isOnline}
+                onClick={() => setShowSignalPopover((v) => !v)}
+                className="px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded bg-amber/15 text-amber border border-amber/40 hover:bg-amber/30 hover:border-amber/60 active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+              >
+                Signal
+              </button>
+              {showSignalPopover && (
+                <SignalPopover
+                  onClose={() => setShowSignalPopover(false)}
+                  onSuccess={() => setShowSignalPopover(false)}
+                />
+              )}
+            </div>
 
-            {/* Mode badge */}
-            <span
-              className={`px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider rounded-sm ${
-                isTestnet
-                  ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                  : "bg-loss/20 text-loss border border-loss/30"
-              }`}
-            >
-              {mode}
-            </span>
+            <div className="w-px h-4 bg-terminal-border" />
 
-            {/* Uptime */}
-            {h && (
-              <span className="text-txt-secondary text-xs font-mono">
-                Up: {formatUptime(h.uptime)}
+            {/* ── Status badges (no border, flat pills) ── */}
+            <div className="flex items-center gap-2">
+              <span className={`flex items-center gap-1.5 text-[10px] font-mono font-medium ${wsStatusColor[wsStatus]}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${
+                  wsStatus === "connected" ? "bg-profit" : wsStatus === "connecting" ? "bg-amber animate-pulse" : "bg-loss"
+                }`} />
+                {wsStatusLabel[wsStatus]}
               </span>
-            )}
+
+              <span
+                className={`px-1.5 py-0.5 text-[10px] font-mono font-medium uppercase rounded-sm ${
+                  isTestnet
+                    ? "bg-blue-500/10 text-blue-400"
+                    : "bg-loss/10 text-loss"
+                }`}
+              >
+                {mode}
+              </span>
+
+              {h && (
+                <span className="text-[10px] font-mono text-txt-secondary/70">
+                  {formatUptime(h.uptime)}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -213,8 +281,13 @@ export function App() {
         <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
             Price Chart
+            {c?.dataSource && (
+              <span className="ml-2 font-mono font-medium text-[10px] text-txt-secondary/60 lowercase">
+                via {c.dataSource}
+              </span>
+            )}
           </h2>
-          <CandlestickChart candles={candles} signals={signals} positions={positions} onLoadMore={handleLoadMoreCandles} />
+          <CandlestickChart candles={candles} signals={signals} replaySignals={replaySignals} positions={positions} onLoadMore={handleLoadMoreCandles} />
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
@@ -234,7 +307,7 @@ export function App() {
             {positions.length ? (
               <div className="space-y-3">
                 {positions.map((p) => (
-                  <PositionCard key={p.coin} position={p} openOrders={openOrders} />
+                  <PositionCard key={p.coin} position={p} openOrders={openOrders} onClose={handleClosePosition} />
                 ))}
               </div>
             ) : (
@@ -252,12 +325,12 @@ export function App() {
               Open Orders
             </h2>
             {openOrders.length > 0 && (
-              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-sm bg-amber/20 text-amber border border-amber/30">
+              <span className="px-1.5 py-0.5 text-[10px] font-mono font-medium rounded-sm bg-amber/10 text-amber">
                 {openOrders.length}
               </span>
             )}
           </div>
-          <OpenOrdersTable orders={openOrders} />
+          <OpenOrdersTable orders={openOrders} onCancel={handleCancelOrder} />
         </section>
 
         {/* Order log */}
@@ -268,6 +341,7 @@ export function App() {
           <OrderTable orders={orders} />
         </section>
       </main>
+      <ToastContainer />
     </div>
   );
 }

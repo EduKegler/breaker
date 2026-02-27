@@ -1,5 +1,10 @@
 import type { OrderRow } from "../lib/api.js";
 
+/** SQLite datetime('now') returns UTC without 'Z' — append it so JS parses as UTC */
+function parseUtc(dt: string): Date {
+  return new Date(dt.endsWith("Z") ? dt : dt + "Z");
+}
+
 const statusDot: Record<string, string> = {
   filled: "bg-profit",
   pending: "bg-amber",
@@ -47,7 +52,7 @@ export function OrderTable({ orders }: { orders: OrderRow[] }) {
             >
               <td className="py-1.5 pr-3 font-mono text-txt-secondary">
                 {o.created_at
-                  ? new Date(o.created_at).toLocaleString([], {
+                  ? parseUtc(o.created_at).toLocaleString([], {
                       month: "short",
                       day: "numeric",
                       hour: "2-digit",

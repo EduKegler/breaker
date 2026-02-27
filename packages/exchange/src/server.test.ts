@@ -4,6 +4,7 @@ import { createApp, type ServerDeps } from "./server.js";
 import { PositionBook } from "./domain/position-book.js";
 import { SqliteStore } from "./adapters/sqlite-store.js";
 import type { ExchangeConfig } from "./types/config.js";
+import type { Strategy } from "@breaker/backtest";
 
 const config: ExchangeConfig = {
   mode: "testnet",
@@ -12,7 +13,7 @@ const config: ExchangeConfig = {
   asset: "BTC",
   strategy: "donchian-adx",
   interval: "15m",
-  dataSource: "hyperliquid",
+  dataSource: "binance",
   warmupBars: 200,
   leverage: 5,
   marginType: "isolated",
@@ -71,6 +72,11 @@ beforeEach(() => {
       poll: vi.fn().mockResolvedValue(null),
       fetchHistorical: vi.fn().mockResolvedValue([]),
     } as unknown as ServerDeps["candlePoller"],
+    strategyFactory: () => ({
+      name: "test-strategy",
+      params: {},
+      onCandle: () => null,
+    }) as Strategy,
   };
 });
 
@@ -236,6 +242,192 @@ describe("Exchange server", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.signals).toEqual([]);
+  });
+
+  it("GET /strategy-signals fetches historical candles for replay warmup", async () => {
+    const candles = Array.from({ length: 20 }, (_, i) => ({
+      t: 1700000000000 + i * 900_000,
+      o: 95000 + i * 10,
+      h: 95500 + i * 10,
+      l: 94500 + i * 10,
+      c: 95200 + i * 10,
+      v: 1000,
+      n: 50,
+    }));
+    (deps.candlePoller.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue(candles);
+
+    deps.strategyFactory = () => ({
+      name: "test-strategy",
+      params: {},
+      onCandle: (ctx) => {
+        if (ctx.index === 5) {
+          return { direction: "long", entryPrice: 95250, stopLoss: 94550, takeProfits: [], comment: "test" };
+        }
+        return null;
+      },
+    }) as Strategy;
+
+    const app = createApp(deps);
+    const res = await request(app).get("/strategy-signals");
+
+    expect(res.status).toBe(200);
+    expect(res.body.signals).toHaveLength(1);
+    expect(res.body.signals[0].direction).toBe("long");
+    expect(res.body.signals[0].t).toBe(candles[5].t);
+    // Uses fetchHistorical with 5000 candle buffer for strategy warmup
+    expect(deps.candlePoller.fetchHistorical).toHaveBeenCalled();
+  });
+
+  it("GET /strategy-signals returns empty when no candles", async () => {
+    (deps.candlePoller.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const app = createApp(deps);
+    const res = await request(app).get("/strategy-signals");
+
+    expect(res.status).toBe(200);
+    expect(res.body.signals).toEqual([]);
+  });
+
+  it("GET /strategy-signals?before= fetches historical candles for replay", async () => {
+    const candles = Array.from({ length: 10 }, (_, i) => ({
+      t: 1699999000000 + i * 900_000,
+      o: 94000 + i * 10,
+      h: 94500 + i * 10,
+      l: 93500 + i * 10,
+      c: 94200 + i * 10,
+      v: 500,
+      n: 30,
+    }));
+    (deps.candlePoller.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue(candles);
+
+    const app = createApp(deps);
+    const res = await request(app).get("/strategy-signals?before=1700000000000");
+
+    expect(res.status).toBe(200);
+    expect(deps.candlePoller.fetchHistorical).toHaveBeenCalledWith(1700000000000, 5000);
+  });
+
+  it("GET /strategy-signals caches result with TTL", async () => {
+    const candles = Array.from({ length: 10 }, (_, i) => ({
+      t: 1700000000000 + i * 900_000,
+      o: 95000, h: 95500, l: 94500, c: 95200, v: 1000, n: 50,
+    }));
+    (deps.candlePoller.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue(candles);
+
+    const app = createApp(deps);
+    await request(app).get("/strategy-signals");
+    await request(app).get("/strategy-signals");
+
+    // fetchHistorical should only be called once (second call uses TTL cache)
+    expect(deps.candlePoller.fetchHistorical).toHaveBeenCalledTimes(1);
+  });
+
+  it("GET /strategy-signals?before= caches historical requests permanently", async () => {
+    const candles = Array.from({ length: 10 }, (_, i) => ({
+      t: 1699999000000 + i * 900_000,
+      o: 94000, h: 94500, l: 93500, c: 94200, v: 500, n: 30,
+    }));
+    (deps.candlePoller.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue(candles);
+
+    const app = createApp(deps);
+    await request(app).get("/strategy-signals?before=1700000000000");
+    await request(app).get("/strategy-signals?before=1700000000000");
+
+    // Same before= value should hit cache
+    expect(deps.candlePoller.fetchHistorical).toHaveBeenCalledTimes(1);
+  });
+
+  it("POST /close-position closes position and cancels coin orders", async () => {
+    // Open a position first
+    deps.positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000,
+      takeProfits: [],
+      openedAt: new Date().toISOString(),
+      signalId: 1,
+    });
+
+    // Mock open orders: 2 for BTC, 1 for ETH (should not cancel ETH)
+    const mockOrders = [
+      { coin: "BTC", oid: 100, side: "A", sz: 0.01, limitPx: 94000, orderType: "Stop Market", isTrigger: true, triggerPx: 94000, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
+      { coin: "BTC", oid: 101, side: "A", sz: 0.005, limitPx: 97000, orderType: "Limit", isTrigger: false, triggerPx: 0, triggerCondition: "", reduceOnly: true, isPositionTpsl: false },
+      { coin: "ETH", oid: 200, side: "B", sz: 0.1, limitPx: 3000, orderType: "Limit", isTrigger: false, triggerPx: 0, triggerCondition: "", reduceOnly: false, isPositionTpsl: false },
+    ];
+    (deps.hlClient.getOpenOrders as ReturnType<typeof vi.fn>).mockResolvedValue(mockOrders);
+
+    const onSignalProcessed = vi.fn();
+    deps.signalHandlerDeps.onSignalProcessed = onSignalProcessed;
+
+    const app = createApp(deps);
+    const res = await request(app)
+      .post("/close-position")
+      .send({ coin: "BTC" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("closed");
+
+    // Should place market order on opposite side (sell for long)
+    expect(deps.hlClient.placeMarketOrder).toHaveBeenCalledWith("BTC", false, 0.01);
+
+    // Should cancel only BTC orders (oid 100, 101), not ETH (200)
+    expect(deps.hlClient.cancelOrder).toHaveBeenCalledTimes(2);
+    expect(deps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 100);
+    expect(deps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 101);
+
+    // Position book should be cleared
+    expect(deps.positionBook.get("BTC")).toBeNull();
+
+    // WS broadcast should be triggered
+    expect(onSignalProcessed).toHaveBeenCalled();
+  });
+
+  it("POST /close-position returns 400 if no position", async () => {
+    const app = createApp(deps);
+    const res = await request(app)
+      .post("/close-position")
+      .send({ coin: "BTC" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("No open position");
+  });
+
+  it("POST /close-position returns 400 for missing coin", async () => {
+    const app = createApp(deps);
+    const res = await request(app)
+      .post("/close-position")
+      .send({});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("DELETE /open-order/:oid cancels an order", async () => {
+    const mockOrders = [
+      { coin: "BTC", oid: 100, side: "A", sz: 0.01, limitPx: 94000, orderType: "Stop Market", isTrigger: true, triggerPx: 94000, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
+    ];
+    (deps.hlClient.getOpenOrders as ReturnType<typeof vi.fn>).mockResolvedValue(mockOrders);
+
+    const onSignalProcessed = vi.fn();
+    deps.signalHandlerDeps.onSignalProcessed = onSignalProcessed;
+
+    const app = createApp(deps);
+    const res = await request(app).delete("/open-order/100");
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("cancelled");
+    expect(deps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 100);
+    expect(onSignalProcessed).toHaveBeenCalled();
+  });
+
+  it("DELETE /open-order/:oid returns 404 if order not found", async () => {
+    (deps.hlClient.getOpenOrders as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const app = createApp(deps);
+    const res = await request(app).delete("/open-order/999");
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("not found");
   });
 
   it("POST /signal rejects invalid payload", async () => {

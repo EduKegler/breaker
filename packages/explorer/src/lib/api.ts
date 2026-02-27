@@ -6,6 +6,32 @@ async function fetchJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    throw new Error(`Server returned ${res.status} (not JSON). Is the daemon running?`);
+  }
+  const data = (await res.json()) as T;
+  if (!res.ok) throw Object.assign(new Error(`API error: ${res.status}`), { data });
+  return data;
+}
+
+async function deleteJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    throw new Error(`Server returned ${res.status} (not JSON). Is the daemon running?`);
+  }
+  const data = (await res.json()) as T;
+  if (!res.ok) throw Object.assign(new Error(`API error: ${res.status}`), { data });
+  return data;
+}
+
 export interface HealthResponse {
   status: string;
   mode: string;
@@ -86,6 +112,14 @@ export interface SignalRow {
   created_at: string;
 }
 
+export interface ReplaySignal {
+  t: number;
+  direction: "long" | "short";
+  entryPrice: number;
+  stopLoss: number;
+  comment: string;
+}
+
 export interface ConfigResponse {
   mode: string;
   asset: string;
@@ -94,6 +128,19 @@ export interface ConfigResponse {
   leverage: number;
   guardrails: Record<string, number>;
   sizing: Record<string, unknown>;
+  dataSource?: string;
+}
+
+export interface QuickSignalPayload {
+  direction: "long" | "short";
+}
+
+export interface QuickSignalResponse {
+  status: "executed" | "rejected" | "error";
+  signalId?: number;
+  stopLoss?: number;
+  reason?: string;
+  error?: string;
 }
 
 export const api = {
@@ -111,4 +158,17 @@ export const api = {
     return fetchJson<{ candles: CandleData[] }>(`/candles${qs ? `?${qs}` : ""}`);
   },
   signals: () => fetchJson<{ signals: SignalRow[] }>("/signals"),
+  strategySignals: (before?: number, limit?: number) => {
+    const params = new URLSearchParams();
+    if (before) params.set("before", String(before));
+    if (limit) params.set("limit", String(limit));
+    const qs = params.toString();
+    return fetchJson<{ signals: ReplaySignal[] }>(`/strategy-signals${qs ? `?${qs}` : ""}`);
+  },
+  sendQuickSignal: (payload: QuickSignalPayload) =>
+    postJson<QuickSignalResponse>("/quick-signal", payload),
+  closePosition: (coin: string) =>
+    postJson<{ status: string }>("/close-position", { coin }),
+  cancelOrder: (oid: number) =>
+    deleteJson<{ status: string }>(`/open-order/${oid}`),
 };

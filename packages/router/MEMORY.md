@@ -2,19 +2,21 @@
 
 ## Current state
 - Express server receiving TradingView alert webhooks (POST /webhook/:token and POST /webhook).
+- Send proxy routes (POST /send/:token and POST /send) — proxies arbitrary text to WhatsApp via alerts gateway. Used by exchange daemon to send messages through VPS without local alerts service.
 - Zod validation of alert payloads (AlertPayloadSchema).
 - Dual deduplication: Redis (primary, via ioredis) + LRU in-memory fallback (max 1000 entries).
 - Constant-time secret comparison (HMAC-SHA256) for auth; two auth modes: URL token or body secret.
-- Rate limiting per IP: 30 req/min webhooks, 60 health, 5 debug.
+- Rate limiting per IP: 30 req/min webhooks+send, 60 health, 5 debug.
 - Formats trading alerts into WhatsApp messages and forwards to alerts via got (POST /send).
 - Structured logging: pino + pino-http + pino-roll (stdout + date-rotated NDJSON files).
 - Deployed at tv.kegler.dev behind Caddy reverse proxy (Docker multi-stage build).
 - TTL_SECONDS controls alert dedup TTL (default 1200s / 20 min).
 - Global daily trade limit: `DailyTradeLimit` class enforces max trades/day (default 5, via `GLOBAL_MAX_TRADES_DAY` env var). Resets at 00:00 UTC.
-- 2 test files, 10 tests, all passing.
+- 2 test files, 17 tests, all passing.
 
 ## Pending items
 - No unit tests for formatWhatsAppMessage, isDuplicate, validateAlert, or safeCompare.
+- Rate limiters cast `as unknown as express.RequestHandler` to bridge @types/express-serve-static-core v4/v5 mismatch with express-rate-limit v8.
 
 ## Known pitfalls
 - `env.ts` loads dotenv from `infra/.env` at import time — file must exist or env vars must be set before import

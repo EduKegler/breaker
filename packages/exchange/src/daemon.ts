@@ -156,6 +156,7 @@ async function main() {
     walletAddress: env.HL_ACCOUNT_ADDRESS,
     signalHandlerDeps,
     candlePoller: poller,
+    strategyFactory: () => createStrategy(config.strategy),
   });
 
   const server = app.listen(config.port, () => {

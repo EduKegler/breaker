@@ -33,6 +33,7 @@ export class StrategyRunner {
   private lastTradeDay = "";
   private utcDayFormatter = createUtcDayFormatter();
   private signalCounter = 0;
+  private lastExitLevel: number | null = null;
 
   constructor(deps: StrategyRunnerDeps) {
     this.deps = deps;
@@ -134,11 +135,39 @@ export class StrategyRunner {
         await hlClient.placeMarketOrder(this.deps.config.asset, closeSide === "buy", pos.size);
         this.deps.positionBook.close(this.deps.config.asset);
         this.barsSinceExit = 0;
+        this.lastExitLevel = null;
         // PnL tracking simplified — real PnL comes from fills
         if (pos.unrealizedPnl < 0) this.consecutiveLosses++;
         else this.consecutiveLosses = 0;
         this.dailyPnl += pos.unrealizedPnl;
         return;
+      }
+
+      // Track trailing exit level and notify on favorable moves
+      if (this.deps.strategy.getExitLevel) {
+        const newLevel = this.deps.strategy.getExitLevel(ctx);
+        if (newLevel !== null && this.lastExitLevel !== null) {
+          const movedFavorably =
+            (pos.direction === "long" && newLevel > this.lastExitLevel) ||
+            (pos.direction === "short" && newLevel < this.lastExitLevel);
+          if (movedFavorably) {
+            try {
+              await this.deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved(
+                this.deps.config.asset,
+                pos.direction,
+                this.lastExitLevel,
+                newLevel,
+                pos.entryPrice,
+                this.deps.config.mode,
+              );
+            } catch {
+              // Notification failure is non-critical
+            }
+          }
+        }
+        if (newLevel !== null) {
+          this.lastExitLevel = newLevel;
+        }
       }
     }
 
@@ -185,6 +214,7 @@ export class StrategyRunner {
 
       if (result.success) {
         this.tradesToday++;
+        this.lastExitLevel = null;
       }
     }
   }

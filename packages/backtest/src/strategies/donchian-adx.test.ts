@@ -353,4 +353,94 @@ describe("createDonchianAdx", () => {
     const strategy = createDonchianAdx({ timeoutBars: 30 });
     expect(strategy.params.timeoutBars.value).toBe(30);
   });
+
+  it("getExitLevel returns null when no position", () => {
+    const strategy = createDonchianAdx({ dcFast: 5 });
+    const candles = generate15mCandles(30, 10000, "up");
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+    const ctx: StrategyContext = {
+      candles,
+      index: 20,
+      currentCandle: candles[20],
+      positionDirection: null,
+      positionEntryPrice: null,
+      positionEntryBarIndex: null,
+      higherTimeframes: htf,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+      consecutiveLosses: 0,
+    };
+    expect(strategy.getExitLevel!(ctx)).toBeNull();
+  });
+
+  it("getExitLevel returns fast DC lower for long position", () => {
+    const strategy = createDonchianAdx({ dcFast: 5 });
+    const candles = generate15mCandles(30, 10000, "up");
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+    const ctx: StrategyContext = {
+      candles,
+      index: 20,
+      currentCandle: candles[20],
+      positionDirection: "long",
+      positionEntryPrice: 10000,
+      positionEntryBarIndex: 10,
+      higherTimeframes: htf,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+      consecutiveLosses: 0,
+    };
+    const level = strategy.getExitLevel!(ctx);
+    expect(level).toBeTypeOf("number");
+    // For an uptrend, the fast DC lower should be below current price
+    expect(level!).toBeLessThan(candles[20].c);
+  });
+
+  it("getExitLevel returns fast DC upper for short position", () => {
+    const strategy = createDonchianAdx({ dcFast: 5 });
+    const candles = generate15mCandles(30, 10000, "down");
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+    const ctx: StrategyContext = {
+      candles,
+      index: 20,
+      currentCandle: candles[20],
+      positionDirection: "short",
+      positionEntryPrice: 10000,
+      positionEntryBarIndex: 10,
+      higherTimeframes: htf,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+      consecutiveLosses: 0,
+    };
+    const level = strategy.getExitLevel!(ctx);
+    expect(level).toBeTypeOf("number");
+    // For a downtrend, the fast DC upper should be above current price
+    expect(level!).toBeGreaterThan(candles[20].c);
+  });
+
+  it("getExitLevel returns null during warmup period", () => {
+    const strategy = createDonchianAdx({ dcFast: 20 });
+    const candles = generate15mCandles(15, 10000, "up");
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+    const ctx: StrategyContext = {
+      candles,
+      index: 5, // Too early for dcFast=20
+      currentCandle: candles[5],
+      positionDirection: "long",
+      positionEntryPrice: 10000,
+      positionEntryBarIndex: 0,
+      higherTimeframes: htf,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+      consecutiveLosses: 0,
+    };
+    expect(strategy.getExitLevel!(ctx)).toBeNull();
+  });
 });

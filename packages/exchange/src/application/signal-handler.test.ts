@@ -12,7 +12,7 @@ const config: ExchangeConfig = {
   asset: "BTC",
   strategy: "donchian-adx",
   interval: "15m",
-  dataSource: "hyperliquid",
+  dataSource: "binance",
   warmupBars: 200,
   leverage: 5,
   marginType: "isolated",
@@ -56,7 +56,7 @@ function createDeps(): SignalHandlerDeps {
     },
     store: new SqliteStore(":memory:"),
     eventLog: { append: vi.fn() },
-    alertsClient: { notifyPositionOpened: vi.fn() },
+    alertsClient: { notifyPositionOpened: vi.fn(), notifyTrailingSlMoved: vi.fn() },
     positionBook: new PositionBook(),
   };
 }

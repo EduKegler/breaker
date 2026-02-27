@@ -63,7 +63,7 @@ export function resolveDataConfig(
 
   return {
     coin: entry?.coin ?? asset,
-    dataSource: entry?.dataSource ?? "coinbase-perp",
+    dataSource: entry?.dataSource ?? "binance",
     interval: entry?.interval ?? "15m",
     strategyFactory: entry?.strategyFactory ?? "createDonchianAdx",
   };

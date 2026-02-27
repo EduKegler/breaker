@@ -2,7 +2,7 @@
 
 ## Current state
 - Fully implemented autonomous trading daemon with strategy runner, risk engine, and Hyperliquid execution.
-- 14 test files, 112 tests passing. Build clean.
+- 15 test files, 138 tests passing. Build clean.
 - Architecture: domain (pure logic) / adapters (I/O) / application (orchestration) / server + daemon.
 - SQLite for persistence (signals, orders, fills, equity), NDJSON for audit trail.
 - Reuses Strategy, Signal, Candle, fetchCandles from @breaker/backtest.

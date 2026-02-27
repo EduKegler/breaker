@@ -37,10 +37,12 @@ export class CandlePoller {
       ? this.candles[this.candles.length - 1].t
       : Date.now() - ivlMs * 2;
 
+    // Fetch from the CURRENT candle onwards (not lastTs + ivlMs) so we also
+    // get the in-progress candle with updated OHLCV values.
     const newCandles = await fetchCandles(
       this.config.coin,
       this.config.interval,
-      lastTs + ivlMs,
+      lastTs,
       Date.now(),
       { source: this.config.dataSource },
     );
@@ -48,7 +50,11 @@ export class CandlePoller {
     if (newCandles.length === 0) return null;
 
     for (const c of newCandles) {
-      if (!this.candles.some((existing) => existing.t === c.t)) {
+      const idx = this.candles.findIndex((existing) => existing.t === c.t);
+      if (idx >= 0) {
+        // Update in-progress candle (OHLCV may have changed)
+        this.candles[idx] = c;
+      } else {
         this.candles.push(c);
       }
     }

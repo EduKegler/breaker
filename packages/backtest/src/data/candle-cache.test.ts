@@ -131,16 +131,16 @@ describe("CandleCache", () => {
   });
 
   it("isolates data by source", () => {
-    cache.insertCandles("BTC", "15m", [{ ...makeCandle(1000), c: 100 }], "bybit");
-    cache.insertCandles("BTC", "15m", [{ ...makeCandle(1000), c: 200 }], "coinbase-perp");
+    cache.insertCandles("BTC", "15m", [{ ...makeCandle(1000), c: 100 }], "binance");
+    cache.insertCandles("BTC", "15m", [{ ...makeCandle(1000), c: 200 }], "hyperliquid");
 
-    const bybit = cache.getCandles("BTC", "15m", 0, 5000, "bybit");
-    const perp = cache.getCandles("BTC", "15m", 0, 5000, "coinbase-perp");
+    const binance = cache.getCandles("BTC", "15m", 0, 5000, "binance");
+    const hl = cache.getCandles("BTC", "15m", 0, 5000, "hyperliquid");
 
-    expect(bybit).toHaveLength(1);
-    expect(bybit[0].c).toBe(100);
-    expect(perp).toHaveLength(1);
-    expect(perp[0].c).toBe(200);
+    expect(binance).toHaveLength(1);
+    expect(binance[0].c).toBe(100);
+    expect(hl).toHaveLength(1);
+    expect(hl[0].c).toBe(200);
   });
 
   it("getFirstTimestamp returns earliest cached timestamp", () => {

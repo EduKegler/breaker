@@ -28,7 +28,7 @@ describe("loadConfig", () => {
           strategies: {
             breakout: {
               coin: "BTC",
-              dataSource: "coinbase-perp",
+              dataSource: "binance",
               interval: "15m",
               strategyFactory: "createDonchianAdx",
               dateRange: { start: "2025-05-24", end: "2026-02-24" },
@@ -93,7 +93,7 @@ describe("loadConfig", () => {
           strategies: {
             breakout: {
               coin: "BTC",
-              dataSource: "coinbase-perp",
+              dataSource: "binance",
               interval: "15m",
               strategyFactory: "createDonchianAdx",
               dateRange: { start: "2025-05-24", end: "2026-02-24" },
@@ -105,7 +105,7 @@ describe("loadConfig", () => {
     const config = loadConfig(configPath);
     const entry = config.assets.BTC.strategies.breakout;
     expect(entry.coin).toBe("BTC");
-    expect(entry.dataSource).toBe("coinbase-perp");
+    expect(entry.dataSource).toBe("binance");
     expect(entry.strategyFactory).toBe("createDonchianAdx");
   });
 
@@ -188,7 +188,7 @@ describe("resolveDataConfig", () => {
           strategies: {
             breakout: {
               coin: "BTC",
-              dataSource: "coinbase-perp",
+              dataSource: "binance",
               interval: "15m",
               strategyFactory: "createDonchianAdx",
             },
@@ -201,7 +201,7 @@ describe("resolveDataConfig", () => {
     const dc = resolveDataConfig(config, "BTC", "breakout");
 
     expect(dc.coin).toBe("BTC");
-    expect(dc.dataSource).toBe("coinbase-perp");
+    expect(dc.dataSource).toBe("binance");
     expect(dc.interval).toBe("15m");
     expect(dc.strategyFactory).toBe("createDonchianAdx");
   });
@@ -212,7 +212,7 @@ describe("resolveDataConfig", () => {
     const dc = resolveDataConfig(config, "UNKNOWN");
 
     expect(dc.coin).toBe("UNKNOWN");
-    expect(dc.dataSource).toBe("coinbase-perp");
+    expect(dc.dataSource).toBe("binance");
     expect(dc.interval).toBe("15m");
     expect(dc.strategyFactory).toBe("createDonchianAdx");
   });

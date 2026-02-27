@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { formatOpenMessage } from "./alerts-client.js";
+import { formatOpenMessage, formatTrailingSlMessage } from "./alerts-client.js";
 import type { OrderIntent } from "../domain/order-intent.js";
 import type { AlertsClient } from "./alerts-client.js";
 
@@ -57,13 +57,46 @@ describe("formatOpenMessage", () => {
   });
 });
 
+describe("formatTrailingSlMessage", () => {
+  it("formats long trailing SL move", () => {
+    const msg = formatTrailingSlMessage("BTC", "long", 93000, 94000, 92000, "testnet");
+    expect(msg).toContain("BTC LONG");
+    expect(msg).toContain("trailing");
+    expect(msg).toContain("Mode: testnet");
+  });
+
+  it("formats short trailing SL move", () => {
+    const msg = formatTrailingSlMessage("BTC", "short", 97000, 96000, 98000, "live");
+    expect(msg).toContain("BTC SHORT");
+    expect(msg).toContain("trailing");
+    expect(msg).toContain("Mode: live");
+  });
+
+  it("includes old and new levels", () => {
+    const msg = formatTrailingSlMessage("ETH", "long", 3400, 3500, 3200, "testnet");
+    expect(msg).toContain("3,400");
+    expect(msg).toContain("3,500");
+  });
+});
+
 describe("AlertsClient interface (mock)", () => {
   it("calls notifyPositionOpened", async () => {
     const mockClient: AlertsClient = {
       notifyPositionOpened: vi.fn(),
+      notifyTrailingSlMoved: vi.fn(),
     };
 
     await mockClient.notifyPositionOpened(intent, "testnet");
     expect(mockClient.notifyPositionOpened).toHaveBeenCalledWith(intent, "testnet");
+  });
+
+  it("calls notifyTrailingSlMoved", async () => {
+    const mockClient: AlertsClient = {
+      notifyPositionOpened: vi.fn(),
+      notifyTrailingSlMoved: vi.fn(),
+    };
+
+    await mockClient.notifyTrailingSlMoved("BTC", "long", 93000, 94000, 92000, "testnet");
+    expect(mockClient.notifyTrailingSlMoved).toHaveBeenCalledWith("BTC", "long", 93000, 94000, 92000, "testnet");
   });
 });

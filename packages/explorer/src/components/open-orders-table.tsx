@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { OpenOrder } from "../lib/api.js";
 
 export function orderTypeLabel(o: OpenOrder): { label: string; color: string } {
@@ -28,12 +29,31 @@ export function orderTypeLabel(o: OpenOrder): { label: string; color: string } {
   return { label: o.orderType || "Limit", color: "text-txt-secondary" };
 }
 
-export function OpenOrdersTable({ orders }: { orders: OpenOrder[] }) {
+export function OpenOrdersTable({
+  orders,
+  onCancel,
+}: {
+  orders: OpenOrder[];
+  onCancel?: (coin: string, oid: number) => Promise<void>;
+}) {
+  const [cancelling, setCancelling] = useState<Set<number>>(new Set());
+
   if (orders.length === 0) {
     return (
       <p className="text-txt-secondary text-sm font-mono">No open orders</p>
     );
   }
+
+  const handleCancel = async (coin: string, oid: number) => {
+    if (!onCancel) return;
+    setCancelling((prev) => new Set(prev).add(oid));
+    await onCancel(coin, oid);
+    setCancelling((prev) => {
+      const next = new Set(prev);
+      next.delete(oid);
+      return next;
+    });
+  };
 
   return (
     <div className="overflow-y-auto max-h-[300px]">
@@ -46,12 +66,14 @@ export function OpenOrdersTable({ orders }: { orders: OpenOrder[] }) {
             <th className="pb-2 pr-3 font-medium text-right">Size</th>
             <th className="pb-2 pr-3 font-medium text-right">Price</th>
             <th className="pb-2 pr-3 font-medium text-right">Trigger</th>
-            <th className="pb-2 font-medium text-right">Flags</th>
+            <th className="pb-2 pr-3 font-medium text-right">Flags</th>
+            {onCancel && <th className="pb-2 pl-2 font-medium w-8" />}
           </tr>
         </thead>
         <tbody>
           {orders.map((o, i) => {
             const type = orderTypeLabel(o);
+            const isLoading = cancelling.has(o.oid);
             return (
               <tr
                 key={o.oid}
@@ -83,16 +105,29 @@ export function OpenOrdersTable({ orders }: { orders: OpenOrder[] }) {
                 </td>
                 <td className="py-1.5 flex gap-1 justify-end">
                   {o.reduceOnly && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-sm bg-amber/20 text-amber border border-amber/30">
-                      Reduce Only
+                    <span className="px-1.5 py-0.5 text-[10px] font-mono font-medium rounded-sm bg-amber/10 text-amber">
+                      reduce
                     </span>
                   )}
                   {o.isPositionTpsl && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-sm bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                      Position TP/SL
+                    <span className="px-1.5 py-0.5 text-[10px] font-mono font-medium rounded-sm bg-blue-500/10 text-blue-400">
+                      pos tp/sl
                     </span>
                   )}
                 </td>
+                {onCancel && (
+                  <td className="py-1.5 pl-2 text-center">
+                    <button
+                      type="button"
+                      disabled={isLoading}
+                      onClick={() => handleCancel(o.coin, o.oid)}
+                      className="text-txt-secondary hover:text-loss transition-colors disabled:opacity-40 disabled:cursor-wait"
+                      title={`Cancel order ${o.oid}`}
+                    >
+                      {isLoading ? "..." : "\u2715"}
+                    </button>
+                  </td>
+                )}
               </tr>
             );
           })}

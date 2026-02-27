@@ -2,7 +2,7 @@
 
 ## Current state
 - Full implementation complete: types, indicators (7), engine (5 modules), analysis (4), data layer (2), strategy (donchian-adx), CLI, barrel
-- 206 tests passing, 22 test files, clean build
+- 208 tests passing, 22 test files, clean build
 - `engine-shared.ts` exports `buildContext`, `canTrade`, `createUtcDayFormatter` (shared with @breaker/exchange)
 - Strategies: donchian-adx, keltner-rsi2 (both TypeScript ports of Pine scripts)
 - Data sources: Bybit (default, perp USDT), Coinbase spot, Coinbase perp, Hyperliquid — all via CCXT `fetchOHLCV()`

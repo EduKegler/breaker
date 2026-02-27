@@ -3,6 +3,7 @@ import type { OrderIntent } from "../domain/order-intent.js";
 
 export interface AlertsClient {
   notifyPositionOpened(intent: OrderIntent, mode: string): Promise<void>;
+  notifyTrailingSlMoved(coin: string, direction: string, oldLevel: number, newLevel: number, entryPrice: number, mode: string): Promise<void>;
 }
 
 function formatUsd(n: number): string {
@@ -31,6 +32,23 @@ export function formatOpenMessage(intent: OrderIntent, mode: string): string {
   ].join("\n");
 }
 
+export function formatTrailingSlMessage(
+  coin: string,
+  direction: string,
+  oldLevel: number,
+  newLevel: number,
+  entryPrice: number,
+  mode: string,
+): string {
+  const dir = direction.toUpperCase();
+  return [
+    `\u{1F6E1}\uFE0F ${coin} ${dir} trailing SL movido`,
+    `${formatUsd(oldLevel)} \u2192 ${formatUsd(newLevel)}`,
+    `Entry: ${formatUsd(entryPrice)} (${pctChange(entryPrice, newLevel)} do entry)`,
+    `Mode: ${mode}`,
+  ].join("\n");
+}
+
 export class HttpAlertsClient implements AlertsClient {
   private gatewayUrl: string;
 
@@ -40,7 +58,23 @@ export class HttpAlertsClient implements AlertsClient {
 
   async notifyPositionOpened(intent: OrderIntent, mode: string): Promise<void> {
     const text = formatOpenMessage(intent, mode);
-    await got.post(`${this.gatewayUrl}/send`, {
+    await got.post(this.gatewayUrl, {
+      json: { text },
+      timeout: { request: 10_000 },
+      retry: { limit: 1 },
+    });
+  }
+
+  async notifyTrailingSlMoved(
+    coin: string,
+    direction: string,
+    oldLevel: number,
+    newLevel: number,
+    entryPrice: number,
+    mode: string,
+  ): Promise<void> {
+    const text = formatTrailingSlMessage(coin, direction, oldLevel, newLevel, entryPrice, mode);
+    await got.post(this.gatewayUrl, {
       json: { text },
       timeout: { request: 10_000 },
       retry: { limit: 1 },

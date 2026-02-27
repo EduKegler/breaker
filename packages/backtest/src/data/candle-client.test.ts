@@ -13,24 +13,16 @@ function ohlcv(t: number, o = 100, h = 110, l = 90, c = 105, v = 50): [number, n
 }
 
 describe("toSymbol", () => {
-  it("maps bybit → BTC/USDT:USDT", () => {
-    expect(toSymbol("BTC", "bybit")).toBe("BTC/USDT:USDT");
+  it("maps binance → BTC/USDT:USDT", () => {
+    expect(toSymbol("BTC", "binance")).toBe("BTC/USDT:USDT");
   });
 
   it("maps hyperliquid → BTC/USDC:USDC", () => {
     expect(toSymbol("BTC", "hyperliquid")).toBe("BTC/USDC:USDC");
   });
 
-  it("maps coinbase → BTC/USD", () => {
-    expect(toSymbol("BTC", "coinbase")).toBe("BTC/USD");
-  });
-
-  it("maps coinbase-perp → BTC/USD:USD", () => {
-    expect(toSymbol("BTC", "coinbase-perp")).toBe("BTC/USD:USD");
-  });
-
   it("works with other coins", () => {
-    expect(toSymbol("ETH", "bybit")).toBe("ETH/USDT:USDT");
+    expect(toSymbol("ETH", "binance")).toBe("ETH/USDT:USDT");
     expect(toSymbol("SOL", "hyperliquid")).toBe("SOL/USDC:USDC");
   });
 });
@@ -49,7 +41,7 @@ describe("fetchCandles", () => {
     ]);
 
     const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
-      source: "bybit",
+      source: "binance",
       _exchange: exchange,
     });
 
@@ -59,7 +51,7 @@ describe("fetchCandles", () => {
   });
 
   it("sets n: 0 for all sources", async () => {
-    for (const source of ["bybit", "hyperliquid", "coinbase", "coinbase-perp"] as DataSource[]) {
+    for (const source of ["binance", "hyperliquid"] as DataSource[]) {
       const ex = makeMockExchange();
       vi.mocked(ex.fetchOHLCV).mockResolvedValueOnce([ohlcv(1000)]);
 
@@ -71,7 +63,7 @@ describe("fetchCandles", () => {
     }
   });
 
-  it("defaults to bybit source", async () => {
+  it("defaults to binance source", async () => {
     vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([]);
 
     await fetchCandles("BTC", "15m", 1000, 5000, { _exchange: exchange });
@@ -80,16 +72,14 @@ describe("fetchCandles", () => {
       "BTC/USDT:USDT",
       "15m",
       1000,
-      1000, // bybit default limit
+      1500, // binance default limit
     );
   });
 
   it("uses correct symbol per source", async () => {
     const sources: [DataSource, string][] = [
-      ["bybit", "BTC/USDT:USDT"],
+      ["binance", "BTC/USDT:USDT"],
       ["hyperliquid", "BTC/USDC:USDC"],
-      ["coinbase", "BTC/USD"],
-      ["coinbase-perp", "BTC/USD:USD"],
     ];
 
     for (const [source, expectedSymbol] of sources) {
@@ -111,7 +101,7 @@ describe("fetchCandles", () => {
     vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([]);
 
     await fetchCandles("BTC", "15m", 1000, 5000, {
-      source: "bybit",
+      source: "binance",
       ccxtSymbol: "BTC/USDC:USDC",
       _exchange: exchange,
     });
@@ -120,7 +110,7 @@ describe("fetchCandles", () => {
       "BTC/USDC:USDC",
       "15m",
       1000,
-      1000,
+      1500,
     );
   });
 
@@ -150,8 +140,8 @@ describe("fetchCandles", () => {
     ]);
 
     const candles = await fetchCandles("BTC", "15m", 1000, 100000, {
-      source: "bybit",
-      candlesPerRequest: 1000,
+      source: "binance",
+      candlesPerRequest: 1500,
       _exchange: exchange,
     });
 
@@ -204,7 +194,7 @@ describe("fetchCandles", () => {
       .mockResolvedValueOnce([ohlcv(1000)]);
 
     const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
-      source: "bybit",
+      source: "binance",
       candlesPerRequest: 1,
       _exchange: exchange,
     });

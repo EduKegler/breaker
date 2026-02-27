@@ -43,7 +43,7 @@ src/
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 73 tests across 12 files
+- `pnpm test` — 138 tests across 15 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

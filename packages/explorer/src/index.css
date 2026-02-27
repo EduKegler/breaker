@@ -66,6 +66,17 @@ body::after {
   animation: pulse-green 2s ease-in-out infinite;
 }
 
+@keyframes toast-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes toast-out {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0; }
+}
+.animate-toast-in { animation: toast-in 0.25s ease-out forwards; }
+.animate-toast-out { animation: toast-out 0.2s ease-in forwards; }
+
 /* ── Utility ──────────────────────── */
 .glow-header {
   box-shadow: 0 1px 24px var(--glow-green), inset 0 -1px 0 var(--border);

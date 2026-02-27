@@ -22,7 +22,7 @@ export const ExchangeConfigSchema = z.object({
   asset: z.string().min(1),
   strategy: z.enum(["donchian-adx", "keltner-rsi2"]),
   interval: z.enum(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "8h", "12h", "1d"]),
-  dataSource: z.enum(["hyperliquid", "bybit", "coinbase", "coinbase-perp"]).default("hyperliquid"),
+  dataSource: z.enum(["binance", "hyperliquid"]).default("binance"),
   warmupBars: z.number().int().positive().default(200),
   leverage: z.number().int().positive(),
   marginType: z.enum(["isolated", "cross"]).default("isolated"),

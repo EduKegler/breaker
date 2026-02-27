@@ -88,6 +88,11 @@ export class HyperliquidClient implements HlClient {
     return Math.floor(size * factor) / factor;
   }
 
+  /** Truncate price to 5 significant figures (SDK floatToWire requirement) */
+  private truncatePrice(price: number): number {
+    return Number(price.toPrecision(5));
+  }
+
   /** Fetch and cache szDecimals for a coin from exchange metadata */
   async loadSzDecimals(coin: string): Promise<void> {
     if (this.szDecimalsCache.has(coin)) return;
@@ -133,12 +138,13 @@ export class HyperliquidClient implements HlClient {
   ): Promise<HlOrderResult> {
     const sz = this.truncateSize(size, coin);
     if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
+    const px = this.truncatePrice(triggerPrice);
     const result = await this.sdk.exchange.placeOrder({
       coin: this.toSymbol(coin),
       is_buy: isBuy,
       sz,
-      limit_px: triggerPrice,
-      order_type: { trigger: { triggerPx: String(triggerPrice), isMarket: true, tpsl: "sl" } },
+      limit_px: px,
+      order_type: { trigger: { triggerPx: String(px), isMarket: true, tpsl: "sl" } },
       reduce_only: reduceOnly,
     });
     return { orderId: extractOid(result), status: "placed" };
@@ -153,11 +159,12 @@ export class HyperliquidClient implements HlClient {
   ): Promise<HlOrderResult> {
     const sz = this.truncateSize(size, coin);
     if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
+    const px = this.truncatePrice(price);
     const result = await this.sdk.exchange.placeOrder({
       coin: this.toSymbol(coin),
       is_buy: isBuy,
       sz,
-      limit_px: price,
+      limit_px: px,
       order_type: { limit: { tif: "Gtc" } },
       reduce_only: reduceOnly,
     });

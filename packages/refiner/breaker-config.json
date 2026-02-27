@@ -81,14 +81,14 @@
       "strategies": {
         "breakout": {
           "coin": "BTC",
-          "dataSource": "coinbase-perp",
+          "dataSource": "binance",
           "interval": "15m",
           "strategyFactory": "createDonchianAdx",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
         },
         "mean-reversion": {
           "coin": "BTC",
-          "dataSource": "coinbase-perp",
+          "dataSource": "binance",
           "interval": "15m",
           "strategyFactory": "createKeltnerRsi2",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
@@ -100,7 +100,7 @@
       "strategies": {
         "breakout": {
           "coin": "ETH",
-          "dataSource": "coinbase-perp",
+          "dataSource": "binance",
           "interval": "15m",
           "strategyFactory": "createDonchianAdx",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
@@ -112,7 +112,7 @@
       "strategies": {
         "breakout": {
           "coin": "SOL",
-          "dataSource": "coinbase-perp",
+          "dataSource": "binance",
           "interval": "15m",
           "strategyFactory": "createDonchianAdx",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
@@ -124,7 +124,7 @@
       "strategies": {
         "breakout": {
           "coin": "SUI",
-          "dataSource": "coinbase-perp",
+          "dataSource": "binance",
           "interval": "15m",
           "strategyFactory": "createDonchianAdx",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }

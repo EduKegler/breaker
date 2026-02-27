@@ -158,6 +158,16 @@ export function createDonchianAdx(
       return null;
     },
 
+    getExitLevel(ctx: StrategyContext): number | null {
+      const { candles, index, positionDirection } = ctx;
+      if (!positionDirection || index < params.dcFast.value + 1) return null;
+
+      const dcFast = dcFastCache ?? donchian(candles.slice(0, index + 1), params.dcFast.value);
+      if (positionDirection === "long") return dcFast.lower[index - 1];
+      if (positionDirection === "short") return dcFast.upper[index - 1];
+      return null;
+    },
+
     shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
       const { candles, index, positionDirection, positionEntryBarIndex } = ctx;
       if (!positionDirection || positionEntryBarIndex === null) return null;

@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   cli.option("--start <date>", "Start date YYYY-MM-DD");
   cli.option("--end <date>", "End date YYYY-MM-DD (default: today)");
   cli.option("--days <n>", "Days to backtest (default: 180, ignored if --start given)");
-  cli.option("--source <source>", "Data source: bybit|coinbase|coinbase-perp|hyperliquid (default: bybit)");
+  cli.option("--source <source>", "Data source: binance|hyperliquid (default: binance)");
   cli.option("--warmup <days>", "Warmup days for indicators (default: 60)");
   cli.option("--strategy <name>", "Strategy: donchian-adx|keltner-rsi2 (default: donchian-adx)");
   cli.option("--cash", "Use cash sizing mode ($100 per trade)");
@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const { args, options } = cli.parse();
 
   const coin = args[0] ?? "BTC";
-  const source = (options.source ?? "bybit") as "bybit" | "coinbase" | "coinbase-perp" | "hyperliquid";
+  const source = (options.source ?? "binance") as "binance" | "hyperliquid";
   const interval = "15m" as const;
   const WARMUP_DAYS = Number(options.warmup ?? 60);
   const strategyName = options.strategy ?? "donchian-adx";

@@ -12,11 +12,17 @@ import {
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
-import type { CandleData, SignalRow, LivePosition } from "../lib/api.js";
+import type { CandleData, SignalRow, LivePosition, ReplaySignal } from "../lib/api.js";
+
+/** SQLite datetime('now') returns UTC without 'Z' — append it so JS parses as UTC */
+function parseUtc(dt: string): Date {
+  return new Date(dt.endsWith("Z") ? dt : dt + "Z");
+}
 
 interface CandlestickChartProps {
   candles: CandleData[];
   signals: SignalRow[];
+  replaySignals: ReplaySignal[];
   positions: LivePosition[];
   onLoadMore?: (before: number) => void;
 }
@@ -25,7 +31,7 @@ function toChartTime(ms: number): Time {
   return (ms / 1000) as Time;
 }
 
-export function CandlestickChart({ candles, signals, positions, onLoadMore }: CandlestickChartProps) {
+export function CandlestickChart({ candles, signals, replaySignals, positions, onLoadMore }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
@@ -123,18 +129,58 @@ export function CandlestickChart({ candles, signals, positions, onLoadMore }: Ca
     seriesRef.current.setData(data);
   }, [candles]);
 
-  // Update markers when signals change
+  // Update markers when signals or replay signals change
   useEffect(() => {
     if (!markersRef.current || candles.length === 0) return;
 
     const candleTimes = new Set(candles.map((c) => c.t));
-
     const markers: SeriesMarker<Time>[] = [];
 
+    // Executed signal timestamps — to avoid duplicate markers at same candle
+    const executedTimes = new Set<number>();
+    for (const s of signals) {
+      if (s.risk_check_passed !== 1 || !s.entry_price) continue;
+      const signalTs = parseUtc(s.created_at).getTime();
+      let closestT = candles[0].t;
+      let minDiff = Math.abs(signalTs - closestT);
+      for (const c of candles) {
+        const diff = Math.abs(signalTs - c.t);
+        if (diff < minDiff) { minDiff = diff; closestT = c.t; }
+      }
+      executedTimes.add(closestT);
+    }
+
+    // Replay signals (strategy theoretical signals) — skip if executed at same candle
+    // Two stacked markers per signal: colored arrow (close to bar) + blue text (further)
+    for (const rs of replaySignals) {
+      if (!candleTimes.has(rs.t) || executedTimes.has(rs.t)) continue;
+      const isLong = rs.direction === "long";
+
+      // Colored arrow (closer to bar): green for long, red for short
+      markers.push({
+        time: toChartTime(rs.t),
+        position: isLong ? "belowBar" : "aboveBar",
+        color: isLong ? "#15803d" : "#b91c1c",
+        shape: isLong ? "arrowUp" : "arrowDown",
+        size: 1,
+      });
+
+      // Blue text label (stacked further from bar)
+      markers.push({
+        time: toChartTime(rs.t),
+        position: isLong ? "belowBar" : "aboveBar",
+        color: "#3b82f6",
+        shape: isLong ? "arrowUp" : "arrowDown",
+        text: isLong ? "LONG" : "SHORT",
+        size: 0,
+      });
+    }
+
+    // Executed signals (actual trades from SQLite) — prominent markers
     for (const s of signals) {
       if (s.risk_check_passed !== 1 || !s.entry_price) continue;
 
-      const signalTs = new Date(s.created_at).getTime();
+      const signalTs = parseUtc(s.created_at).getTime();
       let closestT = candles[0].t;
       let minDiff = Math.abs(signalTs - closestT);
       for (const c of candles) {
@@ -153,13 +199,14 @@ export function CandlestickChart({ candles, signals, positions, onLoadMore }: Ca
         position: isLong ? "belowBar" : "aboveBar",
         color: isLong ? "#00ff88" : "#ff3366",
         shape: isLong ? "arrowUp" : "arrowDown",
-        text: `${isLong ? "L" : "S"} ${s.entry_price}`,
+        text: `${isLong ? "LONG" : "SHORT"} $${s.entry_price}`,
+        size: 3,
       });
     }
 
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     markersRef.current.setMarkers(markers);
-  }, [signals, candles]);
+  }, [signals, replaySignals, candles]);
 
   // Update price lines for active position
   useEffect(() => {

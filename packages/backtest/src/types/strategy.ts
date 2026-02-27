@@ -37,5 +37,6 @@ export interface Strategy {
   init?(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void;
   onCandle(ctx: StrategyContext): Signal | null;
   shouldExit?(ctx: StrategyContext): { exit: boolean; comment: string } | null;
+  getExitLevel?(ctx: StrategyContext): number | null;
   requiredTimeframes?: string[];
 }

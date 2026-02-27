@@ -29,7 +29,7 @@ beforeEach(() => {
 });
 
 describe("CandlePoller", () => {
-  const config = { coin: "BTC", interval: "15m" as const, dataSource: "hyperliquid" as const };
+  const config = { coin: "BTC", interval: "15m" as const, dataSource: "binance" as const };
 
   it("warms up with historical candles", async () => {
     const candles = [makeCandle(0), makeCandle(1), makeCandle(2)];

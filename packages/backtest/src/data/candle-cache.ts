@@ -5,7 +5,7 @@ import { intervalToMs } from "../types/candle.js";
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS candles (
-    source TEXT NOT NULL DEFAULT 'bybit',
+    source TEXT NOT NULL DEFAULT 'binance',
     coin TEXT NOT NULL,
     interval TEXT NOT NULL,
     t INTEGER NOT NULL,
@@ -19,7 +19,7 @@ const SCHEMA_SQL = `
   );
 
   CREATE TABLE IF NOT EXISTS sync_meta (
-    source TEXT NOT NULL DEFAULT 'bybit',
+    source TEXT NOT NULL DEFAULT 'binance',
     coin TEXT NOT NULL,
     interval TEXT NOT NULL,
     last_timestamp INTEGER NOT NULL,
@@ -49,7 +49,7 @@ export class CandleCache {
     interval: CandleInterval,
     startTime: number,
     endTime: number,
-    source = "bybit",
+    source = "binance",
   ): Candle[] {
     const stmt = this.db.prepare(
       `SELECT t, o, h, l, c, v, n FROM candles
@@ -62,7 +62,7 @@ export class CandleCache {
   /**
    * Insert candles into cache (upsert).
    */
-  insertCandles(coin: string, interval: CandleInterval, candles: Candle[], source = "bybit"): void {
+  insertCandles(coin: string, interval: CandleInterval, candles: Candle[], source = "binance"): void {
     if (candles.length === 0) return;
 
     const insert = this.db.prepare(
@@ -92,7 +92,7 @@ export class CandleCache {
   /**
    * Get the last cached timestamp for a coin/interval.
    */
-  getLastTimestamp(coin: string, interval: CandleInterval, source = "bybit"): number | null {
+  getLastTimestamp(coin: string, interval: CandleInterval, source = "binance"): number | null {
     const row = this.db.prepare(
       `SELECT last_timestamp FROM sync_meta WHERE source = ? AND coin = ? AND interval = ?`,
     ).get(source, coin, interval) as { last_timestamp: number } | undefined;
@@ -102,7 +102,7 @@ export class CandleCache {
   /**
    * Get the earliest cached timestamp for a coin/interval.
    */
-  getFirstTimestamp(coin: string, interval: CandleInterval, source = "bybit"): number | null {
+  getFirstTimestamp(coin: string, interval: CandleInterval, source = "binance"): number | null {
     const row = this.db.prepare(
       `SELECT MIN(t) as first_t FROM candles WHERE source = ? AND coin = ? AND interval = ?`,
     ).get(source, coin, interval) as { first_t: number | null };
@@ -112,7 +112,7 @@ export class CandleCache {
   /**
    * Get candle count for a coin/interval.
    */
-  getCandleCount(coin: string, interval: CandleInterval, source = "bybit"): number {
+  getCandleCount(coin: string, interval: CandleInterval, source = "binance"): number {
     const row = this.db.prepare(
       `SELECT COUNT(*) as cnt FROM candles WHERE source = ? AND coin = ? AND interval = ?`,
     ).get(source, coin, interval) as { cnt: number };
@@ -132,7 +132,7 @@ export class CandleCache {
   ): Promise<{ fetched: number; cached: number }> {
     let totalFetched = 0;
     const ivlMs = intervalToMs(interval);
-    const source = clientOptions?.source ?? "bybit";
+    const source = clientOptions?.source ?? "binance";
     const firstTs = this.getFirstTimestamp(coin, interval, source);
     const lastTs = this.getLastTimestamp(coin, interval, source);
 

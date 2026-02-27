@@ -26,6 +26,8 @@ export { handleSignal } from "./application/signal-handler.js";
 export { StrategyRunner } from "./application/strategy-runner.js";
 export { ReconcileLoop, reconcile } from "./application/reconcile-loop.js";
 export type { ReconciledData } from "./application/reconcile-loop.js";
+export { replayStrategy } from "./application/strategy-replay.js";
+export type { ReplaySignal, ReplayParams } from "./application/strategy-replay.js";
 
 // Server
 export { createApp } from "./server.js";

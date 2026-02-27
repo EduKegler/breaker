@@ -12,7 +12,7 @@ const config: ExchangeConfig = {
   asset: "BTC",
   strategy: "donchian-adx",
   interval: "15m",
-  dataSource: "hyperliquid",
+  dataSource: "binance",
   warmupBars: 5,
   leverage: 5,
   marginType: "isolated",
@@ -106,7 +106,7 @@ function createDeps(strategy: Strategy, poller: ReturnType<typeof createMockPoll
       },
       store,
       eventLog: { append: vi.fn() },
-      alertsClient: { notifyPositionOpened: vi.fn() },
+      alertsClient: { notifyPositionOpened: vi.fn(), notifyTrailingSlMoved: vi.fn() },
       positionBook,
     },
   };
@@ -228,6 +228,142 @@ describe("StrategyRunner", () => {
     await runner.tick(); // no new candle
 
     expect(onNewCandle).not.toHaveBeenCalled();
+  });
+
+  it("notifies when trailing SL moves favorably (long)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const poller = createMockPoller(candles);
+    // Signal on bar 5
+    const strategy = createTestStrategy(5);
+    // Mock getExitLevel: returns increasing values (favorable for long)
+    let exitLevelCall = 0;
+    strategy.getExitLevel = vi.fn(() => {
+      exitLevelCall++;
+      return exitLevelCall === 1 ? 94000 : 94500; // moved up = favorable for long
+    });
+    const deps = createDeps(strategy, poller);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Tick 1: open position
+    poller.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // Tick 2: in position, getExitLevel returns 94000 (first call, sets baseline)
+    poller.addCandle(makeCandle(6));
+    await runner.tick();
+    expect(strategy.getExitLevel).toHaveBeenCalledTimes(1);
+    expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).not.toHaveBeenCalled();
+
+    // Tick 3: getExitLevel returns 94500 (moved up → notify)
+    poller.addCandle(makeCandle(7));
+    await runner.tick();
+    expect(strategy.getExitLevel).toHaveBeenCalledTimes(2);
+    expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).toHaveBeenCalledOnce();
+    expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).toHaveBeenCalledWith(
+      "BTC", "long", 94000, 94500, expect.any(Number), "testnet",
+    );
+  });
+
+  it("notifies when trailing SL moves favorably (short)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const poller = createMockPoller(candles);
+    const strategy = createTestStrategy(5);
+    // Override to return short signal
+    vi.mocked(strategy.onCandle).mockImplementation((ctx: StrategyContext) => {
+      if (ctx.index === 5) {
+        return {
+          direction: "short",
+          entryPrice: ctx.currentCandle.c,
+          stopLoss: ctx.currentCandle.c + 1000,
+          takeProfits: [{ price: ctx.currentCandle.c - 2000, pctOfPosition: 0.5 }],
+          comment: "Test short",
+        };
+      }
+      return null;
+    });
+    let exitLevelCall = 0;
+    strategy.getExitLevel = vi.fn(() => {
+      exitLevelCall++;
+      return exitLevelCall === 1 ? 96000 : 95500; // moved down = favorable for short
+    });
+    const deps = createDeps(strategy, poller);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    poller.addCandle(makeCandle(5));
+    await runner.tick();
+
+    poller.addCandle(makeCandle(6));
+    await runner.tick();
+    expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).not.toHaveBeenCalled();
+
+    poller.addCandle(makeCandle(7));
+    await runner.tick();
+    expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).toHaveBeenCalledOnce();
+    expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).toHaveBeenCalledWith(
+      "BTC", "short", 96000, 95500, expect.any(Number), "testnet",
+    );
+  });
+
+  it("does not notify when trailing SL moves unfavorably", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const poller = createMockPoller(candles);
+    const strategy = createTestStrategy(5);
+    let exitLevelCall = 0;
+    strategy.getExitLevel = vi.fn(() => {
+      exitLevelCall++;
+      return exitLevelCall === 1 ? 94000 : 93500; // moved down = unfavorable for long
+    });
+    const deps = createDeps(strategy, poller);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    poller.addCandle(makeCandle(5));
+    await runner.tick();
+
+    poller.addCandle(makeCandle(6));
+    await runner.tick();
+
+    poller.addCandle(makeCandle(7));
+    await runner.tick();
+
+    expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).not.toHaveBeenCalled();
+  });
+
+  it("resets lastExitLevel when position is closed", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const poller = createMockPoller(candles);
+    const strategy = createTestStrategy(5);
+    strategy.getExitLevel = vi.fn().mockReturnValue(94000);
+    // Exit on tick after opening
+    vi.mocked(strategy.shouldExit!).mockImplementation((ctx: StrategyContext) => {
+      // Exit on bar 7 (third tick in position)
+      if (ctx.index === 7) return { exit: true, comment: "test exit" };
+      return null;
+    });
+    const deps = createDeps(strategy, poller);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Open position
+    poller.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // In position, set baseline
+    poller.addCandle(makeCandle(6));
+    await runner.tick();
+
+    // Exit position
+    poller.addCandle(makeCandle(7));
+    await runner.tick();
+
+    // After exit, no trailing SL notification should fire
+    expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).not.toHaveBeenCalled();
   });
 
   it("stops running when stop() is called", () => {

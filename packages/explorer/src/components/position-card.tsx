@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from "react";
 import type { LivePosition, OpenOrder } from "../lib/api.js";
 import { orderTypeLabel } from "./open-orders-table.js";
 
@@ -23,10 +24,30 @@ function fmtTrigger(o: OpenOrder): string {
 export function PositionCard({
   position,
   openOrders,
+  onClose,
 }: {
   position: LivePosition;
   openOrders: OpenOrder[];
+  onClose?: (coin: string) => Promise<void>;
 }) {
+  const [closeState, setCloseState] = useState<"idle" | "confirming" | "loading">("idle");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const handleClose = async () => {
+    if (closeState === "idle") {
+      setCloseState("confirming");
+      timerRef.current = setTimeout(() => setCloseState("idle"), 3000);
+      return;
+    }
+    if (closeState === "confirming" && onClose) {
+      clearTimeout(timerRef.current);
+      setCloseState("loading");
+      await onClose(position.coin);
+      setCloseState("idle");
+    }
+  };
   const isLong = position.direction === "long";
   const borderColor = isLong ? "border-l-profit" : "border-l-loss";
   const pnlColor = position.unrealizedPnl >= 0 ? "text-profit" : "text-loss";
@@ -56,9 +77,27 @@ export function PositionCard({
             {position.direction}
           </span>
         </div>
-        <span className={`font-mono text-sm font-medium ${pnlColor}`}>
-          {fmtPnl(position.unrealizedPnl)}
-        </span>
+        <div className="flex items-center gap-2">
+          {onClose && (
+            <button
+              type="button"
+              disabled={closeState === "loading"}
+              onClick={handleClose}
+              className={`px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded-sm border transition-colors ${
+                closeState === "confirming"
+                  ? "bg-loss/20 text-loss border-loss/40 animate-pulse"
+                  : closeState === "loading"
+                    ? "bg-terminal-border text-txt-secondary border-terminal-border cursor-wait"
+                    : "bg-terminal-border/50 text-txt-secondary border-terminal-border hover:bg-loss/20 hover:text-loss hover:border-loss/30"
+              }`}
+            >
+              {closeState === "loading" ? "..." : closeState === "confirming" ? "CLOSE?" : "CLOSE"}
+            </button>
+          )}
+          <span className={`font-mono text-sm font-medium ${pnlColor}`}>
+            {fmtPnl(position.unrealizedPnl)}
+          </span>
+        </div>
       </div>
 
       {/* Data grid */}
@@ -80,9 +119,9 @@ export function PositionCard({
           <span className="text-txt-primary font-mono">{position.size}</span>
         </div>
         <div className="text-txt-secondary">
-          SL{" "}
+          Notional{" "}
           <span className="text-txt-primary font-mono">
-            {fmt(position.stopLoss)}
+            {fmt(position.size * position.currentPrice)}
           </span>
         </div>
       </div>
@@ -97,7 +136,7 @@ export function PositionCard({
                 key={o.oid}
                 className="flex items-center gap-1.5 text-[11px]"
               >
-                <span className="px-1 py-px font-semibold rounded-sm bg-loss/10 text-loss border border-loss/20 text-[9px] leading-tight">
+                <span className="px-1 py-px font-mono font-medium rounded-sm bg-loss/10 text-loss text-[9px] leading-tight">
                   SL
                 </span>
                 <span className="font-mono text-txt-primary">
@@ -115,7 +154,7 @@ export function PositionCard({
                 key={o.oid}
                 className="flex items-center gap-1.5 text-[11px]"
               >
-                <span className="px-1 py-px font-semibold rounded-sm bg-profit/10 text-profit border border-profit/20 text-[9px] leading-tight">
+                <span className="px-1 py-px font-mono font-medium rounded-sm bg-profit/10 text-profit text-[9px] leading-tight">
                   TP
                 </span>
                 <span className="font-mono text-txt-primary">

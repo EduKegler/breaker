@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { Candle, CandleInterval } from "../types/candle.js";
 import { intervalToMs } from "../types/candle.js";
 
-export type DataSource = "hyperliquid" | "bybit" | "coinbase" | "coinbase-perp";
+export type DataSource = "binance" | "hyperliquid";
 
 export interface CandleClientOptions {
   source?: DataSource;
@@ -16,37 +16,27 @@ export interface CandleClientOptions {
 }
 
 const EXCHANGE_MAP: Record<DataSource, string> = {
-  bybit: "bybit",
+  binance: "binanceusdm",
   hyperliquid: "hyperliquid",
-  coinbase: "coinbase",
-  "coinbase-perp": "coinbase",
 };
 
 const DEFAULT_LIMIT: Record<DataSource, number> = {
-  bybit: 1000,
+  binance: 1500,
   hyperliquid: 500,
-  coinbase: 300,
-  "coinbase-perp": 300,
 };
 
 const DEFAULT_DELAY: Record<DataSource, number> = {
-  bybit: 500,
+  binance: 200,
   hyperliquid: 200,
-  coinbase: 350,
-  "coinbase-perp": 350,
 };
 
 /** Map coin + source to CCXT unified symbol. */
 export function toSymbol(coin: string, source: DataSource): string {
   switch (source) {
-    case "bybit":
+    case "binance":
       return `${coin}/USDT:USDT`;
     case "hyperliquid":
       return `${coin}/USDC:USDC`;
-    case "coinbase":
-      return `${coin}/USD`;
-    case "coinbase-perp":
-      return `${coin}/USD:USD`;
   }
 }
 
@@ -93,7 +83,7 @@ export async function fetchCandles(
   endTime: number,
   options: CandleClientOptions = {},
 ): Promise<Candle[]> {
-  const source = options.source ?? "bybit";
+  const source = options.source ?? "binance";
   const exchange = options._exchange ?? getExchange(source);
   const symbol = options.ccxtSymbol ?? toSymbol(coin, source);
   const timeframe = CCXT_TIMEFRAME[interval];

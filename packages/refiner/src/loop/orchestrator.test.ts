@@ -11,7 +11,7 @@ vi.mock("../lib/config.js", () => ({
     assetClasses: { "crypto-major": { minPF: 1.6 } },
     strategyProfiles: { breakout: {} },
     guardrails: { maxRiskTradeUsd: 25, protectedFields: [] },
-    assets: { BTC: { class: "crypto-major", strategies: { breakout: { coin: "BTC", dataSource: "coinbase-perp", interval: "15m", strategyFactory: "createDonchianAdx", dateRange: { start: "2025-05-24", end: "2026-02-24" } } } } },
+    assets: { BTC: { class: "crypto-major", strategies: { breakout: { coin: "BTC", dataSource: "binance", interval: "15m", strategyFactory: "createDonchianAdx", dateRange: { start: "2025-05-24", end: "2026-02-24" } } } } },
     phases: { refine: { maxIter: 5 }, research: { maxIter: 3 }, restructure: { maxIter: 5 }, maxCycles: 2 },
     scoring: { weights: { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 } },
     research: { enabled: true, model: "sonnet", maxSearchesPerIter: 3, timeoutMs: 180000 },
@@ -21,7 +21,7 @@ vi.mock("../lib/config.js", () => ({
   })),
   resolveDataConfig: vi.fn((_config: unknown, asset: string, _strategy?: string) => ({
     coin: asset,
-    dataSource: "coinbase-perp",
+    dataSource: "binance",
     interval: "15m",
     strategyFactory: "createDonchianAdx",
   })),
@@ -197,7 +197,7 @@ describe("buildConfig", () => {
   it("includes data config fields", () => {
     const cfg = buildConfig({ asset: "BTC" });
     expect(cfg.coin).toBe("BTC");
-    expect(cfg.dataSource).toBe("coinbase-perp");
+    expect(cfg.dataSource).toBe("binance");
     expect(cfg.interval).toBe("15m");
     expect(cfg.strategyFactory).toBe("createDonchianAdx");
     expect(cfg.startTime).toBeGreaterThan(0);
