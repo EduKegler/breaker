@@ -11,6 +11,8 @@ function createMockClient(): HlClient {
     placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
     cancelOrder: vi.fn(),
     getPositions: vi.fn().mockResolvedValue(positions),
+    getOpenOrders: vi.fn().mockResolvedValue([]),
+    getHistoricalOrders: vi.fn().mockResolvedValue([]),
     getAccountEquity: vi.fn().mockResolvedValue(1000),
   };
 }

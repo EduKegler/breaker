@@ -50,6 +50,8 @@ function createDeps(): SignalHandlerDeps {
       placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
       cancelOrder: vi.fn(),
       getPositions: vi.fn().mockResolvedValue([]),
+      getOpenOrders: vi.fn().mockResolvedValue([]),
+      getHistoricalOrders: vi.fn().mockResolvedValue([]),
       getAccountEquity: vi.fn().mockResolvedValue(1000),
     },
     store: new SqliteStore(":memory:"),
@@ -181,6 +183,19 @@ describe("handleSignal", () => {
 
     expect(result.success).toBe(false);
     expect(result.reason).toBe("Size is zero");
+  });
+
+  it("calls onSignalProcessed after handling signal", async () => {
+    const onSignalProcessed = vi.fn();
+    deps.onSignalProcessed = onSignalProcessed;
+
+    const result = await handleSignal(
+      { signal, currentPrice: 95000, source: "strategy-runner", alertId: "callback-001" },
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    expect(onSignalProcessed).toHaveBeenCalledOnce();
   });
 
   it("continues even when notification fails", async () => {

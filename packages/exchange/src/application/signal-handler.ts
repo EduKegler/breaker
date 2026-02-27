@@ -16,6 +16,7 @@ export interface SignalHandlerDeps {
   eventLog: EventLog;
   alertsClient: AlertsClient;
   positionBook: PositionBook;
+  onSignalProcessed?: () => void;
 }
 
 export interface HandleSignalInput {
@@ -212,6 +213,8 @@ export async function handleSignal(
       data: { signalId, type: "position_opened" },
     });
   }
+
+  deps.onSignalProcessed?.();
 
   return { success: true, signalId, intent };
 }

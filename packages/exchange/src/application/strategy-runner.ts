@@ -20,6 +20,7 @@ export interface StrategyRunnerDeps {
   positionBook: PositionBook;
   signalHandlerDeps: SignalHandlerDeps;
   eventLog: EventLog;
+  onNewCandle?: (candle: Candle) => void;
 }
 
 export class StrategyRunner {
@@ -65,6 +66,8 @@ export class StrategyRunner {
   async tick(): Promise<void> {
     const newCandle = await this.deps.poller.poll();
     if (!newCandle) return;
+
+    this.deps.onNewCandle?.(newCandle);
 
     const candles = this.deps.poller.getCandles();
     const index = candles.length - 1;

@@ -50,6 +50,42 @@ export interface EquitySnapshot {
   open_positions: number;
 }
 
+export interface OpenOrder {
+  coin: string;
+  oid: number;
+  side: string;
+  sz: number;
+  limitPx: number;
+  orderType: string;
+  isTrigger: boolean;
+  triggerPx: number;
+  triggerCondition: string;
+  reduceOnly: boolean;
+  isPositionTpsl: boolean;
+}
+
+export interface CandleData {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export interface SignalRow {
+  id: number;
+  alert_id: string;
+  source: string;
+  asset: string;
+  side: string;
+  entry_price: number;
+  stop_loss: number;
+  take_profits: string;
+  risk_check_passed: number;
+  created_at: string;
+}
+
 export interface ConfigResponse {
   mode: string;
   asset: string;
@@ -65,5 +101,8 @@ export const api = {
   positions: () => fetchJson<{ positions: LivePosition[] }>("/positions"),
   orders: () => fetchJson<{ orders: OrderRow[] }>("/orders"),
   equity: () => fetchJson<{ snapshots: EquitySnapshot[] }>("/equity"),
+  openOrders: () => fetchJson<{ orders: OpenOrder[] }>("/open-orders"),
   config: () => fetchJson<ConfigResponse>("/config"),
+  candles: () => fetchJson<{ candles: CandleData[] }>("/candles"),
+  signals: () => fetchJson<{ signals: SignalRow[] }>("/signals"),
 };

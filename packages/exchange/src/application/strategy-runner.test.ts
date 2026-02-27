@@ -100,6 +100,8 @@ function createDeps(strategy: Strategy, poller: ReturnType<typeof createMockPoll
         placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
         cancelOrder: vi.fn(),
         getPositions: vi.fn().mockResolvedValue([]),
+        getOpenOrders: vi.fn().mockResolvedValue([]),
+        getHistoricalOrders: vi.fn().mockResolvedValue([]),
         getAccountEquity: vi.fn().mockResolvedValue(1000),
       },
       store,
@@ -192,6 +194,40 @@ describe("StrategyRunner", () => {
 
     expect(strategy.onCandle).not.toHaveBeenCalled();
     expect(strategy.shouldExit).toHaveBeenCalled();
+  });
+
+  it("calls onNewCandle callback when new candle arrives", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const poller = createMockPoller(candles);
+    const strategy = createTestStrategy();
+    const onNewCandle = vi.fn();
+    const deps = createDeps(strategy, poller);
+    deps.onNewCandle = onNewCandle;
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    const newCandle = makeCandle(5);
+    poller.addCandle(newCandle);
+    await runner.tick();
+
+    expect(onNewCandle).toHaveBeenCalledOnce();
+    expect(onNewCandle).toHaveBeenCalledWith(newCandle);
+  });
+
+  it("does not call onNewCandle when no new candle", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const poller = createMockPoller(candles);
+    const strategy = createTestStrategy();
+    const onNewCandle = vi.fn();
+    const deps = createDeps(strategy, poller);
+    deps.onNewCandle = onNewCandle;
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+    await runner.tick(); // no new candle
+
+    expect(onNewCandle).not.toHaveBeenCalled();
   });
 
   it("stops running when stop() is called", () => {

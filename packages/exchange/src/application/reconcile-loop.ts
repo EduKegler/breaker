@@ -1,4 +1,5 @@
 import type { HlClient, HlPosition } from "../adapters/hyperliquid-client.js";
+import type { SqliteStore } from "../adapters/sqlite-store.js";
 import type { PositionBook } from "../domain/position-book.js";
 import type { EventLog } from "../adapters/event-log.js";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -6,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 export interface ReconcileResult {
   ok: boolean;
   drifts: string[];
+  actions: string[];
 }
 
 export function reconcile(
@@ -45,15 +47,25 @@ export function reconcile(
   return {
     ok: drifts.length === 0,
     drifts,
+    actions: [],
   };
+}
+
+export interface ReconciledData {
+  positions: ReturnType<PositionBook["getAll"]>;
+  openOrders: Awaited<ReturnType<HlClient["getOpenOrders"]>>;
+  orders: ReturnType<SqliteStore["getRecentOrders"]>;
+  equity: number;
 }
 
 export interface ReconcileLoopDeps {
   hlClient: HlClient;
   positionBook: PositionBook;
   eventLog: EventLog;
+  store: SqliteStore;
   walletAddress: string;
   intervalMs?: number;
+  onReconciled?: (data: ReconciledData) => void;
 }
 
 export class ReconcileLoop {
@@ -65,17 +77,133 @@ export class ReconcileLoop {
   }
 
   async check(): Promise<ReconcileResult> {
-    const hlPositions = await this.deps.hlClient.getPositions(this.deps.walletAddress);
-    const localPositions = this.deps.positionBook.getAll();
+    const { hlClient, positionBook, eventLog, store, walletAddress } = this.deps;
+    const actions: string[] = [];
+
+    // 1. Fetch positions from HL and local
+    const hlPositions = await hlClient.getPositions(walletAddress);
+    const localPositions = positionBook.getAll();
     const result = reconcile(localPositions, hlPositions);
 
-    await this.deps.eventLog.append({
-      type: result.ok ? "reconcile_ok" : "reconcile_drift",
-      timestamp: new Date().toISOString(),
-      data: { drifts: result.drifts },
+    // 2. Auto-correct positions
+    const localMap = new Map(localPositions.map((p) => [p.coin, p]));
+    const hlMap = new Map(hlPositions.map((p) => [p.coin, p]));
+
+    // 2a. HL has position, local doesn't → hydrate
+    for (const [coin, hlPos] of hlMap) {
+      if (!localMap.has(coin)) {
+        positionBook.open({
+          coin,
+          direction: hlPos.direction,
+          entryPrice: hlPos.entryPrice,
+          size: hlPos.size,
+          stopLoss: 0,
+          takeProfits: [],
+          openedAt: new Date().toISOString(),
+          signalId: -1,
+        });
+        actions.push(`position_hydrated:${coin}`);
+      }
+    }
+
+    // 2b. Local has position, HL doesn't → auto-close
+    for (const [coin] of localMap) {
+      if (!hlMap.has(coin)) {
+        positionBook.close(coin);
+        actions.push(`position_auto_closed:${coin}`);
+      }
+    }
+
+    // 2c. Update prices for all positions that exist on both sides
+    for (const [coin, hlPos] of hlMap) {
+      if (positionBook.get(coin) && hlPos.size > 0 && hlPos.unrealizedPnl !== 0) {
+        const currentPrice = hlPos.direction === "long"
+          ? hlPos.entryPrice + (hlPos.unrealizedPnl / hlPos.size)
+          : hlPos.entryPrice - (hlPos.unrealizedPnl / hlPos.size);
+        positionBook.updatePrice(coin, currentPrice);
+      }
+    }
+
+    // 3. Sync order statuses
+    const pendingOrders = store.getPendingOrders();
+    const trackable = pendingOrders.filter((o) => {
+      if (o.hl_order_id == null) return false;
+      return !Number.isNaN(Number(o.hl_order_id));
     });
 
-    return result;
+    let allOpenOrders = await hlClient.getOpenOrders(walletAddress);
+    if (trackable.length > 0) {
+      const openOrders = allOpenOrders;
+      const openOidSet = new Set(openOrders.map((o) => o.oid));
+
+      // Find resolved: pending locally but no longer open on HL
+      const resolved = trackable.filter((o) => !openOidSet.has(Number(o.hl_order_id)));
+
+      if (resolved.length > 0) {
+        const historicalOrders = await hlClient.getHistoricalOrders(walletAddress);
+        const historicalMap = new Map(historicalOrders.map((o) => [o.oid, o.status]));
+
+        for (const order of resolved) {
+          const oid = Number(order.hl_order_id);
+          const hlStatus = historicalMap.get(oid);
+          let newStatus: string;
+
+          if (hlStatus === "filled" || hlStatus === "triggered") {
+            newStatus = "filled";
+          } else if (hlStatus === "canceled" || hlStatus === "marginCanceled") {
+            newStatus = "cancelled";
+          } else if (hlStatus === "rejected") {
+            newStatus = "rejected";
+          } else {
+            // Not found in historical — if no position exists for this coin, it's resolved
+            const positionExists = positionBook.get(order.coin) != null;
+            if (!positionExists) {
+              newStatus = "cancelled";
+            } else {
+              // Position still open, order might be too recent — skip
+              continue;
+            }
+          }
+
+          const filledAt = newStatus === "filled" ? new Date().toISOString() : undefined;
+          store.updateOrderStatus(order.id!, newStatus, filledAt);
+          actions.push(`order_status_synced:${order.hl_order_id}:${newStatus}`);
+        }
+      }
+    }
+
+    // 4. Record equity snapshot
+    const equity = await hlClient.getAccountEquity(walletAddress);
+    if (equity > 0) {
+      const allPositions = positionBook.getAll();
+      store.insertEquitySnapshot({
+        timestamp: new Date().toISOString(),
+        equity,
+        unrealized_pnl: allPositions.reduce((sum, p) => sum + p.unrealizedPnl, 0),
+        realized_pnl: store.getTodayRealizedPnl(),
+        open_positions: allPositions.length,
+      });
+    }
+
+    // 5. Log reconciliation event
+    await eventLog.append({
+      type: result.ok && actions.length === 0 ? "reconcile_ok" : "reconcile_drift",
+      timestamp: new Date().toISOString(),
+      data: { drifts: result.drifts, actions },
+    });
+
+    // 6. Notify callback with current state
+    this.deps.onReconciled?.({
+      positions: positionBook.getAll(),
+      openOrders: allOpenOrders,
+      orders: store.getRecentOrders(100),
+      equity,
+    });
+
+    return {
+      ...result,
+      actions,
+    };
   }
 
   async start(): Promise<void> {

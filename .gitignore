@@ -22,6 +22,12 @@ claude-raw-output.log
 .cache/
 *.db
 *.xlsx
+*.png
+
+# Exchange runtime data
+**/exchange/data/
+**/exchange/.env.testnet
+**/exchange/.env.mainnet
 
 # Playwright MCP
 .playwright-mcp/

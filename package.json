@@ -5,6 +5,13 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test:watch": "pnpm -r test:watch",
+    "dev": "pnpm --filter @breaker/explorer dev",
+    "daemon": "pnpm --filter @breaker/exchange start",
+    "router": "pnpm --filter @breaker/router start",
+    "alerts": "pnpm --filter @breaker/alerts start",
+    "dashboard": "pnpm --filter @breaker/refiner dashboard:open",
+    "validate": "pnpm build && pnpm test && pnpm typecheck"
   }
 }

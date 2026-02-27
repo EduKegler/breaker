@@ -17,18 +17,21 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "dev": "tsx --watch src/daemon.ts",
     "start": "node dist/daemon.js"
   },
   "dependencies": {
     "@breaker/backtest": "workspace:*",
     "@breaker/kit": "workspace:*",
     "better-sqlite3": "^11.0.0",
+    "dotenv": "^17.3.1",
     "express": "^4.21.0",
     "got": "^14.4.0",
     "hyperliquid": "^1.5.0",
     "pino": "^9.0.0",
     "pino-http": "^10.0.0",
     "pino-roll": "^4.0.0",
+    "ws": "^8.19.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
@@ -36,7 +39,9 @@
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
     "@types/supertest": "^6.0.0",
+    "@types/ws": "^8.18.1",
     "supertest": "^7.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

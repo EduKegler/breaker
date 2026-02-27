@@ -4,6 +4,7 @@ import type { SqliteStore } from "./adapters/sqlite-store.js";
 import type { PositionBook } from "./domain/position-book.js";
 import type { HlClient } from "./adapters/hyperliquid-client.js";
 import { handleSignal, type SignalHandlerDeps } from "./application/signal-handler.js";
+import type { CandlePoller } from "./adapters/candle-poller.js";
 import { z } from "zod";
 
 const SignalPayloadSchema = z.object({
@@ -23,7 +24,9 @@ export interface ServerDeps {
   store: SqliteStore;
   positionBook: PositionBook;
   hlClient: HlClient;
+  walletAddress: string;
   signalHandlerDeps: SignalHandlerDeps;
+  candlePoller: CandlePoller;
 }
 
 export function createApp(deps: ServerDeps): express.Express {
@@ -53,6 +56,25 @@ export function createApp(deps: ServerDeps): express.Express {
   app.get("/equity", (_req, res) => {
     const snapshots = deps.store.getEquitySnapshots(500);
     res.json({ snapshots });
+  });
+
+  app.get("/open-orders", async (_req, res) => {
+    try {
+      const orders = await deps.hlClient.getOpenOrders(deps.walletAddress);
+      res.json({ orders });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/candles", (_req, res) => {
+    const candles = deps.candlePoller.getCandles();
+    res.json({ candles });
+  });
+
+  app.get("/signals", (_req, res) => {
+    const signals = deps.store.getRecentSignals(100);
+    res.json({ signals });
   });
 
   app.get("/config", (_req, res) => {

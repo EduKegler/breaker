@@ -119,6 +119,72 @@ describe("SqliteStore", () => {
     });
   });
 
+  describe("getPendingOrders", () => {
+    it("returns only orders with pending status", () => {
+      store.insertSignal({
+        alert_id: "sig-001",
+        source: "strategy-runner",
+        asset: "BTC",
+        side: "LONG",
+        entry_price: 95000,
+        stop_loss: 94000,
+        take_profits: "[]",
+        risk_check_passed: 1,
+        risk_check_reason: null,
+      });
+
+      // Insert mix of orders
+      store.insertOrder({
+        signal_id: 1, hl_order_id: "100", coin: "BTC", side: "sell",
+        size: 0.01, price: 94000, order_type: "stop", tag: "sl",
+        status: "pending", mode: "testnet", filled_at: null,
+      });
+      store.insertOrder({
+        signal_id: 1, hl_order_id: "101", coin: "BTC", side: "sell",
+        size: 0.005, price: 97000, order_type: "limit", tag: "tp1",
+        status: "filled", mode: "testnet", filled_at: "2024-01-01T00:00:00Z",
+      });
+      store.insertOrder({
+        signal_id: 1, hl_order_id: "102", coin: "BTC", side: "sell",
+        size: 0.005, price: 99000, order_type: "limit", tag: "tp2",
+        status: "pending", mode: "testnet", filled_at: null,
+      });
+      store.insertOrder({
+        signal_id: 1, hl_order_id: null, coin: "BTC", side: "buy",
+        size: 0.01, price: 95000, order_type: "market", tag: "entry",
+        status: "cancelled", mode: "testnet", filled_at: null,
+      });
+
+      const pending = store.getPendingOrders();
+      expect(pending).toHaveLength(2);
+      expect(pending.map((o) => o.hl_order_id)).toEqual(["100", "102"]);
+    });
+  });
+
+  describe("getOrderByHlOid", () => {
+    it("returns order matching hl_order_id", () => {
+      store.insertSignal({
+        alert_id: "sig-oid", source: "strategy-runner", asset: "BTC",
+        side: "LONG", entry_price: 95000, stop_loss: 94000,
+        take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      });
+      store.insertOrder({
+        signal_id: 1, hl_order_id: "555", coin: "BTC", side: "sell",
+        size: 0.01, price: 94000, order_type: "stop", tag: "sl",
+        status: "pending", mode: "testnet", filled_at: null,
+      });
+
+      const order = store.getOrderByHlOid("555");
+      expect(order).not.toBeNull();
+      expect(order!.hl_order_id).toBe("555");
+      expect(order!.tag).toBe("sl");
+    });
+
+    it("returns null when hl_order_id not found", () => {
+      expect(store.getOrderByHlOid("999")).toBeNull();
+    });
+  });
+
   describe("fills", () => {
     it("inserts fills", () => {
       store.insertSignal({

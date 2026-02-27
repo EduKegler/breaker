@@ -1,24 +1,37 @@
 # MEMORY — explorer
 
 ## Current state
-- Implemented: Vite + React + Tailwind + recharts dashboard.
-- 3 pages: Dashboard (positions + equity), Orders (table), Equity (chart).
-- Vite proxy: `/api/*` → `http://localhost:3200/*` (exchange daemon).
-- Build output: ~600KB JS (recharts is heavy), 8.5KB CSS.
-- No tests yet (frontend UI; manual testing via browser).
+- "Tactical Terminal" redesign: single-page dashboard, dark terminal aesthetic.
+- Fonts: Outfit (display) + JetBrains Mono (data) via Google Fonts in index.html.
+- Paleta: terminal-bg (#0a0a0f), terminal-surface (#12121a), profit (#00ff88), loss (#ff3366).
+- Layout: header bar + candlestick chart (full-width) + grid [equity 60% | positions 40%] + open orders + order log.
+- Noise texture via SVG data URI overlay (2.5% opacity).
+- No pages/ directory — all content in app.tsx with component composition.
+- Hybrid HTTP+WS model: initial HTTP fetch + WebSocket push updates (no more usePoll).
+- useWebSocket hook with auto-reconnect (3s), WS status indicator in header.
+- "Open Orders" section shows live Hyperliquid orders (SL/TP/limit) via GET /open-orders + WS push.
+- PositionCard shows inline TP/SL badges below position data, filtered by coin from openOrders.
+- Build output: ~781KB JS (recharts + lightweight-charts), 11KB CSS.
+- CandlestickChart component uses lightweight-charts v5.1 (createChart, CandlestickSeries, createSeriesMarkers, createPriceLine).
+- Entry markers: green arrowUp (long) / red arrowDown (short). Price lines: entry (amber dotted), SL (red dashed).
+- WS events: "candle" appends new candle, "signals" replaces signals array.
 
 ## Pending items
 - Add config page showing exchange configuration.
 - Add real-time PnL summary / stats panel.
-- Consider lightweight-charts for candlestick view (not MVP).
+- Consider adding TP price lines from open orders (currently only entry+SL shown).
 - Add error boundaries and loading skeletons.
+- usePoll still exists in lib/use-poll.ts but is no longer imported (can be deleted).
 
 ## Known pitfalls
-- recharts bundle is ~500KB — could use dynamic import to split.
-- Vite proxy only works in dev mode; production needs separate API server or static hosting.
+- recharts (~500KB) + lightweight-charts (~40KB) — could use dynamic import to split.
+- Vite proxy only works in dev mode; production needs separate API server.
+- Vite proxy for /ws path uses `ws: true` — required for WebSocket upgrade.
+- Tailwind custom colors (terminal-*, profit, loss, amber) defined in tailwind.config.js.
 
 ## Non-obvious decisions
-- No backend API server — Vite dev proxy forwards directly to exchange:3200.
-- Polling at 5-10s intervals, no WebSocket (simple, sufficient for MVP).
-- usePoll hook abstracts polling with auto-refresh and error handling.
-- No auth — localhost only tool. Add if multi-device access needed later.
+- Noise overlay uses `body::after` with SVG feTurbulence — no image asset needed.
+- CSS custom properties in :root mirror Tailwind colors for use in recharts inline styles.
+- EquityChart uses AreaChart with gradient fill (linearGradient in SVG defs).
+- Order table has sticky header with max-h-[400px] scrollable body.
+- `glow-header` class uses box-shadow with green rgba for header glow effect.

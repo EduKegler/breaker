@@ -158,6 +158,15 @@ export class SqliteStore {
     return result.lastInsertRowid as number;
   }
 
+  getOrderByHlOid(hlOid: string): OrderRow | null {
+    const row = this.db.prepare("SELECT * FROM orders WHERE hl_order_id = ? LIMIT 1").get(hlOid) as OrderRow | undefined;
+    return row ?? null;
+  }
+
+  getPendingOrders(): OrderRow[] {
+    return this.db.prepare("SELECT * FROM orders WHERE status = 'pending'").all() as OrderRow[];
+  }
+
   getRecentOrders(limit: number = 50): OrderRow[] {
     return this.db.prepare("SELECT * FROM orders ORDER BY id DESC LIMIT ?").all(limit) as OrderRow[];
   }
