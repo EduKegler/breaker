@@ -42,7 +42,7 @@ export function App() {
   const [httpError, setHttpError] = useState(false);
 
   const handleLoadMoreCandles = useCallback((before: number) => {
-    api.candles(before, 200).then((r) => {
+    api.candles(before, 500).then((r) => {
       if (r.candles.length === 0) return;
       setCandles((prev) => {
         const existingTimes = new Set(prev.map((c) => c.t));

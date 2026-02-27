@@ -80,15 +80,13 @@ export function CandlestickChart({ candles, signals, positions, onLoadMore }: Ca
     // Lazy load: detect scroll near left edge
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (!range || loadingRef.current) return;
-      // When the left edge of visible range is near the start of data
-      if (range.from < 10) {
+      if (range.from < 50) {
         const currentCandles = candlesRef.current;
         if (currentCandles.length === 0) return;
         const oldestTs = currentCandles[0].t;
         loadingRef.current = true;
         onLoadMoreRef.current?.(oldestTs);
-        // Reset after a short delay to debounce
-        setTimeout(() => { loadingRef.current = false; }, 2000);
+        setTimeout(() => { loadingRef.current = false; }, 1000);
       }
     });
 
