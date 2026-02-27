@@ -6,7 +6,7 @@
  * Replaces Pine-specific build-fix-prompt.ts.
  */
 
-export interface TsCompilationError {
+interface TsCompilationError {
   message: string;
   file?: string;
   line?: number;
@@ -14,7 +14,7 @@ export interface TsCompilationError {
   code?: string; // e.g. "TS2345"
 }
 
-export interface BuildFixPromptOptions {
+interface BuildFixPromptOptions {
   strategySourcePath: string;
   errors: TsCompilationError[];
   buildOutput: string;

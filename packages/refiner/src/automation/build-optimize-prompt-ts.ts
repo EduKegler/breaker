@@ -17,7 +17,7 @@ import type { ResolvedCriteria, CoreParameterDef } from "../types/config.js";
 import type { ParameterHistory, ApproachRecord } from "../types/parameter-history.js";
 import { safeJsonParse } from "../lib/safe-json.js";
 
-export interface BuildPromptOptions {
+interface BuildPromptOptions {
   metrics: Metrics;
   tradeAnalysis: TradeAnalysis | null;
   strategySourcePath: string;
@@ -265,7 +265,7 @@ function buildPhaseTask(
    Do NOT edit \`${paramHistoryPath}\`.`;
 }
 
-export function buildTradeAnalysisSection(ta: TradeAnalysis): string {
+function buildTradeAnalysisSection(ta: TradeAnalysis): string {
   return `## TRADE ANALYSIS
 By exit type:
 ${(ta.byExitType ?? [])
@@ -287,7 +287,7 @@ Best trades: ${ta.best3TradesPnl.join(", ")} USD | Worst: ${ta.worst3TradesPnl.j
 `;
 }
 
-export function buildFilterSimsSection(tradeAnalysis: TradeAnalysis | null): string {
+function buildFilterSimsSection(tradeAnalysis: TradeAnalysis | null): string {
   const sims = tradeAnalysis?.filterSimulations;
   if (!sims || !sims.totalTrades) return "";
 
@@ -312,7 +312,7 @@ export function buildFilterSimsSection(tradeAnalysis: TradeAnalysis | null): str
   return lines.join("\n") + "\n\n";
 }
 
-export function buildOverfitSection(paramHistory: ParameterHistory | null, tradeAnalysis: TradeAnalysis | null): string {
+function buildOverfitSection(paramHistory: ParameterHistory | null, tradeAnalysis: TradeAnalysis | null): string {
   const warnings: string[] = [];
 
   if (tradeAnalysis?.byDirection) {
@@ -329,7 +329,7 @@ export function buildOverfitSection(paramHistory: ParameterHistory | null, trade
   return "## ROBUSTNESS DIAGNOSTIC\n" + warnings.join("\n") + "\n\n";
 }
 
-export function buildExploredSpaceSection(paramHistory: ParameterHistory | null, globalIter: number, iter: number, maxIter: number): string {
+function buildExploredSpaceSection(paramHistory: ParameterHistory | null, globalIter: number, iter: number, maxIter: number): string {
   if (!paramHistory) return "";
   const lines = ["## EXPLORED SPACE (do not repeat)"];
 
@@ -357,7 +357,7 @@ export function buildExploredSpaceSection(paramHistory: ParameterHistory | null,
   return lines.join("\n") + "\n\n";
 }
 
-export function buildPendingHypothesesSection(paramHistory: ParameterHistory | null): string {
+function buildPendingHypothesesSection(paramHistory: ParameterHistory | null): string {
   if (!paramHistory) return "";
   const pending = (paramHistory.pendingHypotheses ?? []).filter((h) => !h.expired);
   if (!pending.length) return "";
@@ -370,7 +370,7 @@ export function buildPendingHypothesesSection(paramHistory: ParameterHistory | n
   return lines.join("\n") + "\n\n";
 }
 
-export function buildApproachHistorySection(paramHistory: ParameterHistory | null): string {
+function buildApproachHistorySection(paramHistory: ParameterHistory | null): string {
   if (!paramHistory?.approaches?.length) return "";
   const lines = ["## APPROACH HISTORY"];
   for (const a of paramHistory.approaches) {
@@ -380,7 +380,7 @@ export function buildApproachHistorySection(paramHistory: ParameterHistory | nul
   return lines.join("\n") + "\n\n";
 }
 
-export function buildCoreParamsSection(coreParams: CoreParameterDef[] | undefined, exploredRanges: Record<string, unknown[]> | undefined): string {
+function buildCoreParamsSection(coreParams: CoreParameterDef[] | undefined, exploredRanges: Record<string, unknown[]> | undefined): string {
   if (!coreParams?.length) return "";
   const lines = ["## CORE PARAMETERS (STRICT SEQUENTIAL ORDER)"];
   let foundIncomplete = false;
@@ -409,7 +409,7 @@ export function buildCoreParamsSection(coreParams: CoreParameterDef[] | undefine
   return lines.join("\n") + "\n\n";
 }
 
-export function buildDesignChecklistSection(checklist: string[] | undefined, globalIter: number): string {
+function buildDesignChecklistSection(checklist: string[] | undefined, globalIter: number): string {
   if (!checklist?.length || globalIter !== 1) return "";
   const lines = ["## PRE-CHECK: validate strategy implements ALL components"];
   for (const item of checklist) lines.push(`[ ] ${item}`);

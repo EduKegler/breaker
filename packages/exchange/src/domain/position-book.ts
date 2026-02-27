@@ -35,6 +35,7 @@ export class PositionBook {
   updatePrice(coin: string, price: number): void {
     const pos = this.positions.get(coin);
     if (!pos) return;
+    if (!Number.isFinite(price) || price <= 0) return;
     pos.currentPrice = price;
     pos.unrealizedPnl =
       pos.direction === "long"

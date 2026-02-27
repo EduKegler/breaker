@@ -19,9 +19,9 @@ import { DailyTradeLimit } from "../lib/daily-limit.js";
 import { logger, httpLogger } from "../lib/logger.js";
 import { isMainModule, formatZodErrors } from "@breaker/kit";
 
-export type RedisStartupPolicy = "ready" | "degraded" | "fail_fast";
+type RedisStartupPolicy = "ready" | "degraded" | "fail_fast";
 
-export function getRedisStartupPolicy(result: RedisInitResult): RedisStartupPolicy {
+function getRedisStartupPolicy(result: RedisInitResult): RedisStartupPolicy {
   if (result.configured && !result.connected) return "fail_fast";
   if (!result.connected) return "degraded";
   return "ready";
@@ -54,7 +54,7 @@ let dedupRuntimeAlarmActive = false;
 // ---------------------
 export const dailyLimit = new DailyTradeLimit(env.GLOBAL_MAX_TRADES_DAY);
 
-export function isDuplicate(alertId: string): boolean {
+function isDuplicate(alertId: string): boolean {
   if (sentAlerts.has(alertId)) return true;
   sentAlerts.set(alertId, true);
   return false;
@@ -63,7 +63,7 @@ export function isDuplicate(alertId: string): boolean {
 // ---------------------
 // WhatsApp message formatter
 // ---------------------
-export function formatWhatsAppMessage(alert: AlertPayload): string {
+function formatWhatsAppMessage(alert: AlertPayload): string {
   const side = alert.side === "LONG" ? "LONG" : "SHORT";
   const icon = alert.side === "LONG" ? "\u{1F7E2}" : "\u{1F534}";
   const slPctVal = (Math.abs(alert.sl - alert.entry) / alert.entry) * 100;
@@ -120,7 +120,7 @@ async function sendWithRetry(text: string): Promise<unknown> {
 // ---------------------
 // Validation via Zod
 // ---------------------
-export function validateAlert(body: unknown): string[] {
+function validateAlert(body: unknown): string[] {
   const result = AlertPayloadSchema.safeParse(body);
   if (result.success) return [];
   return formatZodErrors(result.error);

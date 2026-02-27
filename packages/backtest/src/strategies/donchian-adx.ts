@@ -8,7 +8,7 @@ import { atr } from "../indicators/atr.js";
 const MS_1H = 3_600_000;
 const MS_1D = 86_400_000;
 
-export interface DonchianAdxParams {
+interface DonchianAdxParams {
   dcSlow: StrategyParam;
   dcFast: StrategyParam;
   adxThreshold: StrategyParam;

@@ -67,4 +67,67 @@ describe("checkRisk", () => {
     expect(result.passed).toBe(false);
     expect(result.reason).toContain("Notional");
   });
+
+  // Kill switch: maxTradesPerDay = 0 blocks all trades
+  it("blocks all trades when maxTradesPerDay is 0 (kill switch)", () => {
+    const killSwitchGuardrails: Guardrails = { ...guardrails, maxTradesPerDay: 0 };
+    const result = checkRisk({ ...safeInput, tradesToday: 0 }, killSwitchGuardrails);
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("Trades today");
+  });
+
+  // Absolute cap: notional > 100k rejected regardless of config
+  it("rejects notional above absolute cap even with high config limit", () => {
+    const permissiveGuardrails: Guardrails = { ...guardrails, maxNotionalUsd: 500_000 };
+    const result = checkRisk({ ...safeInput, notionalUsd: 150_000 }, permissiveGuardrails);
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("absolute cap");
+  });
+
+  it("allows notional just under absolute cap", () => {
+    const permissiveGuardrails: Guardrails = { ...guardrails, maxNotionalUsd: 500_000 };
+    const result = checkRisk({ ...safeInput, notionalUsd: 99_999 }, permissiveGuardrails);
+    expect(result.passed).toBe(true);
+  });
+
+  // Price sanity check
+  it("rejects entry price deviating >5% from current price", () => {
+    const result = checkRisk(
+      { ...safeInput, entryPrice: 110, currentPrice: 100 },
+      guardrails,
+    );
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("deviates");
+    expect(result.reason).toContain("10.0%");
+  });
+
+  it("allows entry price within 5% of current price", () => {
+    const result = checkRisk(
+      { ...safeInput, entryPrice: 103, currentPrice: 100 },
+      guardrails,
+    );
+    expect(result.passed).toBe(true);
+  });
+
+  it("skips price check when currentPrice is 0", () => {
+    const result = checkRisk(
+      { ...safeInput, entryPrice: 110, currentPrice: 0 },
+      guardrails,
+    );
+    expect(result.passed).toBe(true);
+  });
+
+  it("skips price check when prices are not provided", () => {
+    const result = checkRisk(safeInput, guardrails);
+    expect(result.passed).toBe(true);
+  });
+
+  it("rejects entry price below current by >5%", () => {
+    const result = checkRisk(
+      { ...safeInput, entryPrice: 90, currentPrice: 100 },
+      guardrails,
+    );
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("deviates");
+  });
 });

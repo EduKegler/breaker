@@ -42,7 +42,7 @@ export function resolveAssetCriteria(
   return { ...config.criteria, ...classCriteria, ...strategyProfile };
 }
 
-export interface DataConfig {
+interface DataConfig {
   coin: string;
   dataSource: string;
   interval: string;

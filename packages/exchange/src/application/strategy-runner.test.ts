@@ -94,6 +94,7 @@ function createDeps(strategy: Strategy, poller: ReturnType<typeof createMockPoll
       config,
       hlClient: {
         connect: vi.fn(),
+        getSzDecimals: vi.fn().mockReturnValue(5),
         setLeverage: vi.fn(),
         placeMarketOrder: vi.fn().mockResolvedValue({ orderId: "HL-1", status: "placed" }),
         placeStopOrder: vi.fn().mockResolvedValue({ orderId: "HL-2", status: "placed" }),
@@ -106,7 +107,7 @@ function createDeps(strategy: Strategy, poller: ReturnType<typeof createMockPoll
       },
       store,
       eventLog: { append: vi.fn() },
-      alertsClient: { notifyPositionOpened: vi.fn(), notifyTrailingSlMoved: vi.fn() },
+      alertsClient: { notifyPositionOpened: vi.fn(), notifyTrailingSlMoved: vi.fn(), sendText: vi.fn() },
       positionBook,
     },
   };
@@ -366,6 +367,40 @@ describe("StrategyRunner", () => {
     expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).not.toHaveBeenCalled();
   });
 
+  it("position is not removed from PositionBook when exit placeMarketOrder fails", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const poller = createMockPoller(candles);
+    const strategy = createTestStrategy(5);
+    // shouldExit triggers on bar 6
+    vi.mocked(strategy.shouldExit!).mockImplementation((ctx: StrategyContext) => {
+      if (ctx.index === 6) return { exit: true, comment: "test exit" };
+      return null;
+    });
+    const deps = createDeps(strategy, poller);
+
+    // Make exit placeMarketOrder fail
+    (deps.signalHandlerDeps.hlClient.placeMarketOrder as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ orderId: "HL-1", status: "placed" }) // entry succeeds
+      .mockRejectedValueOnce(new Error("Exchange timeout")); // exit fails
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Tick 1: open position
+    poller.addCandle(makeCandle(5));
+    await runner.tick();
+    expect(deps.positionBook.count()).toBe(1);
+
+    // Tick 2: shouldExit fires, placeMarketOrder fails → error propagates through tick()
+    // The start() loop catches this, but tick() itself throws
+    poller.addCandle(makeCandle(6));
+    await expect(runner.tick()).rejects.toThrow("Exchange timeout");
+
+    // Position should still be in the book (not removed)
+    expect(deps.positionBook.count()).toBe(1);
+    expect(deps.positionBook.get("BTC")).not.toBeNull();
+  });
+
   it("stops running when stop() is called", () => {
     const candles = [makeCandle(0)];
     const poller = createMockPoller(candles);
@@ -377,5 +412,120 @@ describe("StrategyRunner", () => {
     // We can't test start() easily since it loops, but we can verify stop works
     runner.stop();
     expect(runner.isRunning()).toBe(false);
+  });
+
+  describe("warmup validation", () => {
+    it("throws when received candles are below 50% of requested", async () => {
+      // Request 10 bars but only get 2 (< ceil(10 * 0.5) = 5)
+      const candles = [makeCandle(0), makeCandle(1)];
+      const poller = createMockPoller(candles);
+      const deps = createDeps(createTestStrategy(), poller);
+      deps.config = { ...config, warmupBars: 10 };
+
+      const runner = new StrategyRunner(deps);
+      await expect(runner.warmup()).rejects.toThrow(/Insufficient warmup data/);
+    });
+
+    it("succeeds when candles meet minimum 50% threshold", async () => {
+      // Request 10 bars, get 5 (= ceil(10 * 0.5))
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const poller = createMockPoller(candles);
+      const deps = createDeps(createTestStrategy(), poller);
+      deps.config = { ...config, warmupBars: 10 };
+
+      const runner = new StrategyRunner(deps);
+      await expect(runner.warmup()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("candle staleness tracking", () => {
+    it("fires onStaleData after 5 consecutive empty polls", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const poller = createMockPoller(candles);
+      const onStaleData = vi.fn();
+      const deps = createDeps(createTestStrategy(), poller);
+      deps.onStaleData = onStaleData;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      for (let i = 0; i < 5; i++) await runner.tick();
+
+      expect(onStaleData).toHaveBeenCalledOnce();
+      expect(onStaleData).toHaveBeenCalledWith(
+        expect.objectContaining({ consecutiveEmptyPolls: 5 }),
+      );
+    });
+
+    it("does not fire onStaleData before 5 empty polls", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const poller = createMockPoller(candles);
+      const onStaleData = vi.fn();
+      const deps = createDeps(createTestStrategy(), poller);
+      deps.onStaleData = onStaleData;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      for (let i = 0; i < 4; i++) await runner.tick();
+
+      expect(onStaleData).not.toHaveBeenCalled();
+    });
+
+    it("resets staleness counter when new candle arrives", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const poller = createMockPoller(candles);
+      const onStaleData = vi.fn();
+      const deps = createDeps(createTestStrategy(), poller);
+      deps.onStaleData = onStaleData;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // 3 empty polls
+      for (let i = 0; i < 3; i++) await runner.tick();
+
+      // New candle resets counter
+      poller.addCandle(makeCandle(5));
+      await runner.tick();
+
+      // 5 more empty polls → should fire (counter was reset at candle)
+      for (let i = 0; i < 5; i++) await runner.tick();
+
+      expect(onStaleData).toHaveBeenCalledOnce();
+    });
+
+    it("fires onStaleData only once at exactly 5 polls", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const poller = createMockPoller(candles);
+      const onStaleData = vi.fn();
+      const deps = createDeps(createTestStrategy(), poller);
+      deps.onStaleData = onStaleData;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // 10 empty polls — callback fires at 5, not again
+      for (let i = 0; i < 10; i++) await runner.tick();
+
+      expect(onStaleData).toHaveBeenCalledOnce();
+    });
+
+    it("tracks lastCandleAt from processed candles", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const poller = createMockPoller(candles);
+      const deps = createDeps(createTestStrategy(), poller);
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      expect(runner.getLastCandleAt()).toBe(0);
+
+      const newCandle = makeCandle(5);
+      poller.addCandle(newCandle);
+      await runner.tick();
+
+      expect(runner.getLastCandleAt()).toBe(newCandle.t);
+    });
   });
 });

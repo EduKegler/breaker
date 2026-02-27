@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 
-export interface SignalRow {
+interface SignalRow {
   id?: number;
   alert_id: string;
   source: string;
@@ -14,7 +14,7 @@ export interface SignalRow {
   created_at?: string;
 }
 
-export interface OrderRow {
+interface OrderRow {
   id?: number;
   signal_id: number;
   hl_order_id: string | null;
@@ -30,7 +30,7 @@ export interface OrderRow {
   filled_at: string | null;
 }
 
-export interface FillRow {
+interface FillRow {
   id?: number;
   order_id: number;
   price: number;
@@ -39,7 +39,7 @@ export interface FillRow {
   timestamp: string;
 }
 
-export interface EquitySnapshotRow {
+interface EquitySnapshotRow {
   id?: number;
   timestamp: string;
   equity: number;

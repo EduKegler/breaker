@@ -11,7 +11,7 @@ import { setup, assign } from "xstate";
 // ---------------------------------------------------------------------------
 // Context
 // ---------------------------------------------------------------------------
-export interface BreakerContext {
+interface BreakerContext {
   /** Which phase was requested at startup (used by init state routing only). */
   initialPhase: "refine" | "research" | "restructure";
   phaseIterCount: number;
@@ -32,7 +32,7 @@ export interface BreakerContext {
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
-export type BreakerEvent =
+type BreakerEvent =
   | { type: "ITER_START" }
   | { type: "ESCALATE" }
   | { type: "PHASE_TIMEOUT" }

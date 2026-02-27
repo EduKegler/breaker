@@ -131,11 +131,11 @@ export interface ConfigResponse {
   dataSource?: string;
 }
 
-export interface QuickSignalPayload {
+interface QuickSignalPayload {
   direction: "long" | "short";
 }
 
-export interface QuickSignalResponse {
+interface QuickSignalResponse {
   status: "executed" | "rejected" | "error";
   signalId?: number;
   stopLoss?: number;

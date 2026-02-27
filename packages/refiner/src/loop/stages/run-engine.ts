@@ -17,7 +17,7 @@ import type {
   CompletedTrade,
 } from "@breaker/backtest";
 
-export interface EngineResult {
+interface EngineResult {
   metrics: Metrics;
   analysis: TradeAnalysis;
   trades: CompletedTrade[];

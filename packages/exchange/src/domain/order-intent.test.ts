@@ -77,6 +77,22 @@ describe("signalToIntent", () => {
     expect(intent.size).toBe(5); // 500 / 100
   });
 
+  it("returns zero size when entryPrice is 0 in cash mode (division by zero guard)", () => {
+    const cashSizing: Sizing = { mode: "cash", riskPerTradeUsd: 10, cashPerTrade: 500 };
+    const signal: Signal = {
+      direction: "long",
+      entryPrice: 0,
+      stopLoss: -5,
+      takeProfits: [],
+      comment: "Zero entry",
+    };
+
+    const intent = signalToIntent(signal, 0, "BTC", cashSizing);
+
+    expect(intent.size).toBe(0); // cashPerTrade / 0 → guarded to 0
+    expect(intent.notionalUsd).toBe(0);
+  });
+
   it("returns zero size when stopDist is zero in risk mode", () => {
     const signal: Signal = {
       direction: "long",

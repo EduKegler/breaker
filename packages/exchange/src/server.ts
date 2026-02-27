@@ -1,4 +1,5 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
 import type { ExchangeConfig } from "./types/config.js";
 import type { SqliteStore } from "./adapters/sqlite-store.js";
 import type { PositionBook } from "./domain/position-book.js";
@@ -7,6 +8,7 @@ import { handleSignal, type SignalHandlerDeps } from "./application/signal-handl
 import { replayStrategy } from "./application/strategy-replay.js";
 import type { CandlePoller } from "./adapters/candle-poller.js";
 import { intervalToMs, atr, type Strategy, type CandleInterval } from "@breaker/backtest";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 const SignalPayloadSchema = z.object({
@@ -36,9 +38,18 @@ export function createApp(deps: ServerDeps): express.Express {
   const app = express();
   app.use(express.json({ limit: "100kb" }));
 
+  // Rate limit POST endpoints: 10 req/min per IP
+  const postLimiter = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: false, legacyHeaders: false }) as unknown as express.RequestHandler;
+
   app.get("/health", (_req, res) => {
+    const latestCandle = deps.candlePoller.getLatest();
+    const lastCandleAt = latestCandle?.t ?? null;
+    const ivlMs = intervalToMs(deps.config.interval as CandleInterval);
+    const candleStale = lastCandleAt != null && (Date.now() - lastCandleAt) > 5 * ivlMs;
+
     res.json({
-      status: "ok",
+      status: candleStale ? "stale" : "ok",
+      lastCandleAt,
       mode: deps.config.mode,
       asset: deps.config.asset,
       strategy: deps.config.strategy,
@@ -151,7 +162,7 @@ export function createApp(deps: ServerDeps): express.Express {
     res.json({ mode, asset, strategy, interval, leverage, guardrails, sizing, dataSource });
   });
 
-  app.post("/signal", async (req, res) => {
+  app.post("/signal", postLimiter, async (req, res) => {
     const parsed = SignalPayloadSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid signal payload", details: parsed.error.issues });
@@ -159,7 +170,14 @@ export function createApp(deps: ServerDeps): express.Express {
     }
 
     const { direction, entryPrice, stopLoss, takeProfits, comment, alertId } = parsed.data;
-    const currentPrice = entryPrice ?? 0; // Will be resolved if null
+
+    // Use market price from poller; fall back to entryPrice only if poller has data
+    const latestCandle = deps.candlePoller.getLatest();
+    const currentPrice = latestCandle?.c ?? entryPrice;
+    if (currentPrice == null || currentPrice <= 0) {
+      res.status(422).json({ status: "rejected", reason: "No market price available and entryPrice is null" });
+      return;
+    }
 
     try {
       const result = await handleSignal(
@@ -186,7 +204,9 @@ export function createApp(deps: ServerDeps): express.Express {
     coin: z.string().min(1),
   });
 
-  app.post("/close-position", async (req, res) => {
+  const closingInProgress = new Set<string>();
+
+  app.post("/close-position", postLimiter, async (req, res) => {
     const parsed = ClosePositionSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid payload", details: parsed.error.issues });
@@ -194,12 +214,19 @@ export function createApp(deps: ServerDeps): express.Express {
     }
 
     const { coin } = parsed.data;
+
+    if (closingInProgress.has(coin)) {
+      res.status(409).json({ error: `Close already in progress for ${coin}` });
+      return;
+    }
+
     const position = deps.positionBook.get(coin);
     if (!position) {
       res.status(400).json({ error: `No open position for ${coin}` });
       return;
     }
 
+    closingInProgress.add(coin);
     try {
       // Market order on opposite side to close
       const isBuy = position.direction === "short";
@@ -218,6 +245,8 @@ export function createApp(deps: ServerDeps): express.Express {
       res.json({ status: "closed" });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
+    } finally {
+      closingInProgress.delete(coin);
     }
   });
 
@@ -248,7 +277,7 @@ export function createApp(deps: ServerDeps): express.Express {
     direction: z.enum(["long", "short"]),
   });
 
-  app.post("/quick-signal", async (req, res) => {
+  app.post("/quick-signal", postLimiter, async (req, res) => {
     const parsed = QuickSignalSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid payload", details: parsed.error.issues });
@@ -288,7 +317,7 @@ export function createApp(deps: ServerDeps): express.Express {
       comment: "Manual from dashboard",
     };
 
-    const alertId = `manual-${Date.now()}`;
+    const alertId = `manual-${randomUUID()}`;
 
     try {
       const result = await handleSignal(

@@ -16,5 +16,5 @@ const EnvSchema = z.object({
   REDIS_URL: z.string().optional(),
 });
 
-export type Env = z.infer<typeof EnvSchema>;
+type Env = z.infer<typeof EnvSchema>;
 export const env = parseEnv(EnvSchema);

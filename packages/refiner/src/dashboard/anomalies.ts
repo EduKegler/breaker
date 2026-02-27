@@ -1,6 +1,6 @@
 import type { DashboardEvent } from "../types/events.js";
 
-export interface AnomalyEvent extends DashboardEvent {
+interface AnomalyEvent extends DashboardEvent {
   anomalies?: string[];
 }
 

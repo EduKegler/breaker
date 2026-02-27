@@ -99,4 +99,52 @@ describe("HlEventStream", () => {
     const stream = new HlEventStream(sdk as never, "0xtest");
     expect(() => stream.stop()).not.toThrow();
   });
+
+  it("callback error does not crash HlEventStream", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onOrderUpdate = vi.fn().mockImplementation(() => {
+      throw new Error("callback exploded");
+    });
+
+    await stream.start({ onOrderUpdate, onFill: vi.fn() });
+
+    // Simulate SDK pushing an order update — should not throw
+    const subscribedCb = sdk.subscriptions.subscribeToOrderUpdates.mock.calls[0][1];
+    expect(() => subscribedCb([])).not.toThrow();
+    expect(onOrderUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("fill callback error does not crash HlEventStream", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onFill = vi.fn().mockImplementation(() => {
+      throw new Error("fill callback exploded");
+    });
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill });
+
+    const subscribedCb = sdk.subscriptions.subscribeToUserFills.mock.calls[0][1];
+    expect(() => subscribedCb({ isSnapshot: false, fills: [] })).not.toThrow();
+    expect(onFill).toHaveBeenCalledOnce();
+  });
+
+  it("callbacks are ignored after stop()", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onOrderUpdate = vi.fn();
+    const onFill = vi.fn();
+
+    await stream.start({ onOrderUpdate, onFill });
+    stream.stop();
+
+    // Simulate SDK pushing events after stop — should be silently ignored
+    const orderCb = sdk.subscriptions.subscribeToOrderUpdates.mock.calls[0][1];
+    const fillCb = sdk.subscriptions.subscribeToUserFills.mock.calls[0][1];
+    orderCb([]);
+    fillCb({ isSnapshot: false, fills: [] });
+
+    expect(onOrderUpdate).not.toHaveBeenCalled();
+    expect(onFill).not.toHaveBeenCalled();
+  });
 });

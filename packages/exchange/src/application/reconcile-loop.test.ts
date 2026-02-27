@@ -7,6 +7,7 @@ import type { HlClient, HlPosition, HlOpenOrder, HlHistoricalOrder } from "../ad
 function createMockHlClient(overrides: Partial<HlClient> = {}): HlClient {
   return {
     connect: vi.fn(),
+    getSzDecimals: vi.fn().mockReturnValue(5),
     setLeverage: vi.fn(),
     placeMarketOrder: vi.fn(),
     placeStopOrder: vi.fn(),
@@ -541,6 +542,144 @@ describe("ReconcileLoop", () => {
 
     const orders = store.getRecentOrders(10);
     expect(orders[0].status).toBe("pending"); // position still open, keep pending
+  });
+
+  it("order sync degrades gracefully when getHistoricalOrders throws", async () => {
+    store.insertSignal({
+      alert_id: "sig-err", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 95000, stop_loss: 94000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+    });
+    store.insertOrder({
+      signal_id: 1, hl_order_id: "555", coin: "BTC", side: "sell",
+      size: 0.01, price: 94000, order_type: "stop", tag: "sl",
+      status: "pending", mode: "testnet", filled_at: null,
+    });
+
+    const hlClient = createMockHlClient({
+      getOpenOrders: vi.fn().mockResolvedValue([]), // order not open → triggers historical lookup
+      getHistoricalOrders: vi.fn().mockRejectedValue(new Error("HL API down")),
+    });
+    const positionBook = new PositionBook();
+    const eventLog = { append: vi.fn() };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    // check() should propagate the error (current behavior — no try-catch around getHistoricalOrders)
+    await expect(loop.check()).rejects.toThrow("HL API down");
+
+    // Order status should remain unchanged
+    const orders = store.getRecentOrders(10);
+    expect(orders[0].status).toBe("pending");
+  });
+
+  it("does not update price when unrealizedPnl is NaN", async () => {
+    const positionBook = new PositionBook();
+    positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000,
+      takeProfits: [],
+      openedAt: "2024-01-01T00:00:00Z",
+      signalId: 1,
+    });
+
+    const hlPositions: HlPosition[] = [
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: NaN, leverage: 5 },
+    ];
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue(hlPositions),
+    });
+    const eventLog = { append: vi.fn() };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    const pos = positionBook.get("BTC")!;
+    expect(pos.currentPrice).toBe(95000); // unchanged from entry
+    expect(pos.unrealizedPnl).toBe(0);
+  });
+
+  it("does not record equity snapshot when equity is Infinity", async () => {
+    const positionBook = new PositionBook();
+    const hlClient = createMockHlClient({
+      getAccountEquity: vi.fn().mockResolvedValue(Infinity),
+    });
+    const eventLog = { append: vi.fn() };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    const snapshots = store.getEquitySnapshots(10);
+    expect(snapshots).toHaveLength(0);
+  });
+
+  it("does not record equity snapshot when equity is NaN", async () => {
+    const positionBook = new PositionBook();
+    const hlClient = createMockHlClient({
+      getAccountEquity: vi.fn().mockResolvedValue(NaN),
+    });
+    const eventLog = { append: vi.fn() };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    const snapshots = store.getEquitySnapshots(10);
+    expect(snapshots).toHaveLength(0);
+  });
+
+  it("calls onApiDown after 3 consecutive errors", async () => {
+    const positionBook = new PositionBook();
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockRejectedValue(new Error("HL API down")),
+    });
+    const eventLog = { append: vi.fn() };
+    const onApiDown = vi.fn();
+
+    const loop = new ReconcileLoop({
+      hlClient, positionBook, eventLog, store, walletAddress: "0xtest",
+      intervalMs: 10, onApiDown,
+    });
+
+    // start() runs in a loop — run 4 ticks then stop
+    const startPromise = loop.start();
+    await new Promise((r) => setTimeout(r, 80));
+    loop.stop();
+    await startPromise;
+
+    // onApiDown should be called exactly once (at 3rd consecutive error)
+    expect(onApiDown).toHaveBeenCalledOnce();
+  });
+
+  it("resets consecutive errors on success", async () => {
+    const positionBook = new PositionBook();
+    let callCount = 0;
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockImplementation(() => {
+        callCount++;
+        // Fail twice, succeed, fail twice again — never reaches 3 consecutive
+        if (callCount <= 2 || (callCount >= 4 && callCount <= 5)) {
+          throw new Error("HL API down");
+        }
+        return Promise.resolve([]);
+      }),
+    });
+    const eventLog = { append: vi.fn() };
+    const onApiDown = vi.fn();
+
+    const loop = new ReconcileLoop({
+      hlClient, positionBook, eventLog, store, walletAddress: "0xtest",
+      intervalMs: 10, onApiDown,
+    });
+
+    const startPromise = loop.start();
+    await new Promise((r) => setTimeout(r, 120));
+    loop.stop();
+    await startPromise;
+
+    // Should never reach 3 consecutive because success resets counter
+    expect(onApiDown).not.toHaveBeenCalled();
   });
 
   it("syncs marginCanceled order as cancelled", async () => {

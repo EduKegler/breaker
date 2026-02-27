@@ -7,7 +7,7 @@ import { atr } from "../indicators/atr.js";
 
 const MS_1H = 3_600_000;
 
-export interface KeltnerRsi2Params {
+interface KeltnerRsi2Params {
   kcMultiplier: StrategyParam;
   rsi2Long: StrategyParam;
   rsi2Short: StrategyParam;

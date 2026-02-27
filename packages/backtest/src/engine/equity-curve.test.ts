@@ -58,6 +58,13 @@ describe("EquityCurve", () => {
     expect(points[1].drawdown).toBeCloseTo(-20 / 1050, 10);
   });
 
+  it("getTotalReturnPct returns 0 when initialCapital is 0", () => {
+    const ec = new EquityCurve(0);
+    ec.record(1, 0, 50);
+    expect(ec.getTotalReturnPct()).toBe(0);
+    expect(ec.getTotalReturn()).toBe(50);
+  });
+
   it("getPoints returns a copy", () => {
     const ec = new EquityCurve(1000);
     ec.record(1, 0, 10);

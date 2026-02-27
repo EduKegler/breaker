@@ -11,7 +11,7 @@ const EnvSchema = z.object({
   HL_PRIVATE_KEY: z.string().min(1),
 });
 
-export type Env = z.infer<typeof EnvSchema>;
+type Env = z.infer<typeof EnvSchema>;
 
 /**
  * Load .env file based on mode and return parsed env.

@@ -1,7 +1,7 @@
 import type { Guardrails } from "../../types/config.js";
 import type { StrategyParam } from "@breaker/backtest";
 
-export interface GuardrailViolation {
+interface GuardrailViolation {
   field: string;
   reason: string;
 }

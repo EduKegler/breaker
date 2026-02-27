@@ -1,7 +1,7 @@
 import type { Metrics } from "@breaker/backtest";
 import type { ScoringWeights } from "../../types/config.js";
 
-export interface MultiObjectiveScore {
+interface MultiObjectiveScore {
   raw: {
     pf: number;
     avgR: number;

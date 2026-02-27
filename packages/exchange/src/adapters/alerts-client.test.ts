@@ -84,6 +84,7 @@ describe("AlertsClient interface (mock)", () => {
     const mockClient: AlertsClient = {
       notifyPositionOpened: vi.fn(),
       notifyTrailingSlMoved: vi.fn(),
+      sendText: vi.fn(),
     };
 
     await mockClient.notifyPositionOpened(intent, "testnet");
@@ -94,6 +95,7 @@ describe("AlertsClient interface (mock)", () => {
     const mockClient: AlertsClient = {
       notifyPositionOpened: vi.fn(),
       notifyTrailingSlMoved: vi.fn(),
+      sendText: vi.fn(),
     };
 
     await mockClient.notifyTrailingSlMoved("BTC", "long", 93000, 94000, 92000, "testnet");

@@ -9,5 +9,5 @@ const EnvSchema = z.object({
   WHATSAPP_RECIPIENT: z.string().default(""),
 });
 
-export type Env = z.infer<typeof EnvSchema>;
+type Env = z.infer<typeof EnvSchema>;
 export const env = parseEnv(EnvSchema);

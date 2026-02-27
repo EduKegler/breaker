@@ -1,7 +1,7 @@
 import { CandleCache } from "@breaker/backtest";
 import type { Candle, CandleInterval, DataSource } from "@breaker/backtest";
 
-export interface LoadCandlesOptions {
+interface LoadCandlesOptions {
   coin: string;
   source: DataSource;
   interval: CandleInterval;

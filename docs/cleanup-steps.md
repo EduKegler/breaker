@@ -132,11 +132,11 @@
   - Websocket reconnect doesn't miss or duplicate messages
 
 - [ ] **Floating point traps**
-  - Financial math uses precision helpers (`truncateSize()`, `truncatePrice()` via `toPrecision(5)` / `szDecimals`) consistently before every calculation and SDK call
-  - No raw `number` arithmetic on prices/sizes without truncation applied afterward
+  - Precision helpers (`truncateSize()`, `truncatePrice()`) extracted to `lib/precision.ts` and applied both at signal-handler level (before storing) and at adapter boundary (safety net)
+  - No raw `number` arithmetic on prices/sizes without truncation applied afterward — signal-handler truncates intent values before positionBook/store, adapter re-truncates (idempotent)
   - Comparison operators on prices account for truncation (don't compare pre- vs post-truncated values)
-  - Rounding is explicit and consistent (floor for buys, ceil for sells)
-  - _TODO:_ Evaluate if migrating to a Decimal library is worth it as complexity grows
+  - Rounding: `Math.floor` for both buys and sells (Hyperliquid `reduceOnly` sells must not exceed position size; ceil would cause rejection)
+  - _TODO:_ Evaluate if migrating to a Decimal library is worth it as complexity grows (current assessment: not needed — truncation at boundaries is sufficient)
 
 - [ ] **State management bugs**
   - Stale state after errors (failed order leaves position tracker in wrong state)
@@ -157,7 +157,7 @@
   - First candle of the day (no previous data)
   - Market holidays / low liquidity periods
   - Order fills at exactly stop loss or take profit price
-
+ 
 - [ ] **Hyperliquid SDK traps**
   - `floatToWire()` rejects non-truncated values -- verify `truncateSize()` / `truncatePrice()` applied before EVERY SDK call
   - Symbol format consistency: `BTC-PERP` vs `BTC` -- `toSymbol()` adapter always used

@@ -2,9 +2,13 @@ import type { HlClient, HlPosition } from "../adapters/hyperliquid-client.js";
 import type { SqliteStore } from "../adapters/sqlite-store.js";
 import type { PositionBook } from "../domain/position-book.js";
 import type { EventLog } from "../adapters/event-log.js";
+import { resolveOrderStatus } from "../domain/order-status.js";
 import { setTimeout as sleep } from "node:timers/promises";
+import { createChildLogger } from "../lib/logger.js";
 
-export interface ReconcileResult {
+const log = createChildLogger("reconcileLoop");
+
+interface ReconcileResult {
   ok: boolean;
   drifts: string[];
   actions: string[];
@@ -58,7 +62,7 @@ export interface ReconciledData {
   equity: number;
 }
 
-export interface ReconcileLoopDeps {
+interface ReconcileLoopDeps {
   hlClient: HlClient;
   positionBook: PositionBook;
   eventLog: EventLog;
@@ -66,11 +70,13 @@ export interface ReconcileLoopDeps {
   walletAddress: string;
   intervalMs?: number;
   onReconciled?: (data: ReconciledData) => void;
+  onApiDown?: () => void;
 }
 
 export class ReconcileLoop {
   private deps: ReconcileLoopDeps;
   private running = false;
+  private consecutiveErrors = 0;
 
   constructor(deps: ReconcileLoopDeps) {
     this.deps = deps;
@@ -89,6 +95,10 @@ export class ReconcileLoop {
     const localMap = new Map(localPositions.map((p) => [p.coin, p]));
     const hlMap = new Map(hlPositions.map((p) => [p.coin, p]));
 
+    if (result.drifts.length > 0) {
+      log.warn({ action: "driftDetected", drifts: result.drifts }, "Position drift detected");
+    }
+
     // 2a. HL has position, local doesn't → hydrate
     for (const [coin, hlPos] of hlMap) {
       if (!localMap.has(coin)) {
@@ -103,6 +113,7 @@ export class ReconcileLoop {
           signalId: -1,
         });
         actions.push(`position_hydrated:${coin}`);
+        log.info({ action: "positionHydrated", coin, direction: hlPos.direction, size: hlPos.size }, "Position hydrated from HL");
       }
     }
 
@@ -111,16 +122,23 @@ export class ReconcileLoop {
       if (!hlMap.has(coin)) {
         positionBook.close(coin);
         actions.push(`position_auto_closed:${coin}`);
+        log.info({ action: "positionAutoClosed", coin }, "Position auto-closed (not on HL)");
       }
     }
 
     // 2c. Update prices for all positions that exist on both sides
     for (const [coin, hlPos] of hlMap) {
-      if (positionBook.get(coin) && hlPos.size > 0 && hlPos.unrealizedPnl !== 0) {
+      if (
+        positionBook.get(coin) && hlPos.size > 0
+        && Number.isFinite(hlPos.unrealizedPnl) && Number.isFinite(hlPos.entryPrice)
+        && hlPos.unrealizedPnl !== 0
+      ) {
         const currentPrice = hlPos.direction === "long"
           ? hlPos.entryPrice + (hlPos.unrealizedPnl / hlPos.size)
           : hlPos.entryPrice - (hlPos.unrealizedPnl / hlPos.size);
-        positionBook.updatePrice(coin, currentPrice);
+        if (Number.isFinite(currentPrice) && currentPrice > 0) {
+          positionBook.updatePrice(coin, currentPrice);
+        }
       }
     }
 
@@ -146,35 +164,21 @@ export class ReconcileLoop {
         for (const order of resolved) {
           const oid = Number(order.hl_order_id);
           const hlStatus = historicalMap.get(oid);
-          let newStatus: string;
-
-          if (hlStatus === "filled" || hlStatus === "triggered") {
-            newStatus = "filled";
-          } else if (hlStatus === "canceled" || hlStatus === "marginCanceled") {
-            newStatus = "cancelled";
-          } else if (hlStatus === "rejected") {
-            newStatus = "rejected";
-          } else {
-            // Not found in historical — if no position exists for this coin, it's resolved
-            const positionExists = positionBook.get(order.coin) != null;
-            if (!positionExists) {
-              newStatus = "cancelled";
-            } else {
-              // Position still open, order might be too recent — skip
-              continue;
-            }
-          }
+          const positionExists = positionBook.get(order.coin) != null;
+          const newStatus = resolveOrderStatus(hlStatus, positionExists);
+          if (!newStatus) continue;
 
           const filledAt = newStatus === "filled" ? new Date().toISOString() : undefined;
           store.updateOrderStatus(order.id!, newStatus, filledAt);
           actions.push(`order_status_synced:${order.hl_order_id}:${newStatus}`);
+          log.info({ action: "orderStatusSynced", oid: order.hl_order_id, newStatus, tag: order.tag }, "Order status synced");
         }
       }
     }
 
     // 4. Record equity snapshot
     const equity = await hlClient.getAccountEquity(walletAddress);
-    if (equity > 0) {
+    if (Number.isFinite(equity) && equity > 0) {
       const allPositions = positionBook.getAll();
       store.insertEquitySnapshot({
         timestamp: new Date().toISOString(),
@@ -213,8 +217,14 @@ export class ReconcileLoop {
     while (this.running) {
       try {
         await this.check();
-      } catch {
-        // Log but don't crash
+        this.consecutiveErrors = 0;
+      } catch (err) {
+        this.consecutiveErrors++;
+        log.error({ action: "reconcileError", err, consecutiveErrors: this.consecutiveErrors }, "Reconcile loop error");
+        if (this.consecutiveErrors === 3) {
+          log.error({ action: "apiDownAlert" }, "Hyperliquid API appears down (3 consecutive failures)");
+          this.deps.onApiDown?.();
+        }
       }
       await sleep(intervalMs);
     }

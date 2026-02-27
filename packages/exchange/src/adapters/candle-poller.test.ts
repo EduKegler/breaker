@@ -98,4 +98,52 @@ describe("CandlePoller", () => {
     const poller = new CandlePoller(config);
     expect(poller.getLatest()).toBeNull();
   });
+
+  it("filters candles with NaN close price during warmup", async () => {
+    const validCandle = makeCandle(0);
+    const nanCandle: Candle = { t: 1700000900000, o: 101, h: 106, l: 96, c: NaN, v: 1000, n: 50 };
+    mockFetch.mockResolvedValueOnce([validCandle, nanCandle]);
+
+    const poller = new CandlePoller(config);
+    const result = await poller.warmup(200);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(validCandle);
+  });
+
+  it("filters candles with high < low during warmup", async () => {
+    const validCandle = makeCandle(0);
+    const badCandle: Candle = { t: 1700000900000, o: 101, h: 90, l: 110, c: 95, v: 1000, n: 50 };
+    mockFetch.mockResolvedValueOnce([validCandle, badCandle]);
+
+    const poller = new CandlePoller(config);
+    const result = await poller.warmup(200);
+
+    expect(result).toHaveLength(1);
+  });
+
+  it("filters candles with NaN close price during poll", async () => {
+    mockFetch.mockResolvedValueOnce([makeCandle(0)]);
+    const poller = new CandlePoller(config);
+    await poller.warmup(200);
+
+    const nanCandle: Candle = { t: 1700001800000, o: 101, h: 106, l: 96, c: NaN, v: 1000, n: 50 };
+    mockFetch.mockResolvedValueOnce([nanCandle]);
+
+    const result = await poller.poll();
+    expect(result).toBeNull();
+    expect(poller.getCandles()).toHaveLength(1); // only warmup candle
+  });
+
+  it("filters candles with zero close price during poll", async () => {
+    mockFetch.mockResolvedValueOnce([makeCandle(0)]);
+    const poller = new CandlePoller(config);
+    await poller.warmup(200);
+
+    const zeroCandle: Candle = { t: 1700001800000, o: 0, h: 0, l: 0, c: 0, v: 0, n: 0 };
+    mockFetch.mockResolvedValueOnce([zeroCandle]);
+
+    const result = await poller.poll();
+    expect(result).toBeNull();
+  });
 });

@@ -1,7 +1,17 @@
 import { fetchCandles, intervalToMs } from "@breaker/backtest";
 import type { Candle, CandleInterval, DataSource } from "@breaker/backtest";
+import { createChildLogger } from "../lib/logger.js";
 
-export interface CandlePollerConfig {
+const log = createChildLogger("candlePoller");
+
+function isValidCandle(c: Candle): boolean {
+  return Number.isFinite(c.c) && c.c > 0
+    && Number.isFinite(c.o) && c.o > 0
+    && Number.isFinite(c.h) && Number.isFinite(c.l)
+    && c.h >= c.l;
+}
+
+interface CandlePollerConfig {
   coin: string;
   interval: CandleInterval;
   dataSource: DataSource;
@@ -20,13 +30,21 @@ export class CandlePoller {
     const endTime = Date.now();
     const startTime = endTime - bars * ivlMs;
 
-    this.candles = await fetchCandles(
+    const t0 = performance.now();
+    const raw = await fetchCandles(
       this.config.coin,
       this.config.interval,
       startTime,
       endTime,
       { source: this.config.dataSource },
     );
+    const beforeCount = raw.length;
+    this.candles = raw.filter(isValidCandle);
+    const discarded = beforeCount - this.candles.length;
+    if (discarded > 0) {
+      log.warn({ action: "warmup", coin: this.config.coin, discarded }, "Discarded invalid candles during warmup");
+    }
+    log.info({ action: "warmup", coin: this.config.coin, requestedBars: bars, receivedBars: this.candles.length, latencyMs: Math.round(performance.now() - t0) }, "Warmup complete");
 
     return this.candles;
   }
@@ -39,6 +57,7 @@ export class CandlePoller {
 
     // Fetch from the CURRENT candle onwards (not lastTs + ivlMs) so we also
     // get the in-progress candle with updated OHLCV values.
+    const t0 = performance.now();
     const newCandles = await fetchCandles(
       this.config.coin,
       this.config.interval,
@@ -49,7 +68,13 @@ export class CandlePoller {
 
     if (newCandles.length === 0) return null;
 
-    for (const c of newCandles) {
+    const validCandles = newCandles.filter(isValidCandle);
+    if (validCandles.length < newCandles.length) {
+      log.warn({ action: "poll", coin: this.config.coin, discarded: newCandles.length - validCandles.length }, "Discarded invalid candles during poll");
+    }
+    if (validCandles.length === 0) return null;
+
+    for (const c of validCandles) {
       const idx = this.candles.findIndex((existing) => existing.t === c.t);
       if (idx >= 0) {
         // Update in-progress candle (OHLCV may have changed)
@@ -59,7 +84,9 @@ export class CandlePoller {
       }
     }
 
-    return newCandles[newCandles.length - 1];
+    log.debug({ action: "poll", coin: this.config.coin, newCandles: validCandles.length, totalCandles: this.candles.length, latencyMs: Math.round(performance.now() - t0) }, "Candles polled");
+
+    return validCandles[validCandles.length - 1];
   }
 
   getCandles(): Candle[] {
@@ -75,12 +102,15 @@ export class CandlePoller {
     const endTime = before;
     const startTime = endTime - limit * ivlMs;
 
-    return fetchCandles(
+    const t0 = performance.now();
+    const candles = await fetchCandles(
       this.config.coin,
       this.config.interval,
       startTime,
       endTime,
       { source: this.config.dataSource },
     );
+    log.debug({ action: "fetchHistorical", coin: this.config.coin, before, limit, received: candles.length, latencyMs: Math.round(performance.now() - t0) }, "Historical candles fetched");
+    return candles;
   }
 }

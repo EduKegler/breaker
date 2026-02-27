@@ -32,18 +32,21 @@ src/
 ```
 
 ## Configuration
-- `exchange-config.json` — mode, asset, strategy, guardrails, sizing (NOT .env)
+- `exchange-config.json` — mode, asset, strategy, guardrails, sizing, dryRun, logLevels (NOT .env)
 - `.env` — secrets only: `HL_ACCOUNT_ADDRESS`, `HL_PRIVATE_KEY`
 
 ## Key patterns
 - HlClient interface allows full mocking in tests (no real SDK needed)
+- DryRunHlClient implements HlClient for dry-run mode (logs actions, returns fakes)
 - buildContext/canTrade extracted to @breaker/backtest engine-shared.ts for live=backtest equivalence
 - Idempotency via UNIQUE alert_id in SQLite signals table
 - leverageCache: updateLeverage called once per coin per daemon session
+- `createChildLogger(module)` for per-module log levels (set via config.logLevels)
+- `resolveOrderStatus()` centralizes HL→internal status mapping
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 138 tests across 15 files
+- `pnpm test` — 257 tests across 19 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

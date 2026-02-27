@@ -124,16 +124,3 @@ export async function redisSetDedup(alertId: string): Promise<boolean> {
   }
 }
 
-export async function closeRedis(): Promise<void> {
-  if (redis) {
-    try {
-      await redis.quit();
-    } catch {
-      // ignore
-    }
-    redis = null;
-  }
-  available = false;
-  configured = false;
-  lastError = null;
-}

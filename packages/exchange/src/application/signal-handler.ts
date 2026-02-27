@@ -8,6 +8,10 @@ import type { EventLog } from "../adapters/event-log.js";
 import type { AlertsClient } from "../adapters/alerts-client.js";
 import type { PositionBook } from "../domain/position-book.js";
 import { randomUUID } from "node:crypto";
+import { createChildLogger } from "../lib/logger.js";
+import { truncateSize, truncatePrice } from "../lib/precision.js";
+
+const log = createChildLogger("signalHandler");
 
 export interface SignalHandlerDeps {
   config: ExchangeConfig;
@@ -26,7 +30,7 @@ export interface HandleSignalInput {
   alertId?: string;
 }
 
-export interface HandleSignalResult {
+interface HandleSignalResult {
   success: boolean;
   signalId: number;
   reason?: string;
@@ -43,13 +47,21 @@ export async function handleSignal(
 
   // Idempotency check
   if (store.hasSignal(alertId)) {
+    log.info({ action: "duplicateRejected", alertId }, "Duplicate signal rejected");
     return { success: false, signalId: -1, reason: "Duplicate alert_id" };
   }
 
-  // Convert signal to order intent
+  // Convert signal to order intent, then truncate to exchange precision.
+  // This ensures values stored in positionBook/SQLite match what the exchange receives.
   const intent = signalToIntent(signal, currentPrice, config.asset, config.sizing);
+  const szDecimals = hlClient.getSzDecimals(config.asset);
+  intent.size = truncateSize(intent.size, szDecimals);
+  intent.entryPrice = truncatePrice(intent.entryPrice);
+  intent.stopLoss = truncatePrice(intent.stopLoss);
+  intent.notionalUsd = intent.size * intent.entryPrice;
 
   if (intent.size <= 0) {
+    log.info({ action: "zeroSizeRejected", entryPrice: intent.entryPrice, stopLoss: intent.stopLoss }, "Signal rejected: size is zero");
     const signalId = store.insertSignal({
       alert_id: alertId,
       source,
@@ -71,6 +83,8 @@ export async function handleSignal(
     openPositions: positionBook.count(),
     dailyLossUsd: Math.abs(store.getTodayRealizedPnl()),
     tradesToday: store.getTodayTradeCount(config.asset),
+    entryPrice: intent.entryPrice,
+    currentPrice,
   };
   const riskResult = checkRisk(riskInput, config.guardrails);
 
@@ -93,10 +107,12 @@ export async function handleSignal(
   });
 
   if (!riskResult.passed) {
+    log.info({ action: "riskCheckFailed", signalId, reason: riskResult.reason, riskInput }, "Risk check failed");
     return { success: false, signalId, reason: riskResult.reason!, intent };
   }
 
-  // Set leverage before first trade
+  // Leverage may have been reset externally (HL dashboard, API). Re-setting
+  // on every trade is idempotent and ensures consistency.
   await hlClient.setLeverage(
     config.asset,
     config.leverage,
@@ -119,6 +135,9 @@ export async function handleSignal(
     price: intent.entryPrice,
     order_type: "market",
     tag: "entry",
+    // Market orders fill immediately (IOC). Actual fill confirmation comes
+    // from ReconcileLoop + HlEventStream; this avoids a pending→filled
+    // race condition where SL/TP orders depend on the entry being filled.
     status: "filled",
     mode: config.mode,
     filled_at: new Date().toISOString(),
@@ -130,15 +149,44 @@ export async function handleSignal(
     data: { signalId, orderId: entryOrderId, hlOrderId: entryResult.orderId, tag: "entry" },
   });
 
-  // Place stop loss
-  const slResult = await hlClient.placeStopOrder(
-    config.asset,
-    intent.side === "sell", // opposite side for SL
-    intent.size,
-    intent.stopLoss,
-    true,
-  );
+  // SL closes the position: opposite side to entry, reduceOnly prevents
+  // accidentally opening a new position if the original was already closed.
+  // If SL placement fails, immediately close the entry to avoid an unprotected position.
+  let slResult: Awaited<ReturnType<typeof hlClient.placeStopOrder>>;
+  try {
+    slResult = await hlClient.placeStopOrder(
+      config.asset,
+      intent.side === "sell",
+      intent.size,
+      intent.stopLoss,
+      true,
+    );
+  } catch (slErr) {
+    log.error({ action: "slPlacementFailed", signalId, err: slErr }, "SL placement failed after entry — rolling back");
 
+    try {
+      await hlClient.placeMarketOrder(config.asset, intent.side !== "buy", intent.size);
+      log.info({ action: "entryRolledBack", signalId }, "Entry rolled back (position closed)");
+    } catch (closeErr) {
+      // Worst case: position stuck on HL without SL AND without local tracking.
+      // Hydrate into positionBook so reconcile loop can see it.
+      positionBook.open({
+        coin: config.asset,
+        direction: intent.direction,
+        entryPrice: intent.entryPrice,
+        size: intent.size,
+        stopLoss: 0,
+        takeProfits: [],
+        openedAt: new Date().toISOString(),
+        signalId,
+      });
+      log.error({ action: "rollbackFailed", signalId, err: closeErr }, "CRITICAL: position stuck on HL without SL, hydrated locally");
+    }
+
+    throw slErr;
+  }
+
+  log.info({ action: "slPlaced", signalId, hlOrderId: slResult.orderId, triggerPrice: intent.stopLoss }, "Stop loss placed");
   store.insertOrder({
     signal_id: signalId,
     hl_order_id: slResult.orderId,
@@ -153,31 +201,37 @@ export async function handleSignal(
     filled_at: null,
   });
 
-  // Place take profit orders
+  // TP partially closes: opposite side, reduceOnly=true for same reason as SL.
+  // TP failure is non-critical: the SL protects the position. Log and continue.
   for (let i = 0; i < intent.takeProfits.length; i++) {
     const tp = intent.takeProfits[i];
-    const tpSize = intent.size * tp.pctOfPosition;
-    const tpResult = await hlClient.placeLimitOrder(
-      config.asset,
-      intent.side === "sell", // opposite side for TP
-      tpSize,
-      tp.price,
-      true,
-    );
+    const tpSize = truncateSize(intent.size * tp.pctOfPosition, szDecimals);
+    try {
+      const tpResult = await hlClient.placeLimitOrder(
+        config.asset,
+        intent.side === "sell",
+        tpSize,
+        tp.price,
+        true,
+      );
 
-    store.insertOrder({
-      signal_id: signalId,
-      hl_order_id: tpResult.orderId,
-      coin: config.asset,
-      side: intent.side === "buy" ? "sell" : "buy",
-      size: tpSize,
-      price: tp.price,
-      order_type: "limit",
-      tag: `tp${i + 1}`,
-      status: "pending",
-      mode: config.mode,
-      filled_at: null,
-    });
+      log.info({ action: "tpPlaced", signalId, hlOrderId: tpResult.orderId, price: tp.price, tag: `tp${i + 1}` }, "Take profit placed");
+      store.insertOrder({
+        signal_id: signalId,
+        hl_order_id: tpResult.orderId,
+        coin: config.asset,
+        side: intent.side === "buy" ? "sell" : "buy",
+        size: tpSize,
+        price: tp.price,
+        order_type: "limit",
+        tag: `tp${i + 1}`,
+        status: "pending",
+        mode: config.mode,
+        filled_at: null,
+      });
+    } catch (tpErr) {
+      log.warn({ action: "tpPlacementFailed", signalId, tag: `tp${i + 1}`, err: tpErr }, "TP placement failed (position still protected by SL)");
+    }
   }
 
   // Update position book
@@ -197,6 +251,18 @@ export async function handleSignal(
     timestamp: new Date().toISOString(),
     data: { signalId, coin: config.asset, direction: intent.direction, size: intent.size },
   });
+
+  log.info({
+    action: "positionOpened",
+    signalId,
+    coin: config.asset,
+    direction: intent.direction,
+    size: intent.size,
+    entryPrice: intent.entryPrice,
+    stopLoss: intent.stopLoss,
+    takeProfits: intent.takeProfits.map((tp) => tp.price),
+    source,
+  }, "Position opened");
 
   // Notify via WhatsApp
   try {

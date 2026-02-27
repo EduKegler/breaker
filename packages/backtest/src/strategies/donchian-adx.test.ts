@@ -423,6 +423,96 @@ describe("createDonchianAdx", () => {
     expect(level!).toBeGreaterThan(candles[20].c);
   });
 
+  it("shouldExit returns DC Trail when LONG and close < prevFastLower (deterministic)", () => {
+    const strategy = createDonchianAdx({ dcFast: 3, timeoutBars: 100 });
+    // Deterministic candles: uptrend then sharp drop below fast DC lower
+    const base = 1_000_000_000_000;
+    const candles: Candle[] = [
+      { t: base, o: 100, h: 110, l: 95, c: 105, v: 10, n: 5 },
+      { t: base + 900_000, o: 105, h: 115, l: 100, c: 110, v: 10, n: 5 },
+      { t: base + 1_800_000, o: 110, h: 120, l: 105, c: 115, v: 10, n: 5 },
+      { t: base + 2_700_000, o: 115, h: 125, l: 110, c: 120, v: 10, n: 5 },
+      // Final candle: close=90 < prevFastLower = min(l[1..3]) = min(100,105,110) = 100
+      { t: base + 3_600_000, o: 110, h: 110, l: 85, c: 90, v: 10, n: 5 },
+    ];
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+    const ctx: StrategyContext = {
+      candles,
+      index: 4,
+      currentCandle: candles[4],
+      positionDirection: "long",
+      positionEntryPrice: 105,
+      positionEntryBarIndex: 2,
+      higherTimeframes: htf,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+      consecutiveLosses: 0,
+    };
+    const result = strategy.shouldExit!(ctx);
+    expect(result).not.toBeNull();
+    expect(result!.exit).toBe(true);
+    expect(result!.comment).toBe("DC Trail");
+  });
+
+  it("shouldExit returns DC Trail when SHORT and close > prevFastUpper (deterministic)", () => {
+    const strategy = createDonchianAdx({ dcFast: 3, timeoutBars: 100 });
+    // Deterministic candles: downtrend then sharp bounce above fast DC upper
+    const base = 1_000_000_000_000;
+    const candles: Candle[] = [
+      { t: base, o: 200, h: 210, l: 190, c: 195, v: 10, n: 5 },
+      { t: base + 900_000, o: 195, h: 205, l: 185, c: 190, v: 10, n: 5 },
+      { t: base + 1_800_000, o: 190, h: 200, l: 180, c: 185, v: 10, n: 5 },
+      { t: base + 2_700_000, o: 185, h: 195, l: 175, c: 180, v: 10, n: 5 },
+      // Final candle: close=210 > prevFastUpper = max(h[1..3]) = max(205,200,195) = 205
+      { t: base + 3_600_000, o: 190, h: 215, l: 190, c: 210, v: 10, n: 5 },
+    ];
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+    const ctx: StrategyContext = {
+      candles,
+      index: 4,
+      currentCandle: candles[4],
+      positionDirection: "short",
+      positionEntryPrice: 200,
+      positionEntryBarIndex: 2,
+      higherTimeframes: htf,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+      consecutiveLosses: 0,
+    };
+    const result = strategy.shouldExit!(ctx);
+    expect(result).not.toBeNull();
+    expect(result!.exit).toBe(true);
+    expect(result!.comment).toBe("DC Trail");
+  });
+
+  it("shouldExit returns null during insufficient warmup (index < dcFast+1)", () => {
+    const strategy = createDonchianAdx({ dcFast: 5, timeoutBars: 100 });
+    const base = 1_000_000_000_000;
+    const candles: Candle[] = Array.from({ length: 6 }, (_, i) => ({
+      t: base + i * 900_000, o: 100, h: 110, l: 90, c: 100, v: 10, n: 5,
+    }));
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+    const ctx: StrategyContext = {
+      candles,
+      index: 3, // < dcFast+1 = 6, but after timeout check (barsInTrade=2 < 100)
+      currentCandle: candles[3],
+      positionDirection: "long",
+      positionEntryPrice: 100,
+      positionEntryBarIndex: 1,
+      higherTimeframes: htf,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+      consecutiveLosses: 0,
+    };
+    expect(strategy.shouldExit!(ctx)).toBeNull();
+  });
+
   it("getExitLevel returns null during warmup period", () => {
     const strategy = createDonchianAdx({ dcFast: 20 });
     const candles = generate15mCandles(15, 10000, "up");

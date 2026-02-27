@@ -8,13 +8,13 @@ function utcDayKey(date = new Date()): string {
   return date.toISOString().slice(0, 10); // "YYYY-MM-DD"
 }
 
-export interface DailyLimitCheck {
+interface DailyLimitCheck {
   allowed: boolean;
   count: number;
   limit: number;
 }
 
-export interface DailyLimitStatus {
+interface DailyLimitStatus {
   dayKey: string;
   count: number;
   limit: number;

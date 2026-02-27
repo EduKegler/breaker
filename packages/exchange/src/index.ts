@@ -10,10 +10,12 @@ export { signalToIntent } from "./domain/order-intent.js";
 export type { OrderIntent } from "./domain/order-intent.js";
 export { PositionBook } from "./domain/position-book.js";
 export type { LivePosition } from "./domain/position-book.js";
+export { resolveOrderStatus } from "./domain/order-status.js";
 
 // Adapters
 export type { HlClient, HlPosition, HlOrderResult, HlOpenOrder, HlHistoricalOrder } from "./adapters/hyperliquid-client.js";
 export { HyperliquidClient } from "./adapters/hyperliquid-client.js";
+export { DryRunHlClient } from "./adapters/dry-run-client.js";
 export { HlEventStream } from "./adapters/hl-event-stream.js";
 export type { WsOrder, WsUserFill, HlEventStreamCallbacks } from "./adapters/hl-event-stream.js";
 export { SqliteStore } from "./adapters/sqlite-store.js";

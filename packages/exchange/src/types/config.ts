@@ -5,7 +5,8 @@ export const GuardrailsSchema = z.object({
   maxLeverage: z.number().int().positive(),
   maxOpenPositions: z.number().int().positive(),
   maxDailyLossUsd: z.number().positive(),
-  maxTradesPerDay: z.number().int().positive(),
+  // nonnegative allows 0 as a kill switch (blocks all trades)
+  maxTradesPerDay: z.number().int().nonnegative(),
   cooldownBars: z.number().int().nonnegative(),
 });
 
@@ -28,6 +29,8 @@ export const ExchangeConfigSchema = z.object({
   marginType: z.enum(["isolated", "cross"]).default("isolated"),
   guardrails: GuardrailsSchema,
   sizing: SizingSchema,
+  dryRun: z.boolean().default(false),
+  logLevels: z.record(z.string()).default({}),
 });
 
 export type Guardrails = z.infer<typeof GuardrailsSchema>;

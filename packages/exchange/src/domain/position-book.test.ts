@@ -86,4 +86,55 @@ describe("PositionBook", () => {
     const book = new PositionBook();
     book.updatePrice("BTC", 100000); // should not throw
   });
+
+  it("ignores updatePrice with NaN", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+    book.updatePrice("BTC", 96000); // valid update first
+    book.updatePrice("BTC", NaN);
+
+    const pos = book.get("BTC")!;
+    expect(pos.currentPrice).toBe(96000); // unchanged
+    expect(pos.unrealizedPnl).toBe(10);
+  });
+
+  it("ignores updatePrice with Infinity", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+    book.updatePrice("BTC", 96000);
+    book.updatePrice("BTC", Infinity);
+
+    const pos = book.get("BTC")!;
+    expect(pos.currentPrice).toBe(96000); // unchanged
+  });
+
+  it("ignores updatePrice with -Infinity", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+    book.updatePrice("BTC", 96000);
+    book.updatePrice("BTC", -Infinity);
+
+    const pos = book.get("BTC")!;
+    expect(pos.currentPrice).toBe(96000); // unchanged
+  });
+
+  it("ignores updatePrice with zero", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+    book.updatePrice("BTC", 96000);
+    book.updatePrice("BTC", 0);
+
+    const pos = book.get("BTC")!;
+    expect(pos.currentPrice).toBe(96000); // unchanged
+  });
+
+  it("ignores updatePrice with negative price", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+    book.updatePrice("BTC", 96000);
+    book.updatePrice("BTC", -100);
+
+    const pos = book.get("BTC")!;
+    expect(pos.currentPrice).toBe(96000); // unchanged
+  });
 });

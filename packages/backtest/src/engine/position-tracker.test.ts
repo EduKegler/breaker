@@ -117,6 +117,30 @@ describe("PositionTracker", () => {
     expect(pt.isFlat()).toBe(true);
   });
 
+  it("partialClose delegates to closePosition when fill.size > position.size", () => {
+    const pt = new PositionTracker();
+    pt.openPosition("long", makeFill(100, 1, "buy"), 5);
+    pt.setEntryBarIndex(0);
+
+    // fill.size=2 > position.size=1 → should fully close
+    const trade = pt.partialClose(makeFill(110, 2, "sell", "tp1"), 5, "tp1", "TP1", "entry");
+    expect(pt.isFlat()).toBe(true);
+    expect(trade.size).toBe(1); // closePosition uses position.size, not fill.size
+    expect(trade.exitPrice).toBe(110);
+  });
+
+  it("partialClose returns rMultiple=0 when initialStopDistance is 0", () => {
+    const pt = new PositionTracker();
+    pt.openPosition("long", makeFill(100, 2, "buy"), 0); // stopDistance=0
+    pt.setEntryBarIndex(0);
+
+    const trade = pt.partialClose(makeFill(110, 1, "sell", "tp1"), 5, "tp1", "TP1", "entry");
+    expect(trade.rMultiple).toBe(0);
+    expect(trade.pnl).toBeGreaterThan(0); // PnL still positive
+    expect(pt.isFlat()).toBe(false);
+    expect(pt.getPosition()!.size).toBe(1);
+  });
+
   it("throws when closing with no position", () => {
     const pt = new PositionTracker();
     expect(() =>

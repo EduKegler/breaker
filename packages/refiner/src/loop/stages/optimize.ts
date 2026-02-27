@@ -7,7 +7,7 @@ import type { StageResult } from "../types.js";
 import { runClaude } from "./run-claude.js";
 import { safeJsonParse } from "../../lib/safe-json.js";
 
-export interface OptimizeResult {
+interface OptimizeResult {
   changed: boolean;
   diff?: string;
   changeScale?: "parametric" | "structural";

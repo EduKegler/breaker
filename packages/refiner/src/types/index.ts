@@ -8,7 +8,6 @@ export type {
 } from "./config.js";
 
 export {
-  AssetClassCriteriaSchema,
   CriteriaSchema,
   ModelRoutingSchema,
   GuardrailsSchema,

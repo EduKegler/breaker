@@ -7,7 +7,7 @@ export const DateRangeSchema = z.string().regex(
   "Must be last7|last30|last90|last365|all|custom:YYYY-MM-DD:YYYY-MM-DD",
 );
 
-export const AssetClassCriteriaSchema = z.object({
+const AssetClassCriteriaSchema = z.object({
   minPF: z.number().min(0).optional(),
   maxDD: z.number().min(0).max(100).optional(),
   minTrades: z.number().int().min(0).optional(),

@@ -1,4 +1,9 @@
 import { Hyperliquid } from "hyperliquid";
+import { createChildLogger } from "../lib/logger.js";
+import { finiteOrThrow, finiteOr, isSanePrice } from "../lib/validators.js";
+import { truncateSize, truncatePrice } from "../lib/precision.js";
+
+const log = createChildLogger("hlClient");
 
 export interface HlPosition {
   coin: string;
@@ -30,11 +35,12 @@ export interface HlHistoricalOrder {
 
 export interface HlOrderResult {
   orderId: string;
-  status: string;
+  status: "placed" | "simulated";
 }
 
 export interface HlClient {
   connect(): Promise<void>;
+  getSzDecimals(coin: string): number;
   setLeverage(coin: string, leverage: number, isCross: boolean): Promise<void>;
   placeMarketOrder(coin: string, isBuy: boolean, size: number): Promise<HlOrderResult>;
   placeStopOrder(coin: string, isBuy: boolean, size: number, triggerPrice: number, reduceOnly: boolean): Promise<HlOrderResult>;
@@ -81,21 +87,14 @@ export class HyperliquidClient implements HlClient {
     return coin.includes("-") ? coin : `${coin}-PERP`;
   }
 
-  /** Truncate size to exchange-allowed decimals (avoids floatToWire rounding error) */
-  private truncateSize(size: number, coin: string): number {
-    const decimals = this.szDecimalsCache.get(coin) ?? 5;
-    const factor = 10 ** decimals;
-    return Math.floor(size * factor) / factor;
-  }
-
-  /** Truncate price to 5 significant figures (SDK floatToWire requirement) */
-  private truncatePrice(price: number): number {
-    return Number(price.toPrecision(5));
+  getSzDecimals(coin: string): number {
+    return this.szDecimalsCache.get(coin) ?? 5;
   }
 
   /** Fetch and cache szDecimals for a coin from exchange metadata */
   async loadSzDecimals(coin: string): Promise<void> {
     if (this.szDecimalsCache.has(coin)) return;
+    const t0 = performance.now();
     try {
       const meta = await this.sdk.info.perpetuals.getMeta();
       if (meta?.universe) {
@@ -103,9 +102,10 @@ export class HyperliquidClient implements HlClient {
           this.szDecimalsCache.set(asset.name, asset.szDecimals);
         }
       }
-    } catch {
-      // Default to 5 decimals (BTC) if meta fetch fails
+      log.info({ action: "loadSzDecimals", coin, count: this.szDecimalsCache.size, latencyMs: Math.round(performance.now() - t0) }, "Loaded szDecimals from meta");
+    } catch (err) {
       this.szDecimalsCache.set(coin, 5);
+      log.warn({ action: "loadSzDecimals", coin, fallback: 5, err, latencyMs: Math.round(performance.now() - t0) }, "Meta fetch failed, using fallback szDecimals");
     }
   }
 
@@ -118,15 +118,20 @@ export class HyperliquidClient implements HlClient {
     const sym = this.toSymbol(coin);
     if (this.leverageCache.has(sym)) return;
     const leverageMode = isCross ? "cross" : "isolated";
+    const t0 = performance.now();
     await this.sdk.exchange.updateLeverage(sym, leverageMode, leverage);
     this.leverageCache.add(sym);
+    log.info({ action: "setLeverage", coin, leverage, mode: leverageMode, latencyMs: Math.round(performance.now() - t0) }, "Leverage set");
   }
 
   async placeMarketOrder(coin: string, isBuy: boolean, size: number): Promise<HlOrderResult> {
-    const sz = this.truncateSize(size, coin);
+    const sz = truncateSize(size, this.getSzDecimals(coin));
     if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
+    const t0 = performance.now();
     const result = await this.sdk.custom.marketOpen(this.toSymbol(coin), isBuy, sz);
-    return { orderId: extractOid(result), status: "placed" };
+    const orderId = extractOid(result);
+    log.info({ action: "placeMarketOrder", coin, isBuy, requestedSize: size, truncatedSize: sz, orderId, latencyMs: Math.round(performance.now() - t0) }, "Market order placed");
+    return { orderId, status: "placed" };
   }
 
   async placeStopOrder(
@@ -136,9 +141,10 @@ export class HyperliquidClient implements HlClient {
     triggerPrice: number,
     reduceOnly: boolean,
   ): Promise<HlOrderResult> {
-    const sz = this.truncateSize(size, coin);
+    const sz = truncateSize(size, this.getSzDecimals(coin));
     if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
-    const px = this.truncatePrice(triggerPrice);
+    const px = truncatePrice(triggerPrice);
+    const t0 = performance.now();
     const result = await this.sdk.exchange.placeOrder({
       coin: this.toSymbol(coin),
       is_buy: isBuy,
@@ -147,7 +153,9 @@ export class HyperliquidClient implements HlClient {
       order_type: { trigger: { triggerPx: String(px), isMarket: true, tpsl: "sl" } },
       reduce_only: reduceOnly,
     });
-    return { orderId: extractOid(result), status: "placed" };
+    const orderId = extractOid(result);
+    log.info({ action: "placeStopOrder", coin, isBuy, size: sz, triggerPrice: px, orderId, latencyMs: Math.round(performance.now() - t0) }, "Stop order placed");
+    return { orderId, status: "placed" };
   }
 
   async placeLimitOrder(
@@ -157,9 +165,10 @@ export class HyperliquidClient implements HlClient {
     price: number,
     reduceOnly: boolean,
   ): Promise<HlOrderResult> {
-    const sz = this.truncateSize(size, coin);
+    const sz = truncateSize(size, this.getSzDecimals(coin));
     if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
-    const px = this.truncatePrice(price);
+    const px = truncatePrice(price);
+    const t0 = performance.now();
     const result = await this.sdk.exchange.placeOrder({
       coin: this.toSymbol(coin),
       is_buy: isBuy,
@@ -168,66 +177,111 @@ export class HyperliquidClient implements HlClient {
       order_type: { limit: { tif: "Gtc" } },
       reduce_only: reduceOnly,
     });
-    return { orderId: extractOid(result), status: "placed" };
+    const orderId = extractOid(result);
+    log.info({ action: "placeLimitOrder", coin, isBuy, size: sz, price: px, orderId, latencyMs: Math.round(performance.now() - t0) }, "Limit order placed");
+    return { orderId, status: "placed" };
   }
 
   async cancelOrder(coin: string, orderId: number): Promise<void> {
+    const t0 = performance.now();
     await this.sdk.exchange.cancelOrder({ coin: this.toSymbol(coin), o: orderId });
+    log.info({ action: "cancelOrder", coin, orderId, latencyMs: Math.round(performance.now() - t0) }, "Order cancelled");
   }
 
   async getPositions(walletAddress: string): Promise<HlPosition[]> {
+    const t0 = performance.now();
     const state = await this.sdk.info.perpetuals.getClearinghouseState(walletAddress);
     if (!state?.assetPositions) return [];
-    return state.assetPositions
-      .filter((p) => {
-        const szi = Number(p.position.szi);
-        return szi !== 0;
-      })
-      .map((p) => ({
+    const positions: HlPosition[] = [];
+    for (const p of state.assetPositions) {
+      const szi = Number(p.position.szi);
+      if (!Number.isFinite(szi) || szi === 0) continue;
+
+      const entryPrice = Number(p.position.entryPx);
+      const unrealizedPnl = Number(p.position.unrealizedPnl);
+      const rawLeverage = typeof p.position.leverage === "object"
+        ? (p.position.leverage as { value: number }).value
+        : Number(p.position.leverage);
+
+      try {
+        finiteOrThrow(entryPrice, `${p.position.coin}.entryPx`);
+        finiteOrThrow(unrealizedPnl, `${p.position.coin}.unrealizedPnl`);
+      } catch (err) {
+        log.warn({ action: "getPositions", coin: p.position.coin, err }, "Skipping position with invalid data");
+        continue;
+      }
+
+      if (!isSanePrice(entryPrice)) {
+        log.warn({ action: "getPositions", coin: p.position.coin, entryPrice }, "Skipping position with insane entry price");
+        continue;
+      }
+
+      positions.push({
         coin: p.position.coin,
-        direction: (Number(p.position.szi) > 0 ? "long" : "short") as "long" | "short",
-        size: Math.abs(Number(p.position.szi)),
-        entryPrice: Number(p.position.entryPx),
-        unrealizedPnl: Number(p.position.unrealizedPnl),
-        leverage: typeof p.position.leverage === "object"
-          ? (p.position.leverage as { value: number }).value
-          : Number(p.position.leverage),
-      }));
+        direction: szi > 0 ? "long" : "short",
+        size: Math.abs(szi),
+        entryPrice,
+        unrealizedPnl,
+        leverage: finiteOr(rawLeverage, 1),
+      });
+    }
+    log.debug({ action: "getPositions", count: positions.length, latencyMs: Math.round(performance.now() - t0) }, "Fetched positions");
+    return positions;
   }
 
   async getOpenOrders(walletAddress: string): Promise<HlOpenOrder[]> {
+    const t0 = performance.now();
     const orders = await this.sdk.info.getFrontendOpenOrders(walletAddress);
     if (!orders) return [];
-    return (orders as Array<Record<string, unknown>>).map((o) => ({
-      coin: String(o.coin),
-      oid: Number(o.oid),
-      side: String(o.side),
-      sz: Number(o.sz),
-      limitPx: Number(o.limitPx),
-      orderType: String(o.orderType ?? "Limit"),
-      isTrigger: Boolean(o.isTrigger),
-      triggerPx: Number(o.triggerPx ?? 0),
-      triggerCondition: String(o.triggerCondition ?? ""),
-      reduceOnly: Boolean(o.reduceOnly),
-      isPositionTpsl: Boolean(o.isPositionTpsl),
-    }));
+    const result: HlOpenOrder[] = [];
+    for (const o of orders as Array<Record<string, unknown>>) {
+      const oid = Number(o.oid);
+      if (!Number.isFinite(oid) || oid <= 0) {
+        log.warn({ action: "getOpenOrders", rawOid: o.oid }, "Skipping order with invalid oid");
+        continue;
+      }
+      result.push({
+        coin: String(o.coin),
+        oid,
+        side: String(o.side),
+        sz: finiteOr(Number(o.sz), 0),
+        limitPx: finiteOr(Number(o.limitPx), 0),
+        orderType: String(o.orderType ?? "Limit"),
+        isTrigger: Boolean(o.isTrigger),
+        triggerPx: finiteOr(Number(o.triggerPx ?? 0), 0),
+        triggerCondition: String(o.triggerCondition ?? ""),
+        reduceOnly: Boolean(o.reduceOnly),
+        isPositionTpsl: Boolean(o.isPositionTpsl),
+      });
+    }
+    log.debug({ action: "getOpenOrders", count: result.length, latencyMs: Math.round(performance.now() - t0) }, "Fetched open orders");
+    return result;
   }
 
   async getHistoricalOrders(walletAddress: string): Promise<HlHistoricalOrder[]> {
+    const t0 = performance.now();
     const orders = await this.sdk.info.getHistoricalOrders(walletAddress);
     if (!orders) return [];
-    return (orders as unknown as Array<Record<string, unknown>>).map((o) => {
+    const result = (orders as unknown as Array<Record<string, unknown>>).map((o) => {
       const inner = o.order as Record<string, unknown> | undefined;
       return {
         oid: Number(inner?.oid ?? o.oid),
         status: String(o.status ?? "open") as HlHistoricalOrder["status"],
       };
     });
+    log.debug({ action: "getHistoricalOrders", count: result.length, latencyMs: Math.round(performance.now() - t0) }, "Fetched historical orders");
+    return result;
   }
 
   async getAccountEquity(walletAddress: string): Promise<number> {
+    const t0 = performance.now();
     const state = await this.sdk.info.perpetuals.getClearinghouseState(walletAddress);
     if (!state?.marginSummary) return 0;
-    return Number(state.marginSummary.accountValue);
+    const equity = finiteOr(Number(state.marginSummary.accountValue), 0);
+    if (equity === 0 && state.marginSummary.accountValue != null) {
+      log.warn({ action: "getAccountEquity", rawValue: state.marginSummary.accountValue }, "Equity parsed as invalid, returning 0");
+    }
+    log.debug({ action: "getAccountEquity", equity, latencyMs: Math.round(performance.now() - t0) }, "Fetched account equity");
+    return equity;
   }
 }

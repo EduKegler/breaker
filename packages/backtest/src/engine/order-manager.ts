@@ -2,12 +2,12 @@ import type { Candle } from "../types/candle.js";
 import type { Order, Fill, OrderSide } from "../types/order.js";
 import { applySlippage, calculateCommission, type ExecutionConfig, DEFAULT_EXECUTION } from "./execution-model.js";
 
-export interface PendingOrder {
+interface PendingOrder {
   order: Order;
   entryComment: string;
 }
 
-export interface OrderCheckResult {
+interface OrderCheckResult {
   fills: Fill[];
   cancelledOrderIds: string[];
 }

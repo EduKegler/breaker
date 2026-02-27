@@ -6,7 +6,7 @@ import lockfile from "proper-lockfile";
 const LOCK_DIR = "/tmp";
 const STALE_MS = 600_000;
 
-export interface LockData {
+interface LockData {
   pid: number;
   ts: number;
   asset: string;

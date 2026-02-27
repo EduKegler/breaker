@@ -1,4 +1,7 @@
 import type { Hyperliquid } from "hyperliquid";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("hlEventStream");
 
 export interface WsOrder {
   order: {
@@ -48,23 +51,35 @@ export class HlEventStream {
 
   async start(callbacks: HlEventStreamCallbacks): Promise<void> {
     this.started = true;
+    log.info({ action: "start" }, "Subscribing to HL events");
 
     await this.sdk.subscriptions.subscribeToOrderUpdates(
       this.walletAddress,
       (orders: WsOrder[]) => {
-        callbacks.onOrderUpdate(orders);
+        if (!this.started) return;
+        try {
+          callbacks.onOrderUpdate(orders);
+        } catch (err) {
+          log.error({ action: "onOrderUpdate", err }, "Callback error in order update handler");
+        }
       },
     );
 
     await this.sdk.subscriptions.subscribeToUserFills(
       this.walletAddress,
       (data: { isSnapshot: boolean; fills: WsUserFill[] }) => {
-        callbacks.onFill(data.fills, data.isSnapshot);
+        if (!this.started) return;
+        try {
+          callbacks.onFill(data.fills, data.isSnapshot);
+        } catch (err) {
+          log.error({ action: "onFill", err }, "Callback error in fill handler");
+        }
       },
     );
   }
 
   stop(): void {
     this.started = false;
+    log.info({ action: "stop" }, "HL event stream stopped");
   }
 }
