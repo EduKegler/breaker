@@ -180,13 +180,14 @@ export function CandlestickChart({ candles, signals, positions }: CandlestickCha
     }
   }, [positions]);
 
-  if (candles.length === 0) {
-    return (
-      <div className="h-96 flex items-center justify-center">
-        <p className="text-txt-secondary text-sm font-mono">No candle data yet</p>
-      </div>
-    );
-  }
-
-  return <div ref={containerRef} className="h-96 w-full" />;
+  return (
+    <div className="relative h-96 w-full">
+      <div ref={containerRef} className="h-full w-full" />
+      {candles.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <p className="text-txt-secondary text-sm font-mono">No candle data yet</p>
+        </div>
+      )}
+    </div>
+  );
 }
