@@ -67,9 +67,21 @@ export function createApp(deps: ServerDeps): express.Express {
     }
   });
 
-  app.get("/candles", (_req, res) => {
-    const candles = deps.candlePoller.getCandles();
-    res.json({ candles });
+  app.get("/candles", async (req, res) => {
+    const before = req.query.before ? Number(req.query.before) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 200;
+
+    if (before) {
+      try {
+        const candles = await deps.candlePoller.fetchHistorical(before, limit);
+        res.json({ candles });
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+      }
+    } else {
+      const candles = deps.candlePoller.getCandles();
+      res.json({ candles });
+    }
   });
 
   app.get("/signals", (_req, res) => {

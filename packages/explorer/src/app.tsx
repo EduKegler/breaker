@@ -41,6 +41,18 @@ export function App() {
   const [signals, setSignals] = useState<SignalRow[]>([]);
   const [httpError, setHttpError] = useState(false);
 
+  const handleLoadMoreCandles = useCallback((before: number) => {
+    api.candles(before, 200).then((r) => {
+      if (r.candles.length === 0) return;
+      setCandles((prev) => {
+        const existingTimes = new Set(prev.map((c) => c.t));
+        const newCandles = r.candles.filter((c) => !existingTimes.has(c.t));
+        if (newCandles.length === 0) return prev;
+        return [...newCandles, ...prev].sort((a, b) => a.t - b.t);
+      });
+    }).catch(() => {});
+  }, []);
+
   // Initial HTTP fetch (one-shot)
   useEffect(() => {
     Promise.all([
@@ -202,7 +214,7 @@ export function App() {
           <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
             Price Chart
           </h2>
-          <CandlestickChart candles={candles} signals={signals} positions={positions} />
+          <CandlestickChart candles={candles} signals={signals} positions={positions} onLoadMore={handleLoadMoreCandles} />
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">

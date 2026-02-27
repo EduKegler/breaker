@@ -63,4 +63,18 @@ export class CandlePoller {
   getLatest(): Candle | null {
     return this.candles.length > 0 ? this.candles[this.candles.length - 1] : null;
   }
+
+  async fetchHistorical(before: number, limit: number): Promise<Candle[]> {
+    const ivlMs = intervalToMs(this.config.interval);
+    const endTime = before;
+    const startTime = endTime - limit * ivlMs;
+
+    return fetchCandles(
+      this.config.coin,
+      this.config.interval,
+      startTime,
+      endTime,
+      { source: this.config.dataSource },
+    );
+  }
 }

@@ -103,6 +103,12 @@ export const api = {
   equity: () => fetchJson<{ snapshots: EquitySnapshot[] }>("/equity"),
   openOrders: () => fetchJson<{ orders: OpenOrder[] }>("/open-orders"),
   config: () => fetchJson<ConfigResponse>("/config"),
-  candles: () => fetchJson<{ candles: CandleData[] }>("/candles"),
+  candles: (before?: number, limit?: number) => {
+    const params = new URLSearchParams();
+    if (before) params.set("before", String(before));
+    if (limit) params.set("limit", String(limit));
+    const qs = params.toString();
+    return fetchJson<{ candles: CandleData[] }>(`/candles${qs ? `?${qs}` : ""}`);
+  },
   signals: () => fetchJson<{ signals: SignalRow[] }>("/signals"),
 };

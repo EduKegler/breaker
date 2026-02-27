@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -18,17 +18,23 @@ interface CandlestickChartProps {
   candles: CandleData[];
   signals: SignalRow[];
   positions: LivePosition[];
+  onLoadMore?: (before: number) => void;
 }
 
 function toChartTime(ms: number): Time {
   return (ms / 1000) as Time;
 }
 
-export function CandlestickChart({ candles, signals, positions }: CandlestickChartProps) {
+export function CandlestickChart({ candles, signals, positions, onLoadMore }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const loadingRef = useRef(false);
+  const onLoadMoreRef = useRef(onLoadMore);
+  onLoadMoreRef.current = onLoadMore;
+  const candlesRef = useRef(candles);
+  candlesRef.current = candles;
 
   // Create chart once
   useEffect(() => {
@@ -71,6 +77,21 @@ export function CandlestickChart({ candles, signals, positions }: CandlestickCha
     seriesRef.current = series;
     markersRef.current = createSeriesMarkers(series, []);
 
+    // Lazy load: detect scroll near left edge
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (!range || loadingRef.current) return;
+      // When the left edge of visible range is near the start of data
+      if (range.from < 10) {
+        const currentCandles = candlesRef.current;
+        if (currentCandles.length === 0) return;
+        const oldestTs = currentCandles[0].t;
+        loadingRef.current = true;
+        onLoadMoreRef.current?.(oldestTs);
+        // Reset after a short delay to debounce
+        setTimeout(() => { loadingRef.current = false; }, 2000);
+      }
+    });
+
     // Responsive resize
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -102,7 +123,6 @@ export function CandlestickChart({ candles, signals, positions }: CandlestickCha
     }));
 
     seriesRef.current.setData(data);
-    chartRef.current?.timeScale().scrollToRealTime();
   }, [candles]);
 
   // Update markers when signals change
@@ -117,7 +137,6 @@ export function CandlestickChart({ candles, signals, positions }: CandlestickCha
       if (s.risk_check_passed !== 1 || !s.entry_price) continue;
 
       const signalTs = new Date(s.created_at).getTime();
-      // Find the closest candle time
       let closestT = candles[0].t;
       let minDiff = Math.abs(signalTs - closestT);
       for (const c of candles) {
@@ -148,7 +167,6 @@ export function CandlestickChart({ candles, signals, positions }: CandlestickCha
   useEffect(() => {
     if (!seriesRef.current) return;
 
-    // Remove existing price lines
     for (const line of seriesRef.current.priceLines()) {
       seriesRef.current.removePriceLine(line);
     }
@@ -157,7 +175,6 @@ export function CandlestickChart({ candles, signals, positions }: CandlestickCha
 
     const pos = positions[0];
 
-    // Entry price line
     seriesRef.current.createPriceLine({
       price: pos.entryPrice,
       color: "#ffaa00",
@@ -167,7 +184,6 @@ export function CandlestickChart({ candles, signals, positions }: CandlestickCha
       title: "Entry",
     });
 
-    // Stop loss price line
     if (pos.stopLoss > 0) {
       seriesRef.current.createPriceLine({
         price: pos.stopLoss,

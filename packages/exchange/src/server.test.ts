@@ -69,6 +69,7 @@ beforeEach(() => {
       getLatest: vi.fn().mockReturnValue(null),
       warmup: vi.fn().mockResolvedValue([]),
       poll: vi.fn().mockResolvedValue(null),
+      fetchHistorical: vi.fn().mockResolvedValue([]),
     } as unknown as ServerDeps["candlePoller"],
   };
 });
@@ -189,6 +190,22 @@ describe("Exchange server", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.candles).toEqual([]);
+  });
+
+  it("GET /candles?before= fetches historical candles", async () => {
+    const historicalCandles = [
+      { t: 1699999100000, o: 94000, h: 94500, l: 93500, c: 94200, v: 500, n: 30 },
+      { t: 1699999200000, o: 94200, h: 94700, l: 94000, c: 94500, v: 600, n: 35 },
+    ];
+    (deps.candlePoller.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue(historicalCandles);
+
+    const app = createApp(deps);
+    const res = await request(app).get("/candles?before=1700000000000&limit=100");
+
+    expect(res.status).toBe(200);
+    expect(res.body.candles).toHaveLength(2);
+    expect(deps.candlePoller.fetchHistorical).toHaveBeenCalledWith(1700000000000, 100);
+    expect(deps.candlePoller.getCandles).not.toHaveBeenCalled();
   });
 
   it("GET /signals returns recent signals from store", async () => {
