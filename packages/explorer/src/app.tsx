@@ -52,6 +52,7 @@ export function App() {
   const [replaySignals, setReplaySignals] = useState<ReplaySignal[]>([]);
   const [account, setAccount] = useState<AccountResponse | null>(null);
   const [prices, setPrices] = useState<PricesEvent | null>(null);
+  const [candlesLoading, setCandlesLoading] = useState(true);
   const [httpError, setHttpError] = useState(false);
   const [showSignalPopover, setShowSignalPopover] = useState(false);
   const [autoTrading, setAutoTrading] = useState(false);
@@ -108,7 +109,7 @@ export function App() {
       api.orders().then((r) => setOrders(r.orders)).catch(() => {}),
       api.openOrders().then((r) => setOpenOrders(r.orders)).catch(() => {}),
       api.equity().then((r) => setEquity(r.snapshots)).catch(() => {}),
-      api.candles().then((r) => setCandles(r.candles)).catch(() => {}),
+      api.candles().then((r) => setCandles(r.candles)).catch(() => {}).finally(() => setCandlesLoading(false)),
       api.signals().then((r) => setSignals(r.signals)).catch(() => {}),
       api.strategySignals().then((r) => setReplaySignals(r.signals)).catch(() => {}),
       api.account().then(setAccount).catch(() => {}),
@@ -379,7 +380,7 @@ export function App() {
               </div>
             )}
           </div>
-          <CandlestickChart candles={candles} signals={signals} replaySignals={replaySignals} positions={positions} onLoadMore={handleLoadMoreCandles} />
+          <CandlestickChart candles={candles} signals={signals} replaySignals={replaySignals} positions={positions} loading={candlesLoading} onLoadMore={handleLoadMoreCandles} />
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">

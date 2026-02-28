@@ -24,6 +24,7 @@ interface CandlestickChartProps {
   signals: SignalRow[];
   replaySignals: ReplaySignal[];
   positions: LivePosition[];
+  loading?: boolean;
   onLoadMore?: (before: number) => void;
 }
 
@@ -31,7 +32,7 @@ function toChartTime(ms: number): Time {
   return (ms / 1000) as Time;
 }
 
-export function CandlestickChart({ candles, signals, replaySignals, positions, onLoadMore }: CandlestickChartProps) {
+export function CandlestickChart({ candles, signals, replaySignals, positions, loading, onLoadMore }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
@@ -237,7 +238,14 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, o
       <div ref={containerRef} className="h-full w-full" />
       {candles.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <p className="text-txt-secondary text-sm font-mono">No candle data yet</p>
+          {loading ? (
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full border-2 border-txt-secondary/30 border-t-txt-secondary animate-spin" />
+              <span className="text-sm text-txt-secondary font-mono">Loading candles…</span>
+            </div>
+          ) : (
+            <p className="text-txt-secondary text-sm font-mono">No candle data yet</p>
+          )}
         </div>
       )}
     </div>
