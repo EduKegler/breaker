@@ -1,11 +1,5 @@
 # CLAUDE Instructions — Monorepo Root
 
-## Project memory
-- Each package has its own `MEMORY.md` (~50 lines max, 4 sections: current state, pending items, known pitfalls, non-obvious decisions).
-- AT THE START of each session: read the relevant `MEMORY.md` (it's short).
-- AT THE END of each session: update `MEMORY.md` if anything changed.
-- DO NOT record session changelog — git log is the source of truth.
-
 ## Continuous improvement of CLAUDE.md
 - Identify patterns, conventions or rules that should be documented.
 - Proactively update when a new rule becomes established.
