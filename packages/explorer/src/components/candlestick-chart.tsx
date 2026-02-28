@@ -1,15 +1,17 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import {
   createChart,
   CandlestickSeries,
   ColorType,
   LineStyle,
   createSeriesMarkers,
+  createTextWatermark,
   type IChartApi,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type SeriesType,
   type SeriesMarker,
+  type CandlestickData,
   type Time,
 } from "lightweight-charts";
 import type { CandleData, SignalRow, LivePosition, ReplaySignal } from "../types/api.js";
@@ -26,17 +28,23 @@ interface CandlestickChartProps {
   positions: LivePosition[];
   loading?: boolean;
   onLoadMore?: (before: number) => void;
+  watermark?: { asset?: string; strategy?: string };
 }
 
 function toChartTime(ms: number): Time {
   return (ms / 1000) as Time;
 }
 
-export function CandlestickChart({ candles, signals, replaySignals, positions, loading, onLoadMore }: CandlestickChartProps) {
+function formatOhlcv(n: number): string {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function CandlestickChart({ candles, signals, replaySignals, positions, loading, onLoadMore, watermark }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const legendRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
   const onLoadMoreRef = useRef(onLoadMore);
   onLoadMoreRef.current = onLoadMore;
@@ -84,6 +92,20 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
     seriesRef.current = series;
     markersRef.current = createSeriesMarkers(series, []);
 
+    // OHLCV legend: update via DOM (textContent) to avoid React re-renders on every mouse move
+    chart.subscribeCrosshairMove((param) => {
+      if (!legendRef.current) return;
+      const data = param.seriesData?.get(series) as CandlestickData<Time> | undefined;
+      if (!data || !param.time) {
+        legendRef.current.textContent = "";
+        return;
+      }
+      const bullish = data.close >= data.open;
+      legendRef.current.style.color = bullish ? "#00ff88" : "#ff3366";
+      legendRef.current.textContent =
+        `O ${formatOhlcv(data.open)}  H ${formatOhlcv(data.high)}  L ${formatOhlcv(data.low)}  C ${formatOhlcv(data.close)}`;
+    });
+
     // Lazy load: detect scroll near left edge
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (!range || loadingRef.current) return;
@@ -114,6 +136,36 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
       markersRef.current = null;
     };
   }, []);
+
+  // Watermark: asset name + strategy rendered on the chart canvas
+  useEffect(() => {
+    if (!chartRef.current || !watermark) return;
+    const lines: { text: string; color: string; fontSize: number; fontFamily: string }[] = [];
+    if (watermark.asset) {
+      lines.push({
+        text: watermark.asset,
+        color: "rgba(255, 255, 255, 0.04)",
+        fontSize: 72,
+        fontFamily: "Outfit, sans-serif",
+      });
+    }
+    if (watermark.strategy) {
+      lines.push({
+        text: watermark.strategy,
+        color: "rgba(255, 255, 255, 0.03)",
+        fontSize: 24,
+        fontFamily: "JetBrains Mono, monospace",
+      });
+    }
+    if (lines.length === 0) return;
+    const pane = chartRef.current.panes()[0];
+    const wm = createTextWatermark(pane, {
+      horzAlign: "center",
+      vertAlign: "center",
+      lines,
+    });
+    return () => wm.detach();
+  }, [watermark?.asset, watermark?.strategy]);
 
   // Update data when candles change
   useEffect(() => {
@@ -236,6 +288,10 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
   return (
     <div className="relative h-96 w-full">
       <div ref={containerRef} className="h-full w-full" />
+      <div
+        ref={legendRef}
+        className="absolute top-2 left-2 z-10 text-[11px] font-mono pointer-events-none select-none"
+      />
       {candles.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center">
           {loading ? (

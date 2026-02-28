@@ -380,7 +380,7 @@ export function App() {
               </div>
             )}
           </div>
-          <CandlestickChart candles={candles} signals={signals} replaySignals={replaySignals} positions={positions} loading={candlesLoading} onLoadMore={handleLoadMoreCandles} />
+          <CandlestickChart candles={candles} signals={signals} replaySignals={replaySignals} positions={positions} loading={candlesLoading} onLoadMore={handleLoadMoreCandles} watermark={h ? { asset: h.asset, strategy: h.strategy } : undefined} />
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
