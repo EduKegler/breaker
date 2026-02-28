@@ -110,4 +110,5 @@ export interface ConfigResponse {
   guardrails: Record<string, number>;
   sizing: Record<string, unknown>;
   dataSource?: string;
+  autoTradingEnabled?: boolean;
 }

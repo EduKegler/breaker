@@ -54,6 +54,7 @@ export function App() {
   const [prices, setPrices] = useState<PricesEvent | null>(null);
   const [httpError, setHttpError] = useState(false);
   const [showSignalPopover, setShowSignalPopover] = useState(false);
+  const [autoTrading, setAutoTrading] = useState(false);
   const { addToast } = useToasts();
   const prevPricesRef = useRef<PricesEvent | null>(null);
   const [priceFlash, setPriceFlash] = useState<"up" | "down" | null>(null);
@@ -113,6 +114,26 @@ export function App() {
       api.account().then(setAccount).catch(() => {}),
     ]);
   }, []);
+
+  // Sync autoTrading with config
+  useEffect(() => {
+    if (config?.autoTradingEnabled != null) {
+      setAutoTrading(config.autoTradingEnabled);
+    }
+  }, [config?.autoTradingEnabled]);
+
+  const handleToggleAutoTrading = useCallback(async () => {
+    const newValue = !autoTrading;
+    setAutoTrading(newValue);
+    try {
+      const res = await api.setAutoTrading(newValue);
+      setAutoTrading(res.autoTradingEnabled);
+      addToast(`Auto trading ${res.autoTradingEnabled ? "enabled" : "disabled"}`, "success");
+    } catch (err) {
+      setAutoTrading(!newValue);
+      addToast(`Auto trading toggle: ${errorMsg(err)}`, "error");
+    }
+  }, [autoTrading, addToast]);
 
   // Clear price flash after animation
   useEffect(() => {
@@ -262,6 +283,18 @@ export function App() {
           {/* Right side */}
           <div className="ml-auto flex items-center gap-3">
             {/* ── Actionable buttons ── */}
+            <button
+              type="button"
+              disabled={!isOnline}
+              onClick={handleToggleAutoTrading}
+              className={`px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded border transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer ${
+                autoTrading
+                  ? "bg-profit/15 text-profit border-profit/40 hover:bg-profit/30 hover:border-profit/60"
+                  : "bg-terminal-border/50 text-txt-secondary/60 border-terminal-border hover:bg-terminal-border/70 hover:text-txt-secondary"
+              }`}
+            >
+              Auto
+            </button>
             <div className="relative">
               <button
                 type="button"

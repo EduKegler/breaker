@@ -86,4 +86,6 @@ export const api = {
     postJson<{ status: string }>("/close-position", { coin }),
   cancelOrder: (oid: number) =>
     deleteJson<{ status: string }>(`/open-order/${oid}`),
+  setAutoTrading: (enabled: boolean) =>
+    postJson<{ autoTradingEnabled: boolean }>("/auto-trading", { enabled }),
 };
