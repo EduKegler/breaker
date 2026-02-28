@@ -17,8 +17,10 @@ function createMockClient(): HlClient {
     getPositions: vi.fn().mockResolvedValue(positions),
     getOpenOrders: vi.fn().mockResolvedValue([]),
     getHistoricalOrders: vi.fn().mockResolvedValue([]),
+    getOrderStatus: vi.fn().mockResolvedValue(null),
     getAccountEquity: vi.fn().mockResolvedValue(1000),
     getAccountState: vi.fn().mockResolvedValue({ accountValue: 1000, totalMarginUsed: 0, totalNtlPos: 0, totalRawUsd: 0, withdrawable: 1000, spotBalances: [] }),
+    getMidPrice: vi.fn().mockResolvedValue(null),
   };
 }
 
@@ -84,6 +86,7 @@ function createMockSdk(overrides: Record<string, unknown> = {}) {
       },
       getFrontendOpenOrders: vi.fn().mockResolvedValue([]),
       getHistoricalOrders: vi.fn().mockResolvedValue([]),
+      getOrderStatus: vi.fn().mockResolvedValue({}),
     },
     exchange: {
       updateLeverage: vi.fn(),
@@ -369,6 +372,41 @@ describe("HyperliquidClient input validation", () => {
       expect(orders).toHaveLength(1);
       expect(orders[0].sz).toBe(0);
       expect(orders[0].triggerPx).toBe(0);
+    });
+  });
+
+  describe("getOrderStatus", () => {
+    it("returns order status for triggered order", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.getOrderStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        order: { coin: "BTC-PERP", oid: 12345 },
+        status: "triggered",
+      });
+
+      const client = new HyperliquidClient(sdk);
+      const result = await client.getOrderStatus("0xtest", 12345);
+
+      expect(result).toEqual({ oid: 12345, status: "triggered" });
+    });
+
+    it("returns null when SDK returns empty object", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.getOrderStatus as ReturnType<typeof vi.fn>).mockResolvedValue({});
+
+      const client = new HyperliquidClient(sdk);
+      const result = await client.getOrderStatus("0xtest", 99999);
+
+      expect(result).toBeNull();
+    });
+
+    it("returns null when SDK throws", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.getOrderStatus as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Not found"));
+
+      const client = new HyperliquidClient(sdk);
+      const result = await client.getOrderStatus("0xtest", 99999);
+
+      expect(result).toBeNull();
     });
   });
 

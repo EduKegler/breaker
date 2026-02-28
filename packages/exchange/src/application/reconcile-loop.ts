@@ -5,6 +5,7 @@ import type { EventLog } from "../adapters/event-log.js";
 import { resolveOrderStatus } from "../domain/order-status.js";
 import { recoverSlTp } from "../domain/recover-sl-tp.js";
 import { reconcile, type ReconcileResult } from "./reconcile.js";
+import { resolveHistoricalStatuses } from "./resolve-historical-statuses.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import { logger } from "../lib/logger.js";
 
@@ -135,8 +136,8 @@ export class ReconcileLoop {
       const resolved = trackable.filter((o) => !openOidSet.has(Number(o.hl_order_id)));
 
       if (resolved.length > 0) {
-        const historicalOrders = await hlClient.getHistoricalOrders(walletAddress);
-        const historicalMap = new Map(historicalOrders.map((o) => [o.oid, o.status]));
+        const resolvedOids = resolved.map((o) => Number(o.hl_order_id));
+        const historicalMap = await resolveHistoricalStatuses(hlClient, walletAddress, resolvedOids);
 
         for (const order of resolved) {
           const oid = Number(order.hl_order_id);

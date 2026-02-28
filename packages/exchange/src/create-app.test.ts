@@ -66,7 +66,9 @@ beforeEach(() => {
     getPositions: vi.fn().mockResolvedValue([]),
     getOpenOrders: vi.fn().mockResolvedValue([]),
     getHistoricalOrders: vi.fn().mockResolvedValue([]),
+    getOrderStatus: vi.fn().mockResolvedValue(null),
     getAccountEquity: vi.fn().mockResolvedValue(1000),
+    getMidPrice: vi.fn().mockResolvedValue(null),
     getAccountState: vi.fn().mockResolvedValue({
       accountValue: 1000,
       totalMarginUsed: 200,

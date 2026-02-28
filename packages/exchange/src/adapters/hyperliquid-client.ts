@@ -294,6 +294,21 @@ export class HyperliquidClient implements HlClient {
     return result;
   }
 
+  async getOrderStatus(walletAddress: string, oid: number): Promise<HlHistoricalOrder | null> {
+    const t0 = performance.now();
+    try {
+      const response = await this.sdk.info.getOrderStatus(walletAddress, oid);
+      const record = response as Record<string, unknown> | undefined;
+      const status = record?.status as string | undefined;
+      if (!status) return null;
+      log.debug({ action: "getOrderStatus", oid, status, latencyMs: Math.round(performance.now() - t0) }, "Fetched individual order status");
+      return { oid, status: status as HlHistoricalOrder["status"] };
+    } catch (err) {
+      log.warn({ action: "getOrderStatus", oid, err, latencyMs: Math.round(performance.now() - t0) }, "Failed to fetch order status");
+      return null;
+    }
+  }
+
   async getAccountEquity(walletAddress: string): Promise<number> {
     const t0 = performance.now();
     const [perpState, spotState] = await Promise.all([

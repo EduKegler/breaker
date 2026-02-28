@@ -62,6 +62,10 @@ export class DryRunHlClient implements HlClient {
     return [];
   }
 
+  async getOrderStatus(_walletAddress: string, _oid: number): Promise<HlHistoricalOrder | null> {
+    return null;
+  }
+
   async getAccountEquity(_walletAddress: string): Promise<number> {
     return 0;
   }

@@ -71,6 +71,11 @@ describe("DryRunHlClient", () => {
     expect(await client.getHistoricalOrders("0xtest")).toEqual([]);
   });
 
+  it("getOrderStatus returns null", async () => {
+    const client = new DryRunHlClient();
+    expect(await client.getOrderStatus("0xtest", 12345)).toBeNull();
+  });
+
   it("getAccountEquity returns 0", async () => {
     const client = new DryRunHlClient();
     expect(await client.getAccountEquity("0xtest")).toBe(0);

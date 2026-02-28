@@ -18,7 +18,10 @@ function createMockHlClient(overrides: Partial<HlClient> = {}): HlClient {
     getPositions: vi.fn().mockResolvedValue([]),
     getOpenOrders: vi.fn().mockResolvedValue([]),
     getHistoricalOrders: vi.fn().mockResolvedValue([]),
+    getOrderStatus: vi.fn().mockResolvedValue(null),
     getAccountEquity: vi.fn().mockResolvedValue(1000),
+    getAccountState: vi.fn().mockResolvedValue({ accountValue: 0, totalMarginUsed: 0, totalNtlPos: 0, totalRawUsd: 0, withdrawable: 0, spotBalances: [] }),
+    getMidPrice: vi.fn().mockResolvedValue(null),
     ...overrides,
   };
 }
@@ -815,6 +818,71 @@ describe("ReconcileLoop", () => {
 
     // Should never reach 3 consecutive because success resets counter
     expect(onApiDown).not.toHaveBeenCalled();
+  });
+
+  it("syncs trigger order status via getOrderStatus fallback", async () => {
+    store.insertSignal({
+      alert_id: "sig-trigger", source: "strategy-runner", asset: "BTC",
+      side: "SHORT", entry_price: 68000, stop_loss: 67332,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+    store.insertOrder({
+      signal_id: 1, hl_order_id: "333484485388", coin: "BTC", side: "buy",
+      size: 0.001, price: 67332, order_type: "stop", tag: "sl",
+      status: "pending", mode: "mainnet", filled_at: null,
+    });
+
+    // SL trigger order NOT in historicalOrders (the bug), but found via getOrderStatus
+    const hlClient = createMockHlClient({
+      getOpenOrders: vi.fn().mockResolvedValue([]),
+      getHistoricalOrders: vi.fn().mockResolvedValue([]), // trigger orders not returned here
+      getOrderStatus: vi.fn().mockResolvedValue({ oid: 333484485388, status: "triggered" }),
+    });
+    const positionBook = new PositionBook();
+    const eventLog = { append: vi.fn() };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    // getOrderStatus should have been called as fallback
+    expect(hlClient.getOrderStatus).toHaveBeenCalledWith("0xtest", 333484485388);
+
+    const orders = store.getRecentOrders(10);
+    expect(orders[0].status).toBe("filled");
+    expect(orders[0].filled_at).toBeTruthy();
+  });
+
+  it("does not call getOrderStatus when historicalOrders has the oid", async () => {
+    store.insertSignal({
+      alert_id: "sig-found", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 95000, stop_loss: 94000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+    store.insertOrder({
+      signal_id: 1, hl_order_id: "500", coin: "BTC", side: "sell",
+      size: 0.01, price: 94000, order_type: "stop", tag: "sl",
+      status: "pending", mode: "testnet", filled_at: null,
+    });
+
+    const hlClient = createMockHlClient({
+      getOpenOrders: vi.fn().mockResolvedValue([]),
+      getHistoricalOrders: vi.fn().mockResolvedValue([
+        { oid: 500, status: "filled" },
+      ] as HlHistoricalOrder[]),
+    });
+    const positionBook = new PositionBook();
+    const eventLog = { append: vi.fn() };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    // Should NOT call getOrderStatus since historicalOrders had the oid
+    expect(hlClient.getOrderStatus).not.toHaveBeenCalled();
+
+    const orders = store.getRecentOrders(10);
+    expect(orders[0].status).toBe("filled");
   });
 
   it("syncs marginCanceled order as cancelled", async () => {

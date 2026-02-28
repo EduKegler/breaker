@@ -66,6 +66,7 @@ export interface HlClient {
   getPositions(walletAddress: string): Promise<HlPosition[]>;
   getOpenOrders(walletAddress: string): Promise<HlOpenOrder[]>;
   getHistoricalOrders(walletAddress: string): Promise<HlHistoricalOrder[]>;
+  getOrderStatus(walletAddress: string, oid: number): Promise<HlHistoricalOrder | null>;
   getAccountEquity(walletAddress: string): Promise<number>;
   getAccountState(walletAddress: string): Promise<HlAccountState>;
   getMidPrice(coin: string): Promise<number | null>;

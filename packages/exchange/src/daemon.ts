@@ -22,6 +22,7 @@ import { resolveOrderStatus } from "./domain/order-status.js";
 import { recoverSlTp } from "./domain/recover-sl-tp.js";
 import { StrategyRunner } from "./application/strategy-runner.js";
 import { ReconcileLoop } from "./application/reconcile-loop.js";
+import { resolveHistoricalStatuses } from "./application/resolve-historical-statuses.js";
 import { createApp } from "./create-app.js";
 import { WsBroker } from "./lib/ws-broker.js";
 import type { HlClient } from "./types/hl-client.js";
@@ -112,8 +113,8 @@ async function syncPositionsAndBroadcast(deps: {
   );
 
   if (resolvedOrders.length > 0) {
-    const historicalOrders = await hlClient.getHistoricalOrders(walletAddress);
-    const historicalMap = new Map(historicalOrders.map((o) => [o.oid, o.status]));
+    const resolvedOids = resolvedOrders.map((o) => Number(o.hl_order_id));
+    const historicalMap = await resolveHistoricalStatuses(hlClient, walletAddress, resolvedOids);
 
     for (const order of resolvedOrders) {
       const oid = Number(order.hl_order_id);
