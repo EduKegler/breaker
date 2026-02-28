@@ -1,6 +1,6 @@
 # B.R.E.A.K.E.R.
 
-**Backtesting Runtime for Evolutionary Analysis, Kernel Execution & Refinement**
+**Backtesting & Refinement Engine for Automated Knowledge-driven Execution & Routing**
 
 End-to-end automated crypto trading pipeline — from strategy backtesting and optimization to live execution and WhatsApp notifications.
 

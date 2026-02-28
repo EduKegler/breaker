@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { OrderManager, createOrderId, resetOrderIdCounter } from "./order-manager.js";
+import { OrderManager } from "./order-manager.js";
+import { createOrderId, resetOrderIdCounter } from "./create-order-id.js";
 import type { Order } from "../types/order.js";
 import type { Candle } from "../types/candle.js";
 

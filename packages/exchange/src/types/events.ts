@@ -17,6 +17,7 @@ export type EventType =
   | "candle_polled"
   | "notification_sent"
   | "notification_failed"
+  | "entry_no_fill"
   | "error";
 
 export interface ExchangeEvent {

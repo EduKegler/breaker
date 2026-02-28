@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { updateParameterHistory, loadParameterHistory, transitionApproach, backfillLastIteration } from "./param-writer.js";
+import { paramWriter } from "./param-writer.js";
 import type { IterationMetadata } from "./param-writer.js";
 
 let tmpDir: string;
@@ -28,18 +28,18 @@ const baseMetadata: IterationMetadata = {
   nextSteps: [{ condition: "PnL < 180", action: "revert atrMult" }],
 };
 
-describe("loadParameterHistory", () => {
+describe("paramWriter.loadHistory", () => {
   it("returns empty structure when file does not exist", () => {
-    const h = loadParameterHistory(path.join(tmpDir, "nonexistent.json"));
+    const h = paramWriter.loadHistory(path.join(tmpDir, "nonexistent.json"));
     expect(h.iterations).toEqual([]);
     expect(h.neverWorked).toEqual([]);
     expect(h.exploredRanges).toEqual({});
   });
 });
 
-describe("updateParameterHistory", () => {
+describe("paramWriter.updateHistory", () => {
   it("creates new history when file does not exist", () => {
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
@@ -55,14 +55,14 @@ describe("updateParameterHistory", () => {
 
   it("completes previous iteration after field", () => {
     // Seed with pending iteration
-    updateParameterHistory({
+    paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
       currentMetrics: { pnl: 200, trades: 180, pf: 1.5 },
     });
 
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: { ...baseMetadata, changeApplied: { param: "rr1", from: 0.5, to: 0.7, scale: "parametric", description: "tweak TP1" } },
       globalIter: 2,
@@ -75,7 +75,7 @@ describe("updateParameterHistory", () => {
   });
 
   it("adds to exploredRanges", () => {
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
@@ -85,13 +85,13 @@ describe("updateParameterHistory", () => {
   });
 
   it("does not duplicate exploredRanges values", () => {
-    updateParameterHistory({
+    paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
       currentMetrics: { pnl: 200, trades: 180, pf: 1.5 },
     });
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 2,
@@ -101,7 +101,7 @@ describe("updateParameterHistory", () => {
   });
 
   it("adds pending hypotheses for non-applied", () => {
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
@@ -113,7 +113,7 @@ describe("updateParameterHistory", () => {
 
   it("expires old pending hypotheses", () => {
     // Create old hypothesis
-    const history = loadParameterHistory(historyPath);
+    const history = paramWriter.loadHistory(historyPath);
     history.pendingHypotheses.push({
       iter: 1,
       rank: 2,
@@ -122,7 +122,7 @@ describe("updateParameterHistory", () => {
     });
     fs.writeFileSync(historyPath, JSON.stringify(history));
 
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: { ...baseMetadata, hypotheses: [] },
       globalIter: 7, // 7 - 5 = 2 > 1
@@ -133,15 +133,15 @@ describe("updateParameterHistory", () => {
 
   it("detects neverWorked for no_trade_impact", () => {
     // Iter 1: set up with change, then complete with neutral + no trade delta
-    updateParameterHistory({
+    paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
       currentMetrics: { pnl: 200, trades: 180, pf: 1.5 },
     });
 
-    // Iter 2: metrics identical → prev iter gets neutral verdict + 0 trade delta
-    const result = updateParameterHistory({
+    // Iter 2: metrics identical -> prev iter gets neutral verdict + 0 trade delta
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: { ...baseMetadata, changeApplied: { param: "rr2", from: 4.0, to: 3.0, scale: "parametric", description: "test" } },
       globalIter: 2,
@@ -153,7 +153,7 @@ describe("updateParameterHistory", () => {
   });
 
   it("writes atomically via write-file-atomic", () => {
-    updateParameterHistory({
+    paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
@@ -165,15 +165,15 @@ describe("updateParameterHistory", () => {
   });
 
   it("detects neverWorked for pnl_degraded", () => {
-    updateParameterHistory({
+    paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
       currentMetrics: { pnl: 200, trades: 180, pf: 1.5 },
     });
 
-    // Iter 2: PnL drops >15% → prev iter gets degraded verdict
-    const result = updateParameterHistory({
+    // Iter 2: PnL drops >15% -> prev iter gets degraded verdict
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: { ...baseMetadata, changeApplied: { param: "rr2", from: 4.0, to: 3.0, scale: "parametric", description: "test" } },
       globalIter: 2,
@@ -186,14 +186,14 @@ describe("updateParameterHistory", () => {
 
   it("does not duplicate neverWorked entries", () => {
     // Seed with existing neverWorked entry
-    const history = loadParameterHistory(historyPath);
+    const history = paramWriter.loadHistory(historyPath);
     history.iterations = [
       { iter: 1, date: "2026-01-01", change: { param: "atrMult", from: 4, to: 4.5 }, before: { pnl: 200, trades: 180, pf: 1.5 }, after: null, verdict: "pending" },
     ];
     history.neverWorked = [{ param: "atrMult", value: 4.5, iter: 1, reason: "no_trade_impact" }];
     fs.writeFileSync(historyPath, JSON.stringify(history));
 
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: { ...baseMetadata, changeApplied: { param: "rr1", from: 0.5, to: 0.7, scale: "parametric", description: "test" } },
       globalIter: 2,
@@ -206,7 +206,7 @@ describe("updateParameterHistory", () => {
   });
 
   it("handles null changeApplied (no-op iteration)", () => {
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: { ...baseMetadata, changeApplied: null },
       globalIter: 1,
@@ -218,7 +218,7 @@ describe("updateParameterHistory", () => {
   });
 
   it("updates existing pending hypothesis instead of duplicating", () => {
-    updateParameterHistory({
+    paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
@@ -226,7 +226,7 @@ describe("updateParameterHistory", () => {
     });
 
     // Same hypothesis text (first 30 chars match exactly) at a later iter
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: {
         ...baseMetadata,
@@ -239,7 +239,7 @@ describe("updateParameterHistory", () => {
       currentMetrics: { pnl: 210, trades: 181, pf: 1.55 },
     });
 
-    // "Try RSI filter" matches first 30 chars → updated, not duplicated
+    // "Try RSI filter" matches first 30 chars -> updated, not duplicated
     const rsiHyps = result.pendingHypotheses.filter((h) => h.hypothesis.startsWith("Try RSI"));
     expect(rsiHyps.length).toBe(1);
     expect(rsiHyps[0].rank).toBe(3);
@@ -247,7 +247,7 @@ describe("updateParameterHistory", () => {
   });
 
   it("tracks phase in history", () => {
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
@@ -260,7 +260,7 @@ describe("updateParameterHistory", () => {
   });
 
   it("does not overwrite phaseStartIter on subsequent calls", () => {
-    updateParameterHistory({
+    paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
@@ -268,7 +268,7 @@ describe("updateParameterHistory", () => {
       phase: "refine",
     });
 
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: { ...baseMetadata, changeApplied: null },
       globalIter: 2,
@@ -284,7 +284,7 @@ describe("updateParameterHistory", () => {
       ...baseMetadata,
       hypotheses: "not an array" as unknown as IterationMetadata["hypotheses"],
     };
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: metadataWithBadHypotheses,
       globalIter: 1,
@@ -295,14 +295,14 @@ describe("updateParameterHistory", () => {
   });
 
   it("sets degraded verdict when PnL drops >5%", () => {
-    updateParameterHistory({
+    paramWriter.updateHistory({
       historyPath,
       metadata: baseMetadata,
       globalIter: 1,
       currentMetrics: { pnl: 200, trades: 180, pf: 1.5 },
     });
 
-    const result = updateParameterHistory({
+    const result = paramWriter.updateHistory({
       historyPath,
       metadata: { ...baseMetadata, changeApplied: null },
       globalIter: 2,
@@ -313,10 +313,10 @@ describe("updateParameterHistory", () => {
   });
 });
 
-describe("backfillLastIteration", () => {
+describe("paramWriter.backfillLastIteration", () => {
   it("fills after/verdict on the last pending iteration", () => {
-    // Seed: iter 1 proposed atrStopMult 2.0→2.5, after=null
-    const history = loadParameterHistory(historyPath);
+    // Seed: iter 1 proposed atrStopMult 2.0->2.5, after=null
+    const history = paramWriter.loadHistory(historyPath);
     history.iterations = [{
       iter: 1, date: "2026-01-01",
       change: { param: "atrStopMult", from: 2.0, to: 2.5 },
@@ -326,7 +326,7 @@ describe("backfillLastIteration", () => {
     history.exploredRanges = { atrStopMult: [2.5] };
     fs.writeFileSync(historyPath, JSON.stringify(history));
 
-    const result = backfillLastIteration({
+    const result = paramWriter.backfillLastIteration({
       historyPath,
       currentMetrics: { pnl: -80, trades: 110, pf: 0.5 },
     });
@@ -336,7 +336,7 @@ describe("backfillLastIteration", () => {
   });
 
   it("adds to neverWorked when degraded >15%", () => {
-    const history = loadParameterHistory(historyPath);
+    const history = paramWriter.loadHistory(historyPath);
     history.iterations = [{
       iter: 1, date: "2026-01-01",
       change: { param: "atrStopMult", from: 2.0, to: 2.5 },
@@ -345,7 +345,7 @@ describe("backfillLastIteration", () => {
     }];
     fs.writeFileSync(historyPath, JSON.stringify(history));
 
-    const result = backfillLastIteration({
+    const result = paramWriter.backfillLastIteration({
       historyPath,
       currentMetrics: { pnl: 50, trades: 120, pf: 0.8 },
     });
@@ -356,7 +356,7 @@ describe("backfillLastIteration", () => {
   });
 
   it("no-ops when last iteration already has after filled", () => {
-    const history = loadParameterHistory(historyPath);
+    const history = paramWriter.loadHistory(historyPath);
     history.iterations = [{
       iter: 1, date: "2026-01-01",
       change: { param: "dcSlow", from: 40, to: 45 },
@@ -366,7 +366,7 @@ describe("backfillLastIteration", () => {
     }];
     fs.writeFileSync(historyPath, JSON.stringify(history));
 
-    const result = backfillLastIteration({
+    const result = paramWriter.backfillLastIteration({
       historyPath,
       currentMetrics: { pnl: 80, trades: 125, pf: 1.0 },
     });
@@ -377,7 +377,7 @@ describe("backfillLastIteration", () => {
   });
 
   it("no-ops when history is empty", () => {
-    const result = backfillLastIteration({
+    const result = paramWriter.backfillLastIteration({
       historyPath,
       currentMetrics: { pnl: 100, trades: 130, pf: 1.2 },
     });
@@ -385,7 +385,7 @@ describe("backfillLastIteration", () => {
   });
 
   it("persists to disk", () => {
-    const history = loadParameterHistory(historyPath);
+    const history = paramWriter.loadHistory(historyPath);
     history.iterations = [{
       iter: 1, date: "2026-01-01",
       change: { param: "dcFast", from: 15, to: 20 },
@@ -394,36 +394,36 @@ describe("backfillLastIteration", () => {
     }];
     fs.writeFileSync(historyPath, JSON.stringify(history));
 
-    backfillLastIteration({
+    paramWriter.backfillLastIteration({
       historyPath,
       currentMetrics: { pnl: 100, trades: 130, pf: 1.2 },
     });
 
     // Re-read from disk
-    const fromDisk = loadParameterHistory(historyPath);
+    const fromDisk = paramWriter.loadHistory(historyPath);
     expect(fromDisk.iterations[0].after).toEqual({ pnl: 100, trades: 130, pf: 1.2 });
     expect(fromDisk.iterations[0].verdict).toBe("neutral");
   });
 });
 
-describe("transitionApproach", () => {
+describe("paramWriter.transitionApproach", () => {
   it("marks active approach as exhausted and adds new one", () => {
     // Seed with active approach
-    const history = loadParameterHistory(historyPath);
+    const history = paramWriter.loadHistory(historyPath);
     history.approaches = [{
       id: 1, name: "ATR Breakout", indicators: ["ATR"], startIter: 1, endIter: 5,
       bestScore: 50, bestMetrics: { pnl: 200, pf: 1.5, wr: 22 }, verdict: "active",
     }];
     fs.writeFileSync(historyPath, JSON.stringify(history));
 
-    transitionApproach({
+    paramWriter.transitionApproach({
       historyPath,
       newApproach: { name: "RSI Mean Reversion", indicators: ["RSI", "BB"] },
       globalIter: 6,
       reason: "3 neutral iters, escalating",
     });
 
-    const updated = loadParameterHistory(historyPath);
+    const updated = paramWriter.loadHistory(historyPath);
     expect(updated.approaches![0].verdict).toBe("exhausted");
     expect(updated.approaches![1].name).toBe("RSI Mean Reversion");
     expect(updated.approaches![1].verdict).toBe("active");
@@ -431,14 +431,14 @@ describe("transitionApproach", () => {
   });
 
   it("creates first approach when no approaches exist", () => {
-    transitionApproach({
+    paramWriter.transitionApproach({
       historyPath,
       newApproach: { name: "SMA Crossover", indicators: ["SMA"] },
       globalIter: 1,
       reason: "initial approach",
     });
 
-    const updated = loadParameterHistory(historyPath);
+    const updated = paramWriter.loadHistory(historyPath);
     expect(updated.approaches).toHaveLength(1);
     expect(updated.approaches![0].id).toBe(1);
     expect(updated.approaches![0].verdict).toBe("active");
@@ -447,14 +447,14 @@ describe("transitionApproach", () => {
   it("handles missing approaches array", () => {
     fs.writeFileSync(historyPath, JSON.stringify({ iterations: [], neverWorked: [], exploredRanges: {}, pendingHypotheses: [] }));
 
-    transitionApproach({
+    paramWriter.transitionApproach({
       historyPath,
       newApproach: { name: "RSI Strat", indicators: ["RSI"] },
       globalIter: 1,
       reason: "first try",
     });
 
-    const updated = loadParameterHistory(historyPath);
+    const updated = paramWriter.loadHistory(historyPath);
     expect(updated.approaches).toHaveLength(1);
   });
 });

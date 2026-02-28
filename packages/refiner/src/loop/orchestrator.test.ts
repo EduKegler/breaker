@@ -5,48 +5,45 @@ vi.mock("@breaker/alerts", () => ({
 }));
 
 vi.mock("../lib/config.js", () => ({
-  loadConfig: vi.fn(() => ({
-    criteria: {},
-    modelRouting: { optimize: "sonnet", fix: "haiku", plan: "opus" },
-    assetClasses: { "crypto-major": { minPF: 1.6 } },
-    strategyProfiles: { breakout: {} },
-    guardrails: { maxRiskTradeUsd: 25, protectedFields: [] },
-    assets: { BTC: { class: "crypto-major", strategies: { breakout: { coin: "BTC", dataSource: "binance", interval: "15m", strategyFactory: "createDonchianAdx", dateRange: { start: "2025-05-24", end: "2026-02-24" } } } } },
-    phases: { refine: { maxIter: 5 }, research: { maxIter: 3 }, restructure: { maxIter: 5 }, maxCycles: 2 },
-    scoring: { weights: { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 } },
-    research: { enabled: true, model: "sonnet", maxSearchesPerIter: 3, timeoutMs: 180000 },
-  })),
-  resolveAssetCriteria: vi.fn(() => ({
-    minTrades: 150, minPF: 1.6, maxDD: 8, minWR: 30, minAvgR: 0.20,
-  })),
-  resolveDataConfig: vi.fn((_config: unknown, asset: string, _strategy?: string) => ({
-    coin: asset,
-    dataSource: "binance",
-    interval: "15m",
-    strategyFactory: "createDonchianAdx",
-  })),
-  resolveDateRange: vi.fn(() => ({
-    startTime: new Date("2025-05-24T00:00:00Z").getTime(),
-    endTime: new Date("2026-02-24T23:59:59.999Z").getTime(),
+  loadConfig: vi.fn((_path: string, opts?: { asset?: string; strategy?: string }) => ({
+    config: {
+      criteria: {},
+      modelRouting: { optimize: "sonnet", fix: "haiku", plan: "opus" },
+      assetClasses: { "crypto-major": { minPF: 1.6 } },
+      strategyProfiles: { breakout: {} },
+      guardrails: { maxRiskTradeUsd: 25, protectedFields: [] },
+      assets: { BTC: { class: "crypto-major", strategies: { breakout: { coin: "BTC", dataSource: "binance", interval: "15m", strategyFactory: "createDonchianAdx", dateRange: { start: "2025-05-24", end: "2026-02-24" } } } } },
+      phases: { refine: { maxIter: 5 }, research: { maxIter: 3 }, restructure: { maxIter: 5 }, maxCycles: 2 },
+      scoring: { weights: { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 } },
+      research: { enabled: true, model: "sonnet", maxSearchesPerIter: 3, timeoutMs: 180000 },
+    },
+    criteria: { minTrades: 150, minPF: 1.6, maxDD: 8, minWR: 30, minAvgR: 0.20 },
+    dataConfig: {
+      coin: opts?.asset ?? "BTC",
+      dataSource: "binance",
+      interval: "15m",
+      strategyFactory: "createDonchianAdx",
+    },
+    dateRange: {
+      startTime: new Date("2025-05-24T00:00:00Z").getTime(),
+      endTime: new Date("2026-02-24T23:59:59.999Z").getTime(),
+    },
   })),
 }));
 
-vi.mock("../lib/strategy-path.js", () => ({
+vi.mock("../lib/build-strategy-dir.js", () => ({
   buildStrategyDir: vi.fn((_root: string, asset: string, strategy: string) => `${_root}/assets/${asset}/${strategy}`),
+}));
+
+vi.mock("../lib/get-strategy-source-path.js", () => ({
   getStrategySourcePath: vi.fn((_root: string, _factoryName: string) => `${_root}/packages/backtest/src/strategies/donchian-adx.ts`),
 }));
 
-import {
-  parseArgs,
-  buildConfig,
-  checkCriteria,
-  shouldEscalatePhase,
-  getPhaseMaxIter,
-  resetPhaseCounters,
-  transitionPhaseOnMaxIter,
-  computeEffectiveVerdict,
-} from "./orchestrator.js";
-import type { LoopConfig, IterationState, LoopPhase } from "./types.js";
+import { parseArgs } from "./parse-args.js";
+import { buildLoopConfig } from "./build-loop-config.js";
+import { checkCriteria } from "./check-criteria.js";
+import { phaseHelpers } from "./phase-helpers.js";
+import type { LoopConfig, IterationState } from "./types.js";
 import { computeScore } from "./stages/scoring.js";
 import type { ScoreVerdict } from "./stages/scoring.js";
 
@@ -145,9 +142,9 @@ describe("parseArgs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildConfig
+// buildLoopConfig
 // ---------------------------------------------------------------------------
-describe("buildConfig", () => {
+describe("buildLoopConfig", () => {
   const savedEnv: Record<string, string | undefined> = {};
   const envKeys = ["MAX_FIX_ATTEMPTS", "MAX_TRANSIENT_FAILURES", "MAX_NO_CHANGE"];
 
@@ -166,36 +163,36 @@ describe("buildConfig", () => {
   });
 
   it("defaults asset to BTC and strategy to breakout when not provided", () => {
-    const cfg = buildConfig({});
+    const cfg = buildLoopConfig({});
     expect(cfg.asset).toBe("BTC");
     expect(cfg.strategy).toBe("breakout");
   });
 
   it("uses the provided asset", () => {
-    const cfg = buildConfig({ asset: "ETH" });
+    const cfg = buildLoopConfig({ asset: "ETH" });
     expect(cfg.asset).toBe("ETH");
     expect(cfg.strategyFile).toBe("");
     expect(cfg.strategyDir).toContain("assets/ETH/breakout");
   });
 
   it("generates a runId in YYYYMMDD_HHMMSS format", () => {
-    const cfg = buildConfig({ asset: "BTC" });
+    const cfg = buildLoopConfig({ asset: "BTC" });
     expect(cfg.runId).toMatch(/^\d{8}_\d{6}$/);
   });
 
   it("reads maxFixAttempts from env var", () => {
     process.env.MAX_FIX_ATTEMPTS = "7";
-    const cfg = buildConfig({ asset: "BTC" });
+    const cfg = buildLoopConfig({ asset: "BTC" });
     expect(cfg.maxFixAttempts).toBe(7);
   });
 
   it("defaults maxFixAttempts to 3 when env var is absent", () => {
-    const cfg = buildConfig({ asset: "BTC" });
+    const cfg = buildLoopConfig({ asset: "BTC" });
     expect(cfg.maxFixAttempts).toBe(3);
   });
 
   it("includes data config fields", () => {
-    const cfg = buildConfig({ asset: "BTC" });
+    const cfg = buildLoopConfig({ asset: "BTC" });
     expect(cfg.coin).toBe("BTC");
     expect(cfg.dataSource).toBe("binance");
     expect(cfg.interval).toBe("15m");
@@ -205,7 +202,7 @@ describe("buildConfig", () => {
   });
 
   it("sets file paths relative to repoRoot", () => {
-    const cfg = buildConfig({ asset: "SOL", repoRoot: "/custom/root" });
+    const cfg = buildLoopConfig({ asset: "SOL", repoRoot: "/custom/root" });
     expect(cfg.strategyFile).toBe("");
     expect(cfg.strategyDir).toBe("/custom/root/assets/SOL/breakout");
     expect(cfg.paramHistoryFile).toBe("/custom/root/assets/SOL/breakout/parameter-history.json");
@@ -312,109 +309,75 @@ describe("checkCriteria", () => {
 });
 
 // ---------------------------------------------------------------------------
-// shouldEscalatePhase
+// phaseHelpers.shouldEscalate
 // ---------------------------------------------------------------------------
-describe("shouldEscalatePhase", () => {
+describe("phaseHelpers.shouldEscalate", () => {
   function makeState(overrides: Partial<IterationState> = {}): IterationState {
     return {
-      iter: 1,
-      globalIter: 1,
-      bestPnl: 0,
-      bestIter: 0,
-      fixAttempts: 0,
-      transientFailures: 0,
-      noChangeCount: 0,
-      previousPnl: 0,
-      sessionMetrics: [],
-      currentPhase: "refine",
-      currentScore: 0,
-      bestScore: 0,
-      neutralStreak: 0,
-      phaseCycles: 0,
+      iter: 1, globalIter: 1, bestPnl: 0, bestIter: 0,
+      fixAttempts: 0, transientFailures: 0, noChangeCount: 0,
+      previousPnl: 0, sessionMetrics: [], currentPhase: "refine",
+      currentScore: 0, bestScore: 0, neutralStreak: 0, phaseCycles: 0,
       ...overrides,
     };
   }
 
-  const cfg = buildConfig({ asset: "BTC" });
+  const cfg = buildLoopConfig({ asset: "BTC" });
 
   it("returns true for refine phase when neutralStreak >= 3", () => {
-    const state = makeState({ currentPhase: "refine", neutralStreak: 3 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(true);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "refine", neutralStreak: 3 }), cfg)).toBe(true);
   });
 
   it("returns true for refine phase when noChangeCount >= 2", () => {
-    const state = makeState({ currentPhase: "refine", noChangeCount: 2 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(true);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "refine", noChangeCount: 2 }), cfg)).toBe(true);
   });
 
   it("returns true for research phase when noChangeCount >= 2", () => {
-    const state = makeState({ currentPhase: "research", neutralStreak: 0, noChangeCount: 2 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(true);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "research", neutralStreak: 0, noChangeCount: 2 }), cfg)).toBe(true);
   });
 
   it("returns false for research phase when noChangeCount < 2", () => {
-    const state = makeState({ currentPhase: "research", neutralStreak: 10, noChangeCount: 1 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(false);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "research", neutralStreak: 10, noChangeCount: 1 }), cfg)).toBe(false);
   });
 
   it("returns true for restructure phase when noChangeCount >= 2", () => {
-    const state = makeState({ currentPhase: "restructure", neutralStreak: 0, noChangeCount: 2 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(true);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "restructure", neutralStreak: 0, noChangeCount: 2 }), cfg)).toBe(true);
   });
 
   it("returns false for restructure phase when noChangeCount < 2", () => {
-    const state = makeState({ currentPhase: "restructure", neutralStreak: 10, noChangeCount: 1 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(false);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "restructure", neutralStreak: 10, noChangeCount: 1 }), cfg)).toBe(false);
   });
 
   it("returns false for refine phase when neutralStreak is 2 (boundary below threshold)", () => {
-    const state = makeState({ currentPhase: "refine", neutralStreak: 2, noChangeCount: 0 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(false);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "refine", neutralStreak: 2, noChangeCount: 0 }), cfg)).toBe(false);
   });
 
   it("returns false for refine phase when noChangeCount is 1 (boundary below threshold)", () => {
-    const state = makeState({ currentPhase: "refine", neutralStreak: 0, noChangeCount: 1 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(false);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "refine", neutralStreak: 0, noChangeCount: 1 }), cfg)).toBe(false);
   });
 
   it("returns true for refine phase when both conditions are met simultaneously", () => {
-    const state = makeState({ currentPhase: "refine", neutralStreak: 5, noChangeCount: 4 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(true);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "refine", neutralStreak: 5, noChangeCount: 4 }), cfg)).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
-// resetPhaseCounters
+// phaseHelpers.resetCounters
 // ---------------------------------------------------------------------------
-describe("resetPhaseCounters", () => {
+describe("phaseHelpers.resetCounters", () => {
   function makeState(overrides: Partial<IterationState> = {}): IterationState {
     return {
-      iter: 5,
-      globalIter: 10,
-      bestPnl: 500,
-      bestIter: 3,
-      fixAttempts: 2,
-      transientFailures: 2,
-      noChangeCount: 1,
-      previousPnl: 400,
-      sessionMetrics: [],
-      currentPhase: "refine",
-      currentScore: 50,
-      bestScore: 60,
-      neutralStreak: 3,
-      phaseCycles: 0,
+      iter: 5, globalIter: 10, bestPnl: 500, bestIter: 3,
+      fixAttempts: 2, transientFailures: 2, noChangeCount: 1,
+      previousPnl: 400, sessionMetrics: [], currentPhase: "refine",
+      currentScore: 50, bestScore: 60, neutralStreak: 3, phaseCycles: 0,
       ...overrides,
     };
   }
 
   it("resets fixAttempts, transientFailures, neutralStreak, noChangeCount", () => {
-    const state = makeState({
-      fixAttempts: 2,
-      transientFailures: 2,
-      neutralStreak: 3,
-      noChangeCount: 1,
-    });
-    resetPhaseCounters(state);
+    const state = makeState({ fixAttempts: 2, transientFailures: 2, neutralStreak: 3, noChangeCount: 1 });
+    phaseHelpers.resetCounters(state);
     expect(state.fixAttempts).toBe(0);
     expect(state.transientFailures).toBe(0);
     expect(state.neutralStreak).toBe(0);
@@ -422,13 +385,8 @@ describe("resetPhaseCounters", () => {
   });
 
   it("does NOT reset bestPnl, bestScore, phaseCycles, or iter", () => {
-    const state = makeState({
-      bestPnl: 500,
-      bestScore: 60,
-      phaseCycles: 1,
-      iter: 5,
-    });
-    resetPhaseCounters(state);
+    const state = makeState({ bestPnl: 500, bestScore: 60, phaseCycles: 1, iter: 5 });
+    phaseHelpers.resetCounters(state);
     expect(state.bestPnl).toBe(500);
     expect(state.bestScore).toBe(60);
     expect(state.phaseCycles).toBe(1);
@@ -442,121 +400,105 @@ describe("resetPhaseCounters", () => {
 describe("no-change escalation", () => {
   function makeState(overrides: Partial<IterationState> = {}): IterationState {
     return {
-      iter: 1,
-      globalIter: 1,
-      bestPnl: 0,
-      bestIter: 0,
-      fixAttempts: 0,
-      transientFailures: 0,
-      noChangeCount: 0,
-      previousPnl: 0,
-      sessionMetrics: [],
-      currentPhase: "refine",
-      currentScore: 0,
-      bestScore: 0,
-      neutralStreak: 0,
-      phaseCycles: 0,
+      iter: 1, globalIter: 1, bestPnl: 0, bestIter: 0,
+      fixAttempts: 0, transientFailures: 0, noChangeCount: 0,
+      previousPnl: 0, sessionMetrics: [], currentPhase: "refine",
+      currentScore: 0, bestScore: 0, neutralStreak: 0, phaseCycles: 0,
       ...overrides,
     };
   }
 
-  const cfg = buildConfig({ asset: "BTC" });
+  const cfg = buildLoopConfig({ asset: "BTC" });
 
   it("2 no-changes in refine triggers escalation to research (not abort)", () => {
-    const state = makeState({ currentPhase: "refine", noChangeCount: 2 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(true);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "refine", noChangeCount: 2 }), cfg)).toBe(true);
   });
 
   it("2 no-changes in research triggers escalation to restructure (not abort)", () => {
-    const state = makeState({ currentPhase: "research", noChangeCount: 2 });
-    expect(shouldEscalatePhase(state, cfg)).toBe(true);
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "research", noChangeCount: 2 }), cfg)).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
-// getPhaseMaxIter
+// phaseHelpers.getMaxIter
 // ---------------------------------------------------------------------------
-describe("getPhaseMaxIter", () => {
-  const cfg = buildConfig({ asset: "BTC" });
+describe("phaseHelpers.getMaxIter", () => {
+  const cfg = buildLoopConfig({ asset: "BTC" });
 
   it("returns maxIter for refine phase", () => {
-    expect(getPhaseMaxIter("refine", cfg)).toBe(5);
+    expect(phaseHelpers.getMaxIter("refine", cfg)).toBe(5);
   });
 
   it("returns maxIter for research phase", () => {
-    expect(getPhaseMaxIter("research", cfg)).toBe(3);
+    expect(phaseHelpers.getMaxIter("research", cfg)).toBe(3);
   });
 
   it("returns maxIter for restructure phase", () => {
-    expect(getPhaseMaxIter("restructure", cfg)).toBe(5);
+    expect(phaseHelpers.getMaxIter("restructure", cfg)).toBe(5);
   });
 
   it("uses proportional allocation when maxIter is large", () => {
     const largeCfg = { ...cfg, maxIter: 20 };
-    expect(getPhaseMaxIter("refine", largeCfg)).toBe(8);
-    expect(getPhaseMaxIter("research", largeCfg)).toBe(4);
-    expect(getPhaseMaxIter("restructure", largeCfg)).toBe(8);
+    expect(phaseHelpers.getMaxIter("refine", largeCfg)).toBe(8);
+    expect(phaseHelpers.getMaxIter("research", largeCfg)).toBe(4);
+    expect(phaseHelpers.getMaxIter("restructure", largeCfg)).toBe(8);
   });
 
   it("uses config value when maxIter is small", () => {
     const smallCfg = { ...cfg, maxIter: 5 };
-    expect(getPhaseMaxIter("refine", smallCfg)).toBe(5);
-    expect(getPhaseMaxIter("research", smallCfg)).toBe(3);
-    expect(getPhaseMaxIter("restructure", smallCfg)).toBe(5);
+    expect(phaseHelpers.getMaxIter("refine", smallCfg)).toBe(5);
+    expect(phaseHelpers.getMaxIter("research", smallCfg)).toBe(3);
+    expect(phaseHelpers.getMaxIter("restructure", smallCfg)).toBe(5);
   });
 });
 
 // ---------------------------------------------------------------------------
-// transitionPhaseOnMaxIter
+// phaseHelpers.transitionOnMaxIter
 // ---------------------------------------------------------------------------
-describe("transitionPhaseOnMaxIter", () => {
-  it("refine → research", () => {
-    const result = transitionPhaseOnMaxIter("refine", 0, 2);
-    expect(result).toEqual({ nextPhase: "research", shouldBreak: false, incrementCycles: false });
+describe("phaseHelpers.transitionOnMaxIter", () => {
+  it("refine -> research", () => {
+    expect(phaseHelpers.transitionOnMaxIter("refine", 0, 2)).toEqual({ nextPhase: "research", shouldBreak: false, incrementCycles: false });
   });
 
-  it("research → restructure", () => {
-    const result = transitionPhaseOnMaxIter("research", 0, 2);
-    expect(result).toEqual({ nextPhase: "restructure", shouldBreak: false, incrementCycles: false });
+  it("research -> restructure", () => {
+    expect(phaseHelpers.transitionOnMaxIter("research", 0, 2)).toEqual({ nextPhase: "restructure", shouldBreak: false, incrementCycles: false });
   });
 
-  it("restructure → refine when cycles < maxCycles", () => {
-    const result = transitionPhaseOnMaxIter("restructure", 0, 2);
-    expect(result).toEqual({ nextPhase: "refine", shouldBreak: false, incrementCycles: true });
+  it("restructure -> refine when cycles < maxCycles", () => {
+    expect(phaseHelpers.transitionOnMaxIter("restructure", 0, 2)).toEqual({ nextPhase: "refine", shouldBreak: false, incrementCycles: true });
   });
 
-  it("restructure → break when cycles >= maxCycles", () => {
-    const result = transitionPhaseOnMaxIter("restructure", 1, 2);
-    expect(result).toEqual({ nextPhase: "restructure", shouldBreak: true, incrementCycles: true });
+  it("restructure -> break when cycles >= maxCycles", () => {
+    expect(phaseHelpers.transitionOnMaxIter("restructure", 1, 2)).toEqual({ nextPhase: "restructure", shouldBreak: true, incrementCycles: true });
   });
 });
 
 // ---------------------------------------------------------------------------
-// computeEffectiveVerdict
+// phaseHelpers.computeEffectiveVerdict
 // ---------------------------------------------------------------------------
-describe("computeEffectiveVerdict", () => {
-  it("accept + meetsMinTrades → accept", () => {
-    expect(computeEffectiveVerdict("accept", true)).toBe("accept");
+describe("phaseHelpers.computeEffectiveVerdict", () => {
+  it("accept + meetsMinTrades -> accept", () => {
+    expect(phaseHelpers.computeEffectiveVerdict("accept", true)).toBe("accept");
   });
 
-  it("accept + !meetsMinTrades → neutral (bug fix)", () => {
-    expect(computeEffectiveVerdict("accept", false)).toBe("neutral");
+  it("accept + !meetsMinTrades -> neutral (bug fix)", () => {
+    expect(phaseHelpers.computeEffectiveVerdict("accept", false)).toBe("neutral");
   });
 
-  it("reject + meetsMinTrades → reject", () => {
-    expect(computeEffectiveVerdict("reject", true)).toBe("reject");
+  it("reject + meetsMinTrades -> reject", () => {
+    expect(phaseHelpers.computeEffectiveVerdict("reject", true)).toBe("reject");
   });
 
-  it("reject + !meetsMinTrades → reject", () => {
-    expect(computeEffectiveVerdict("reject", false)).toBe("reject");
+  it("reject + !meetsMinTrades -> reject", () => {
+    expect(phaseHelpers.computeEffectiveVerdict("reject", false)).toBe("reject");
   });
 
-  it("neutral + meetsMinTrades → neutral", () => {
-    expect(computeEffectiveVerdict("neutral", true)).toBe("neutral");
+  it("neutral + meetsMinTrades -> neutral", () => {
+    expect(phaseHelpers.computeEffectiveVerdict("neutral", true)).toBe("neutral");
   });
 
-  it("neutral + !meetsMinTrades → neutral", () => {
-    expect(computeEffectiveVerdict("neutral", false)).toBe("neutral");
+  it("neutral + !meetsMinTrades -> neutral", () => {
+    expect(phaseHelpers.computeEffectiveVerdict("neutral", false)).toBe("neutral");
   });
 });
 
@@ -566,39 +508,29 @@ describe("computeEffectiveVerdict", () => {
 describe("low-trade accept does not block phase escalation", () => {
   function makeState(overrides: Partial<IterationState> = {}): IterationState {
     return {
-      iter: 1,
-      globalIter: 1,
-      bestPnl: 0,
-      bestIter: 0,
-      fixAttempts: 0,
-      transientFailures: 0,
-      noChangeCount: 0,
-      previousPnl: 0,
-      sessionMetrics: [],
-      currentPhase: "refine",
-      currentScore: 0,
-      bestScore: 0,
-      neutralStreak: 0,
-      phaseCycles: 0,
+      iter: 1, globalIter: 1, bestPnl: 0, bestIter: 0,
+      fixAttempts: 0, transientFailures: 0, noChangeCount: 0,
+      previousPnl: 0, sessionMetrics: [], currentPhase: "refine",
+      currentScore: 0, bestScore: 0, neutralStreak: 0, phaseCycles: 0,
       ...overrides,
     };
   }
 
-  const cfg = buildConfig({ asset: "BTC" });
+  const cfg = buildLoopConfig({ asset: "BTC" });
 
-  it("3 iters with score > 0 but trades < minTrades → neutralStreak=3 → shouldEscalate", () => {
+  it("3 iters with score > 0 but trades < minTrades -> neutralStreak=3 -> shouldEscalate", () => {
     const state = makeState({ bestScore: 50, currentPhase: "refine" });
 
     for (let i = 0; i < 3; i++) {
       const scoreVerdict: ScoreVerdict = "accept";
       const meetsMinTrades = false;
-      const effective = computeEffectiveVerdict(scoreVerdict, meetsMinTrades);
+      const effective = phaseHelpers.computeEffectiveVerdict(scoreVerdict, meetsMinTrades);
       expect(effective).toBe("neutral");
       state.neutralStreak++;
     }
 
     expect(state.neutralStreak).toBe(3);
-    expect(shouldEscalatePhase(state, cfg)).toBe(true);
+    expect(phaseHelpers.shouldEscalate(state, cfg)).toBe(true);
   });
 });
 
@@ -606,56 +538,29 @@ describe("low-trade accept does not block phase escalation", () => {
 // BUG FIX: bestScore restored from checkpoint via computeScore
 // ---------------------------------------------------------------------------
 describe("bestScore restoration from checkpoint", () => {
-  const cfg = buildConfig({ asset: "BTC" });
+  const cfg = buildLoopConfig({ asset: "BTC" });
 
   it("computeScore returns positive score for good checkpoint metrics", () => {
     const checkpointMetrics = {
-      totalPnl: 500,
-      numTrades: 200,
-      profitFactor: 2.0,
-      maxDrawdownPct: 5,
-      winRate: 35,
-      avgR: 0.25,
+      totalPnl: 500, numTrades: 200, profitFactor: 2.0,
+      maxDrawdownPct: 5, winRate: 35, avgR: 0.25,
     };
-    const score = computeScore(
-      checkpointMetrics,
-      8, // paramCount
-      checkpointMetrics.numTrades,
-      cfg.scoring.weights,
-    );
+    const score = computeScore(checkpointMetrics, 8, checkpointMetrics.numTrades, cfg.scoring.weights);
     expect(score.weighted).toBeGreaterThan(0);
   });
 
   it("iter 1 with lower score does NOT overwrite a restored bestScore", () => {
     const checkpointMetrics = {
-      totalPnl: 500,
-      numTrades: 200,
-      profitFactor: 2.0,
-      maxDrawdownPct: 5,
-      winRate: 35,
-      avgR: 0.25,
+      totalPnl: 500, numTrades: 200, profitFactor: 2.0,
+      maxDrawdownPct: 5, winRate: 35, avgR: 0.25,
     };
-    const cpScore = computeScore(
-      checkpointMetrics,
-      8,
-      200,
-      cfg.scoring.weights,
-    );
+    const cpScore = computeScore(checkpointMetrics, 8, 200, cfg.scoring.weights);
 
     const iterMetrics = {
-      totalPnl: 100,
-      numTrades: 80,
-      profitFactor: 1.1,
-      maxDrawdownPct: 10,
-      winRate: 22,
-      avgR: 0.08,
+      totalPnl: 100, numTrades: 80, profitFactor: 1.1,
+      maxDrawdownPct: 10, winRate: 22, avgR: 0.08,
     };
-    const iterScore = computeScore(
-      iterMetrics,
-      8,
-      80,
-      cfg.scoring.weights,
-    );
+    const iterScore = computeScore(iterMetrics, 8, 80, cfg.scoring.weights);
 
     expect(cpScore.weighted).toBeGreaterThan(iterScore.weighted);
     expect(iterScore.weighted).toBeLessThan(cpScore.weighted);

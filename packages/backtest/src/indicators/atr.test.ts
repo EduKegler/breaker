@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { atr, trueRange } from "./atr.js";
+import { atr } from "./atr.js";
+import { trueRange } from "./true-range.js";
 import type { Candle } from "../types/candle.js";
 
 function makeCandle(o: number, h: number, l: number, c: number): Candle {

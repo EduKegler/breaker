@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { formatOpenMessage, formatTrailingSlMessage } from "./alerts-client.js";
-import type { OrderIntent } from "../domain/order-intent.js";
-import type { AlertsClient } from "./alerts-client.js";
+import { formatOpenMessage, formatTrailingSlMessage } from "./format-alert-message.js";
+import type { OrderIntent } from "../domain/signal-to-intent.js";
+import type { AlertsClient } from "../types/alerts-client.js";
 
 const intent: OrderIntent = {
   coin: "BTC",

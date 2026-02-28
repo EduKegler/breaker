@@ -12,7 +12,7 @@ import {
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
-import type { CandleData, SignalRow, LivePosition, ReplaySignal } from "../lib/api.js";
+import type { CandleData, SignalRow, LivePosition, ReplaySignal } from "../types/api.js";
 
 /** SQLite datetime('now') returns UTC without 'Z' — append it so JS parses as UTC */
 function parseUtc(dt: string): Date {
@@ -156,23 +156,13 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, o
       if (!candleTimes.has(rs.t) || executedTimes.has(rs.t)) continue;
       const isLong = rs.direction === "long";
 
-      // Colored arrow (closer to bar): green for long, red for short
-      markers.push({
-        time: toChartTime(rs.t),
-        position: isLong ? "belowBar" : "aboveBar",
-        color: isLong ? "#15803d" : "#b91c1c",
-        shape: isLong ? "arrowUp" : "arrowDown",
-        size: 1,
-      });
-
-      // Blue text label (stacked further from bar)
       markers.push({
         time: toChartTime(rs.t),
         position: isLong ? "belowBar" : "aboveBar",
         color: "#3b82f6",
         shape: isLong ? "arrowUp" : "arrowDown",
-        text: isLong ? "LONG" : "SHORT",
-        size: 0,
+        text: isLong ? "L" : "S",
+        size: 1,
       });
     }
 
@@ -194,13 +184,14 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, o
       if (!candleTimes.has(closestT)) continue;
 
       const isLong = s.side === "LONG";
+      const isAuto = s.source === "strategy-runner";
       markers.push({
         time: toChartTime(closestT),
         position: isLong ? "belowBar" : "aboveBar",
-        color: isLong ? "#00ff88" : "#ff3366",
+        color: isAuto ? "#3b82f6" : "#eab308",
         shape: isLong ? "arrowUp" : "arrowDown",
-        text: `${isLong ? "LONG" : "SHORT"} $${s.entry_price}`,
-        size: 3,
+        text: isLong ? "L" : "S",
+        size: 1,
       });
     }
 

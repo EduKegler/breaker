@@ -7,7 +7,7 @@ import {
   ResponsiveContainer,
   Line,
 } from "recharts";
-import type { EquitySnapshot } from "../lib/api.js";
+import type { EquitySnapshot } from "../types/api.js";
 
 /** SQLite datetime('now') returns UTC without 'Z' — append it so JS parses as UTC */
 function parseUtc(dt: string): Date {

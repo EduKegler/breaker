@@ -27,3 +27,6 @@
 - Memory-only fallback has a 1000-entry LRU limit; oldest entries are evicted first.
 - Runtime Redis disconnection triggers an alarm log and memory fallback; reconnection clears the alarm.
 - The webhook server defines its own local sendWithRetry() using got (not the whatsapp-gateway export).
+- Redis functions consolidated into single `redis` object export (`redis.init()`, `redis.isAvailable()`, `redis.hasDedup()`, `redis.setDedup()`, `redis.getRuntimeState()`).
+- `httpLogger` moved to `lib/http-logger.ts`; `logger` stays in `lib/logger.ts`.
+- `dailyLimit` is private to `server.ts`; tests access it via `app.locals.dailyLimit`.

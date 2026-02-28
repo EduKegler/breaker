@@ -1,8 +1,8 @@
 import { fetchCandles, intervalToMs } from "@breaker/backtest";
 import type { Candle, CandleInterval, DataSource } from "@breaker/backtest";
-import { createChildLogger } from "../lib/logger.js";
+import { logger } from "../lib/logger.js";
 
-const log = createChildLogger("candlePoller");
+const log = logger.createChild("candlePoller");
 
 function isValidCandle(c: Candle): boolean {
   return Number.isFinite(c.c) && c.c > 0

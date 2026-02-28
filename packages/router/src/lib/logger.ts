@@ -1,5 +1,4 @@
 import pino from "pino";
-import { pinoHttp } from "pino-http";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,5 +24,3 @@ export const logger = pino(
     ],
   }),
 );
-
-export const httpLogger = pinoHttp({ logger });

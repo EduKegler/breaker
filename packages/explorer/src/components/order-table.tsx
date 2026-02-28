@@ -1,4 +1,4 @@
-import type { OrderRow } from "../lib/api.js";
+import type { OrderRow } from "../types/api.js";
 
 /** SQLite datetime('now') returns UTC without 'Z' — append it so JS parses as UTC */
 function parseUtc(dt: string): Date {

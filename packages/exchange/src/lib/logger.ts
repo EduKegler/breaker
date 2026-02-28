@@ -2,19 +2,14 @@ import pino from "pino";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Per-module log level overrides, set at runtime via setLogConfig() */
+/** Per-module log level overrides, set at runtime via logger.setLogConfig() */
 let logLevelOverrides: Record<string, string> = {};
-
-/** Set per-module log level overrides (called by daemon at startup) */
-export function setLogConfig(overrides: Record<string, string>): void {
-  logLevelOverrides = overrides;
-}
 
 function getBaseLevel(): string {
   return process.env.LOG_LEVEL ?? "debug";
 }
 
-function createLogger(): pino.Logger {
+function createPinoLogger(): pino.Logger {
   if (process.env.VITEST) {
     return pino({ level: "silent" });
   }
@@ -43,14 +38,22 @@ function createLogger(): pino.Logger {
   );
 }
 
-export const logger = createLogger();
+const pinoInstance = createPinoLogger();
 
-/** Create a child logger with per-module log level from config */
-export function createChildLogger(module: string): pino.Logger {
-  const level = logLevelOverrides[module] ?? undefined;
-  const child = logger.child({ module });
-  if (level) {
-    child.level = level;
-  }
-  return child;
-}
+/** Unified logger export with base pino instance, config setter, and child factory. */
+export const logger = Object.assign(pinoInstance, {
+  /** Set per-module log level overrides (called by daemon at startup) */
+  setLogConfig(overrides: Record<string, string>): void {
+    logLevelOverrides = overrides;
+  },
+
+  /** Create a child logger with per-module log level from config */
+  createChild(module: string): pino.Logger {
+    const level = logLevelOverrides[module] ?? undefined;
+    const child = pinoInstance.child({ module });
+    if (level) {
+      child.level = level;
+    }
+    return child;
+  },
+});

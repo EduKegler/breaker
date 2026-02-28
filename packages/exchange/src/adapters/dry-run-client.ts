@@ -1,7 +1,7 @@
-import type { HlClient, HlOrderResult, HlPosition, HlOpenOrder, HlHistoricalOrder } from "./hyperliquid-client.js";
-import { createChildLogger } from "../lib/logger.js";
+import type { HlClient, HlOrderResult, HlEntryResult, HlPosition, HlOpenOrder, HlHistoricalOrder, HlAccountState } from "../types/hl-client.js";
+import { logger } from "../lib/logger.js";
 
-const log = createChildLogger("dryRunClient");
+const log = logger.createChild("dryRunClient");
 
 export class DryRunHlClient implements HlClient {
   private counter = 0;
@@ -23,6 +23,13 @@ export class DryRunHlClient implements HlClient {
     const orderId = `dry-run-${this.counter}`;
     log.info({ action: "DRY_RUN", method: "placeMarketOrder", coin, isBuy, size, orderId }, "Dry-run: placeMarketOrder");
     return { orderId, status: "simulated" };
+  }
+
+  async placeEntryOrder(coin: string, isBuy: boolean, size: number, currentPrice: number, slippageBps: number): Promise<HlEntryResult> {
+    this.counter++;
+    const orderId = `dry-run-${this.counter}`;
+    log.info({ action: "DRY_RUN", method: "placeEntryOrder", coin, isBuy, size, currentPrice, slippageBps, orderId }, "Dry-run: placeEntryOrder");
+    return { orderId, filledSize: size, avgPrice: currentPrice, status: "simulated" };
   }
 
   async placeStopOrder(coin: string, isBuy: boolean, size: number, triggerPrice: number, reduceOnly: boolean): Promise<HlOrderResult> {
@@ -57,5 +64,13 @@ export class DryRunHlClient implements HlClient {
 
   async getAccountEquity(_walletAddress: string): Promise<number> {
     return 0;
+  }
+
+  async getAccountState(_walletAddress: string): Promise<HlAccountState> {
+    return { accountValue: 0, totalMarginUsed: 0, totalNtlPos: 0, totalRawUsd: 0, withdrawable: 0, spotBalances: [] };
+  }
+
+  async getMidPrice(_coin: string): Promise<number | null> {
+    return null;
   }
 }

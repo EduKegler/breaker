@@ -1,6 +1,6 @@
 import type { Candle } from "../types/candle.js";
 import { ema } from "./ema.js";
-import { trueRange } from "./atr.js";
+import { trueRange } from "./true-range.js";
 
 export interface KeltnerResult {
   upper: number[];

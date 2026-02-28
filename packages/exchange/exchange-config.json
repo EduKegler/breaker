@@ -1,5 +1,5 @@
 {
-  "mode": "testnet",
+  "mode": "mainnet",
   "port": 3200,
   "gatewayUrl": "https://tv.kegler.dev/send/pine-alerts-2026",
   "asset": "BTC",
@@ -22,6 +22,8 @@
     "riskPerTradeUsd": 10,
     "cashPerTrade": 100
   },
+  "autoTradingEnabled": false,
+  "entrySlippageBps": 10,
   "dryRun": false,
   "logLevels": {}
 }

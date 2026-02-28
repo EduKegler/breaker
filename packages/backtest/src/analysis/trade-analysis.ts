@@ -10,16 +10,9 @@ import type {
 } from "../types/metrics.js";
 import { computeFilterSimulations } from "./filter-simulation.js";
 import { computeWalkForward } from "./walk-forward.js";
+import { getSessionForHour } from "./get-session-for-hour.js";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-export function getSessionForHour(hour: number): SessionName {
-  // Asia: 00-08 UTC, London: 08-13 UTC, NY: 13-21 UTC, Off-peak: 21-00 UTC
-  if (hour >= 0 && hour < 8) return "Asia";
-  if (hour >= 8 && hour < 13) return "London";
-  if (hour >= 13 && hour < 21) return "NY";
-  return "Off-peak";
-}
 
 export function analyzeTradeList(trades: CompletedTrade[]): TradeAnalysis {
   if (trades.length === 0) {

@@ -1,6 +1,6 @@
 import { cac } from "cac";
 import { CandleCache } from "./data/candle-cache.js";
-import type { CandleClientOptions } from "./data/candle-client.js";
+import type { CandleClientOptions } from "./data/fetch-candles.js";
 import { runBacktest, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
 import { computeMetrics } from "./analysis/metrics-calculator.js";
 import { analyzeTradeList } from "./analysis/trade-analysis.js";

@@ -1,15 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
-import { app, dailyLimit } from "./server.js";
+import { app } from "./server.js";
+import type { DailyTradeLimit } from "../lib/daily-limit.js";
 import { env } from "../lib/env.js";
 
 // Mock external dependencies to isolate webhook handler tests
 vi.mock("../lib/redis.js", () => ({
-  initRedis: vi.fn().mockResolvedValue({ configured: false, connected: false, dedupMode: "memory", reason: "not_configured" }),
-  isRedisAvailable: vi.fn().mockReturnValue(false),
-  redisHasDedup: vi.fn().mockResolvedValue(false),
-  redisSetDedup: vi.fn().mockResolvedValue(false),
-  getRedisRuntimeState: vi.fn().mockReturnValue({ configured: false, connected: false, dedupMode: "memory" }),
+  redis: {
+    init: vi.fn().mockResolvedValue({ configured: false, connected: false, dedupMode: "memory", reason: "not_configured" }),
+    isAvailable: vi.fn().mockReturnValue(false),
+    hasDedup: vi.fn().mockResolvedValue(false),
+    setDedup: vi.fn().mockResolvedValue(false),
+    getRuntimeState: vi.fn().mockReturnValue({ configured: false, connected: false, dedupMode: "memory" }),
+  },
 }));
 
 vi.mock("got", () => ({
@@ -132,6 +135,7 @@ describe("webhook daily limit integration", () => {
 
   it("rejects signal when daily limit is reached", async () => {
     // Manually fill up the limit
+    const dailyLimit = app.locals.dailyLimit as DailyTradeLimit;
     const limit = dailyLimit.getStatus().limit;
     for (let i = 0; i < limit; i++) {
       dailyLimit.record();

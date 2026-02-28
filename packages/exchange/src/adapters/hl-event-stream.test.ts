@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { HlEventStream, type WsOrder, type WsUserFill } from "./hl-event-stream.js";
+import { HlEventStream } from "./hl-event-stream.js";
+import type { WsOrder, WsUserFill } from "../types/hl-event-stream.js";
 
 function createMockSdk() {
   return {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { runBacktest, aggregateCandles, type BacktestConfig, type SizingMode, DEFAULT_BACKTEST_CONFIG } from "./engine.js";
+import { runBacktest, type BacktestConfig, type SizingMode, DEFAULT_BACKTEST_CONFIG } from "./engine.js";
+import { aggregateCandles } from "./aggregate-candles.js";
 import type { Candle } from "../types/candle.js";
 import type { Strategy, StrategyContext, Signal } from "../types/strategy.js";
 

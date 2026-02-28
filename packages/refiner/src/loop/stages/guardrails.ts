@@ -150,11 +150,11 @@ function stripComments(code: string): string {
     .join("\n");
 }
 
-export function countDayOfWeekUsage(code: string): number {
+function countDayOfWeekUsage(code: string): number {
   return (code.match(/\bdayofweek\b/gi) || []).length;
 }
 
-export function extractStrategyCategory(code: string): string | null {
+function extractStrategyCategory(code: string): string | null {
   const m = code.match(/strategy\s*\(\s*"([^"]+)"/);
   if (!m) return null;
   const title = m[1];

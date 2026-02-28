@@ -1,7 +1,7 @@
 # AGENTS Instructions — refiner
 
 ## Project overview
-B.R.E.A.K.E.R. — Backtesting Runtime for Evolutionary Analysis, Kernel Execution & Refinement. Automated strategy optimization using in-process `@breaker/backtest` engine (no Playwright, no TradingView, no Pine Script).
+B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-driven Execution & Routing. Automated strategy optimization using in-process `@breaker/backtest` engine (no Playwright, no TradingView, no Pine Script).
 
 ## Project structure
 - `src/automation/` — Prompt builders for Claude optimization/fix (`build-optimize-prompt-ts.ts`, `build-fix-prompt-ts.ts`)

@@ -1,6 +1,8 @@
 import type { Candle } from "../types/candle.js";
 import type { Order, Fill, OrderSide } from "../types/order.js";
-import { applySlippage, calculateCommission, type ExecutionConfig, DEFAULT_EXECUTION } from "./execution-model.js";
+import { applySlippage } from "./apply-slippage.js";
+import { calculateCommission } from "./calculate-commission.js";
+import { type ExecutionConfig, DEFAULT_EXECUTION } from "./execution-model.js";
 
 interface PendingOrder {
   order: Order;
@@ -10,16 +12,6 @@ interface PendingOrder {
 interface OrderCheckResult {
   fills: Fill[];
   cancelledOrderIds: string[];
-}
-
-let nextOrderId = 0;
-
-export function createOrderId(): string {
-  return `ord_${++nextOrderId}`;
-}
-
-export function resetOrderIdCounter(): void {
-  nextOrderId = 0;
 }
 
 /**

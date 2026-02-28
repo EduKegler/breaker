@@ -2,14 +2,42 @@ import fs from "node:fs";
 import { BreakerConfigSchema } from "../types/config.js";
 import type { BreakerConfig, ResolvedCriteria, StrategyDateRange } from "../types/config.js";
 
+export interface ResolvedConfig {
+  config: BreakerConfig;
+  criteria: ResolvedCriteria;
+  dataConfig: {
+    coin: string;
+    dataSource: string;
+    interval: string;
+    strategyFactory: string;
+  };
+  dateRange: { startTime: number; endTime: number };
+}
+
 /**
- * Loads and validates breaker-config.json using Zod.
- * Returns a fully-typed BreakerConfig with defaults applied for missing fields.
+ * Loads and validates breaker-config.json using Zod, then resolves
+ * asset-specific criteria, data config, and date range.
+ *
+ * When called without asset/strategy, criteria/dataConfig/dateRange
+ * are populated with global defaults.
  */
-export function loadConfig(configPath: string): BreakerConfig {
+export function loadConfig(
+  configPath: string,
+  opts?: { asset?: string; strategy?: string },
+): ResolvedConfig {
   const raw = fs.readFileSync(configPath, "utf8");
   const json: unknown = JSON.parse(raw);
-  return BreakerConfigSchema.parse(json);
+  const config = BreakerConfigSchema.parse(json);
+
+  const asset = opts?.asset ?? "";
+  const strategy = opts?.strategy;
+
+  return {
+    config,
+    criteria: resolveAssetCriteria(config, asset, strategy),
+    dataConfig: resolveDataConfig(config, asset, strategy),
+    dateRange: resolveDateRange(config, asset, strategy),
+  };
 }
 
 /**
@@ -18,7 +46,7 @@ export function loadConfig(configPath: string): BreakerConfig {
  * 2. Asset class overrides (class wins over global)
  * 3. Strategy profile overrides (strategy wins over class)
  */
-export function resolveAssetCriteria(
+function resolveAssetCriteria(
   config: BreakerConfig,
   asset: string,
   strategy?: string,
@@ -42,22 +70,15 @@ export function resolveAssetCriteria(
   return { ...config.criteria, ...classCriteria, ...strategyProfile };
 }
 
-interface DataConfig {
-  coin: string;
-  dataSource: string;
-  interval: string;
-  strategyFactory: string;
-}
-
 /**
  * Resolves the data configuration for an asset+strategy pair.
  * Returns coin, dataSource, interval, and strategyFactory from the nested strategy config.
  */
-export function resolveDataConfig(
+function resolveDataConfig(
   config: BreakerConfig,
   asset: string,
   strategy?: string,
-): DataConfig {
+): { coin: string; dataSource: string; interval: string; strategyFactory: string } {
   const assetCfg = config.assets[asset];
   const entry = strategy ? assetCfg?.strategies[strategy] : undefined;
 
@@ -73,7 +94,7 @@ export function resolveDataConfig(
  * Resolves the date range for an asset+strategy pair.
  * Returns { startTime, endTime } as epoch ms.
  */
-export function resolveDateRange(
+function resolveDateRange(
   config: BreakerConfig,
   asset: string,
   strategy?: string,

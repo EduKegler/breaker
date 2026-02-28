@@ -1,13 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { computeScore, compareScores, countParams } from "./scoring.js";
+import { computeScore } from "./scoring.js";
 import type { Metrics } from "@breaker/backtest";
-
-describe("countParams", () => {
-  it("returns the param count as-is", () => {
-    expect(countParams(5)).toBe(5);
-    expect(countParams(0)).toBe(0);
-  });
-});
 
 describe("computeScore", () => {
   const goodMetrics: Metrics = {
@@ -76,27 +69,5 @@ describe("computeScore", () => {
   it("accepts custom weights", () => {
     const score = computeScore(goodMetrics, 3, 180, { pf: 100, avgR: 0, wr: 0, dd: 0, complexity: 0, sampleConfidence: 0 });
     expect(score.weighted).toBeGreaterThan(0);
-  });
-});
-
-describe("compareScores", () => {
-  it("accepts when new > old * 1.02", () => {
-    expect(compareScores(55, 50)).toBe("accept");
-  });
-
-  it("rejects when new < old * 0.85", () => {
-    expect(compareScores(40, 50)).toBe("reject");
-  });
-
-  it("neutral when in between", () => {
-    expect(compareScores(50, 50)).toBe("neutral");
-  });
-
-  it("accepts when old is 0 and new is positive", () => {
-    expect(compareScores(10, 0)).toBe("accept");
-  });
-
-  it("neutral when both are 0", () => {
-    expect(compareScores(0, 0)).toBe("neutral");
   });
 });

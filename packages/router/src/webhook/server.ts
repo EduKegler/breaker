@@ -7,16 +7,11 @@ import got from "got";
 
 import { AlertPayloadSchema } from "../types/alert.js";
 import type { AlertPayload } from "../types/alert.js";
-import {
-  initRedis,
-  isRedisAvailable,
-  redisHasDedup,
-  redisSetDedup,
-  getRedisRuntimeState,
-} from "../lib/redis.js";
+import { redis } from "../lib/redis.js";
 import type { RedisInitResult } from "../lib/redis.js";
 import { DailyTradeLimit } from "../lib/daily-limit.js";
-import { logger, httpLogger } from "../lib/logger.js";
+import { logger } from "../lib/logger.js";
+import { httpLogger } from "../lib/http-logger.js";
 import { isMainModule, formatZodErrors } from "@breaker/kit";
 
 type RedisStartupPolicy = "ready" | "degraded" | "fail_fast";
@@ -33,7 +28,7 @@ function getDedupHealthState(): {
   redis_configured: boolean;
   dedup_degraded: boolean;
 } {
-  const redisConnected = isRedisAvailable();
+  const redisConnected = redis.isAvailable();
   const dedupMode = redisConnected ? "redis" : "memory";
   return {
     redis: redisConnected ? "connected" : "fallback_memory",
@@ -52,7 +47,7 @@ let dedupRuntimeAlarmActive = false;
 // ---------------------
 // Global daily trade limit (resets at 00:00 UTC)
 // ---------------------
-export const dailyLimit = new DailyTradeLimit(env.GLOBAL_MAX_TRADES_DAY);
+const dailyLimit = new DailyTradeLimit(env.GLOBAL_MAX_TRADES_DAY);
 
 function isDuplicate(alertId: string): boolean {
   if (sentAlerts.has(alertId)) return true;
@@ -147,6 +142,7 @@ const debugLimiter = rateLimit({ windowMs: 60_000, max: 5, standardHeaders: fals
 // Express app
 // ---------------------
 export const app: express.Express = express();
+app.locals.dailyLimit = dailyLimit;
 app.use(express.json({ limit: "100kb" }));
 app.use(express.text({ type: "text/plain", limit: "100kb" }));
 app.use(httpLogger);
@@ -209,7 +205,7 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
     }
   }
 
-  const redisState = getRedisRuntimeState();
+  const redisState = redis.getRuntimeState();
   if (redisState.configured && !redisState.connected && !dedupRuntimeAlarmActive) {
     dedupRuntimeAlarmActive = true;
     logger.error({ alarm: "DEDUP_DEGRADED_RUNTIME", dedup_mode: "memory", last_error: redisState.lastError || "unknown" }, "ALARM: distributed dedup unavailable, fallback to memory");
@@ -222,7 +218,7 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
     logger.info({ alarm: "DEDUP_RECOVERED", dedup_mode: "redis" }, "Redis dedup recovered");
   }
 
-  const redisIsDup = await redisHasDedup(typedAlert.alert_id);
+  const redisIsDup = await redis.hasDedup(typedAlert.alert_id);
   if (redisIsDup) {
     logger.info({ alert_id: typedAlert.alert_id }, "Duplicate alert (redis), skipping");
     res.json({ status: "duplicate", alert_id: typedAlert.alert_id });
@@ -253,7 +249,7 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
   try {
     const message = formatWhatsAppMessage(typedAlert);
     await sendWithRetry(message);
-    await redisSetDedup(typedAlert.alert_id);
+    await redis.setDedup(typedAlert.alert_id);
     isDuplicate(typedAlert.alert_id);
     dailyLimit.record();
     logger.info({ alert_id: typedAlert.alert_id, trades_today: dailyLimit.getStatus().count }, "WhatsApp sent");
@@ -362,7 +358,7 @@ if (isMainModule(import.meta.url)) {
       logger.warn("WEBHOOK_SECRET not set — webhook accepts unauthenticated requests");
     }
 
-    const redisInit = await initRedis();
+    const redisInit = await redis.init();
     const redisPolicy = getRedisStartupPolicy(redisInit);
 
     if (redisPolicy === "fail_fast") {

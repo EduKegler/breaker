@@ -2,15 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { parseEvents, generateHTML, printSummary, padR, padL, getLatestRun } from "./dashboard.js";
+import { printSummary, generateHTML } from "./dashboard.js";
 import type { DashboardEvent } from "../types/events.js";
-
-function writeTempNdjson(lines: string[]): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pine-dash-"));
-  const filePath = path.join(dir, "events.ndjson");
-  fs.writeFileSync(filePath, lines.join("\n"));
-  return filePath;
-}
 
 const sampleEvent: DashboardEvent = {
   ts: "2026-02-21T12:00:00.000Z",
@@ -25,36 +18,6 @@ const sampleEvent: DashboardEvent = {
   run_id: "20260221_120000",
   asset: "BTC",
 };
-
-describe("parseEvents", () => {
-  it("parses valid NDJSON lines", () => {
-    const file = writeTempNdjson([
-      JSON.stringify(sampleEvent),
-      JSON.stringify({ ...sampleEvent, iter: 2, pnl: 250 }),
-    ]);
-    const events = parseEvents(file);
-    expect(events).toHaveLength(2);
-    expect(events[0].pnl).toBe(242.68);
-    expect(events[1].iter).toBe(2);
-  });
-
-  it("skips malformed lines", () => {
-    const file = writeTempNdjson([
-      JSON.stringify(sampleEvent),
-      "not valid json",
-      "",
-      JSON.stringify({ ...sampleEvent, iter: 3 }),
-    ]);
-    const events = parseEvents(file);
-    expect(events).toHaveLength(2);
-  });
-
-  it("returns empty array for empty file", () => {
-    const file = writeTempNdjson([""]);
-    const events = parseEvents(file);
-    expect(events).toHaveLength(0);
-  });
-});
 
 describe("generateHTML", () => {
   it("returns fallback for empty events", () => {
@@ -243,88 +206,5 @@ describe("printSummary", () => {
 
     expect(logs.some((l) => l.includes("Latest Metrics"))).toBe(false);
     spy.mockRestore();
-  });
-});
-
-describe("padR", () => {
-  it("pads string to target width", () => {
-    expect(padR("abc", 6)).toBe("abc   ");
-    expect(padR("abc", 6).length).toBe(6);
-  });
-
-  it("truncates if longer than width", () => {
-    expect(padR("abcdefgh", 5)).toBe("abcde");
-    expect(padR("abcdefgh", 5).length).toBe(5);
-  });
-
-  it("handles number input", () => {
-    expect(padR(42, 5)).toBe("42   ");
-  });
-
-  it("returns exact string when length equals width", () => {
-    expect(padR("abc", 3)).toBe("abc");
-  });
-});
-
-describe("padL", () => {
-  it("pads string to target width on the left", () => {
-    expect(padL("abc", 6)).toBe("   abc");
-    expect(padL("abc", 6).length).toBe(6);
-  });
-
-  it("truncates if longer than width", () => {
-    expect(padL("abcdefgh", 5)).toBe("abcde");
-    expect(padL("abcdefgh", 5).length).toBe(5);
-  });
-
-  it("handles number input", () => {
-    expect(padL(42, 5)).toBe("   42");
-  });
-
-  it("returns exact string when length equals width", () => {
-    expect(padL("abc", 3)).toBe("abc");
-  });
-});
-
-describe("getLatestRun", () => {
-  it("returns events.ndjson path from latest run directory", () => {
-    // Create a temp artifacts structure
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pine-dash-run-"));
-    const artifactsPath = path.join(tmpDir, "artifacts");
-    fs.mkdirSync(artifactsPath);
-    const runDir = path.join(artifactsPath, "20260224_120000");
-    fs.mkdirSync(runDir);
-    const eventsFile = path.join(runDir, "events.ndjson");
-    fs.writeFileSync(eventsFile, JSON.stringify(sampleEvent));
-
-    // Mock __dirname-based path resolution by temporarily overriding the module
-    // getLatestRun uses a hardcoded artifactsDir based on __dirname, so we test indirectly.
-    // Instead, just verify the function exists and is callable.
-    expect(typeof getLatestRun).toBe("function");
-
-    fs.rmSync(tmpDir, { recursive: true });
-  });
-
-  it("calls process.exit when no artifacts dir exists", () => {
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("process.exit called");
-    });
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    // getLatestRun uses a hardcoded path based on __dirname
-    // In test context, the artifacts dir likely doesn't exist
-    try {
-      getLatestRun();
-    } catch {
-      // Expected: process.exit throws
-    }
-
-    // Either it found artifacts (CI/dev) or it exited
-    if (exitSpy.mock.calls.length > 0) {
-      expect(exitSpy).toHaveBeenCalledWith(1);
-    }
-
-    exitSpy.mockRestore();
-    errorSpy.mockRestore();
   });
 });

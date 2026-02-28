@@ -5,27 +5,29 @@ import { Hyperliquid } from "hyperliquid";
 import { isMainModule } from "@breaker/kit";
 import { createDonchianAdx, createKeltnerRsi2 } from "@breaker/backtest";
 import { ExchangeConfigSchema, type ExchangeConfig } from "./types/config.js";
-import { loadEnv } from "./lib/env.js";
-import { logger, setLogConfig, createChildLogger } from "./lib/logger.js";
+import { loadEnv } from "./lib/load-env.js";
+import { logger } from "./lib/logger.js";
 import { SqliteStore } from "./adapters/sqlite-store.js";
 import { EventLog } from "./adapters/event-log.js";
 import { HyperliquidClient } from "./adapters/hyperliquid-client.js";
 import { DryRunHlClient } from "./adapters/dry-run-client.js";
-import { HlEventStream, type WsOrder, type WsUserFill } from "./adapters/hl-event-stream.js";
-import { CandlePoller } from "./adapters/candle-poller.js";
+import { HlEventStream } from "./adapters/hl-event-stream.js";
+import type { WsOrder, WsUserFill } from "./types/hl-event-stream.js";
+import { CandleStreamer } from "./adapters/candle-streamer.js";
+import { CandleCache } from "@breaker/backtest";
 import { HttpAlertsClient } from "./adapters/alerts-client.js";
 import { PositionBook } from "./domain/position-book.js";
 import { resolveOrderStatus } from "./domain/order-status.js";
 import { StrategyRunner } from "./application/strategy-runner.js";
 import { ReconcileLoop } from "./application/reconcile-loop.js";
-import { createApp } from "./server.js";
+import { createApp } from "./create-app.js";
 import { WsBroker } from "./lib/ws-broker.js";
-import type { HlClient } from "./adapters/hyperliquid-client.js";
-import type { SignalHandlerDeps } from "./application/signal-handler.js";
+import type { HlClient } from "./types/hl-client.js";
+import type { SignalHandlerDeps } from "./application/handle-signal.js";
 import type WebSocket from "ws";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const log = createChildLogger("daemon");
+const log = logger.createChild("daemon");
 
 function loadConfig(): ExchangeConfig {
   const configPath = join(__dirname, "../exchange-config.json");
@@ -115,7 +117,7 @@ async function main() {
   const config = loadConfig();
 
   // Apply per-module log levels before any child loggers are used
-  setLogConfig(config.logLevels);
+  logger.setLogConfig(config.logLevels);
 
   const isDryRun = config.dryRun;
   logger.info({ mode: config.mode, asset: config.asset, strategy: config.strategy, dryRun: isDryRun }, "Starting exchange daemon");
@@ -187,29 +189,46 @@ async function main() {
     },
   };
 
-  // Initialize strategy and candle poller
+  // Initialize strategy, candle streamer, and candle cache
   const strategy = createStrategy(config.strategy);
-  const poller = new CandlePoller({
+  const streamer = new CandleStreamer({
     coin: config.asset,
     interval: config.interval,
     dataSource: config.dataSource,
   });
+  const candleCache = new CandleCache(join(dataDir, "candles.db"));
+
+  // Price ticker — broadcasts data source price + HL mid-price every ~5s
+  const PRICE_TICK_MS = 5_000;
+  let priceTickInterval: ReturnType<typeof setInterval> | null = null;
+  function startPriceTicker() {
+    priceTickInterval = setInterval(async () => {
+      const latest = streamer.getLatest();
+      const dataSourcePrice = latest?.c ?? null;
+      const hlMidPrice = await hlClient.getMidPrice(config.asset);
+      const trailingExitLevel = runner.getLastExitLevel();
+      if (dataSourcePrice != null || hlMidPrice != null) {
+        wsBroker.broadcastEvent("prices", { dataSourcePrice, hlMidPrice, trailingExitLevel });
+      }
+    }, PRICE_TICK_MS);
+  }
 
   // Strategy runner
   const runner = new StrategyRunner({
     config,
     strategy,
-    poller,
+    streamer,
     positionBook,
     signalHandlerDeps,
     eventLog,
     onNewCandle: (candle) => {
       wsBroker.broadcastEvent("candle", candle);
     },
-    onStaleData: ({ consecutiveEmptyPolls, lastCandleAt }) => {
+    onStaleData: ({ lastCandleAt, silentMs }) => {
       const lastAt = lastCandleAt > 0 ? new Date(lastCandleAt).toISOString() : "never";
+      const silentMin = Math.round(silentMs / 60_000);
       alertsClient.sendText(
-        `⚠️ ${config.asset} candle data stale: ${consecutiveEmptyPolls} consecutive polls without new data (last candle: ${lastAt}) — ${config.mode}`,
+        `⚠️ ${config.asset} candle data stale: no data for ${silentMin}min (last candle: ${lastAt}) — ${config.mode}`,
       ).catch(() => {});
     },
   });
@@ -255,7 +274,8 @@ async function main() {
     hlClient,
     walletAddress: env.HL_ACCOUNT_ADDRESS,
     signalHandlerDeps,
-    candlePoller: poller,
+    streamer,
+    candleCache,
     strategyFactory: () => createStrategy(config.strategy),
   });
 
@@ -275,7 +295,6 @@ async function main() {
       }),
       equity: store.getEquitySnapshots(500),
       health: { status: "ok", mode: config.mode, asset: config.asset, strategy: config.strategy, dryRun: isDryRun, uptime: process.uptime() },
-      candles: poller.getCandles(),
       signals: store.getRecentSignals(100),
     };
     ws.send(JSON.stringify({ type: "snapshot", timestamp: new Date().toISOString(), data: snapshot }));
@@ -328,12 +347,14 @@ async function main() {
   // Start loops
   runner.start();
   reconciler.start();
+  startPriceTicker();
 
   // Graceful shutdown
   const shutdown = async () => {
     logger.info("Shutting down...");
     runner.stop();
     reconciler.stop();
+    if (priceTickInterval) clearInterval(priceTickInterval);
     eventStream?.stop();
     wsBroker.close();
 
@@ -344,6 +365,7 @@ async function main() {
     });
 
     server.close();
+    candleCache.close();
     store.close();
     logger.info("Shutdown complete");
     process.exit(0);

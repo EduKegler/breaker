@@ -3,10 +3,16 @@ import type { Strategy, StrategyContext, Signal } from "../types/strategy.js";
 import type { CompletedTrade, Order, Fill } from "../types/order.js";
 import { intervalToMs } from "../types/candle.js";
 import { PositionTracker } from "./position-tracker.js";
-import { OrderManager, createOrderId, resetOrderIdCounter } from "./order-manager.js";
+import { OrderManager } from "./order-manager.js";
+import { createOrderId, resetOrderIdCounter } from "./create-order-id.js";
 import { EquityCurve, type EquityPoint } from "./equity-curve.js";
-import { applySlippage, calculateCommission, type ExecutionConfig, DEFAULT_EXECUTION } from "./execution-model.js";
-import { buildContext as buildCtx, canTrade as checkCanTrade, createUtcDayFormatter } from "./engine-shared.js";
+import { applySlippage } from "./apply-slippage.js";
+import { calculateCommission } from "./calculate-commission.js";
+import { type ExecutionConfig, DEFAULT_EXECUTION } from "./execution-model.js";
+import { buildContext as buildCtx } from "./build-context.js";
+import { canTrade as checkCanTrade } from "./can-trade.js";
+import { createUtcDayFormatter } from "./create-utc-day-formatter.js";
+import { aggregateCandles } from "./aggregate-candles.js";
 
 export type SizingMode = "risk" | "cash";
 
@@ -43,43 +49,6 @@ export interface BacktestResult {
   maxDrawdownPct: number;
   finalEquity: number;
   barsProcessed: number;
-}
-
-/**
- * Aggregate lower-timeframe candles into higher-timeframe candles.
- */
-export function aggregateCandles(
-  candles: Candle[],
-  sourceInterval: CandleInterval,
-  targetInterval: CandleInterval,
-): Candle[] {
-  const sourceMs = intervalToMs(sourceInterval);
-  const targetMs = intervalToMs(targetInterval);
-
-  if (targetMs <= sourceMs) return candles;
-
-  const result: Candle[] = [];
-  let bucket: Candle | null = null;
-  let bucketStart = 0;
-
-  for (const c of candles) {
-    const alignedTs = Math.floor(c.t / targetMs) * targetMs;
-
-    if (bucket === null || alignedTs !== bucketStart) {
-      if (bucket) result.push(bucket);
-      bucketStart = alignedTs;
-      bucket = { t: alignedTs, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v, n: c.n };
-    } else {
-      bucket.h = Math.max(bucket.h, c.h);
-      bucket.l = Math.min(bucket.l, c.l);
-      bucket.c = c.c;
-      bucket.v += c.v;
-      bucket.n += c.n;
-    }
-  }
-
-  if (bucket) result.push(bucket);
-  return result;
 }
 
 /**

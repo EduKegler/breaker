@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { canTrade, buildContext, createUtcDayFormatter } from "./engine-shared.js";
+import { canTrade } from "./can-trade.js";
+import { buildContext } from "./build-context.js";
+import { createUtcDayFormatter } from "./create-utc-day-formatter.js";
 import type { Candle } from "../types/candle.js";
 
 const baseCanTrade = {

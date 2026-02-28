@@ -1,7 +1,7 @@
 {
   "name": "@breaker/refiner",
   "version": "1.0.0",
-  "description": "B.R.E.A.K.E.R. — Backtesting Runtime for Evolutionary Analysis, Kernel Execution & Refinement",
+  "description": "B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-driven Execution & Routing",
   "private": true,
   "type": "module",
   "scripts": {

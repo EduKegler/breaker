@@ -1,12 +1,10 @@
 import { describe, it, expect } from "vitest";
-import {
-  finiteOrThrow,
-  finiteOr,
-  assertPositive,
-  isSanePrice,
-  isSaneSize,
-  isSaneEquity,
-} from "./validators.js";
+import { finiteOrThrow } from "./finite-or-throw.js";
+import { finiteOr } from "./finite-or.js";
+import { assertPositive } from "./assert-positive.js";
+import { isSanePrice } from "./is-sane-price.js";
+import { isSaneSize } from "./is-sane-size.js";
+import { isSaneEquity } from "./is-sane-equity.js";
 
 describe("finiteOrThrow", () => {
   it("returns the value when finite", () => {

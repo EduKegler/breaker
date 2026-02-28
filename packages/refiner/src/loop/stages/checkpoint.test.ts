@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { saveCheckpoint, loadCheckpoint, rollback, loadCheckpointParams } from "./checkpoint.js";
+import { checkpoint } from "./checkpoint.js";
 import type { Metrics } from "@breaker/backtest";
 
 let tmpDir: string;
@@ -22,12 +22,12 @@ const sampleMetrics: Metrics = {
   avgR: 0.257,
 };
 
-describe("saveCheckpoint / loadCheckpoint", () => {
+describe("checkpoint.save / checkpoint.load", () => {
   it("saves and loads checkpoint correctly", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
-    saveCheckpoint(tmpDir, "// strategy code", sampleMetrics, 5);
+    checkpoint.save(tmpDir, "// strategy code", sampleMetrics, 5);
 
-    const loaded = loadCheckpoint(tmpDir);
+    const loaded = checkpoint.load(tmpDir);
     expect(loaded).not.toBeNull();
     expect(loaded!.strategyContent).toBe("// strategy code");
     expect(loaded!.metrics.totalPnl).toBe(242.68);
@@ -38,27 +38,27 @@ describe("saveCheckpoint / loadCheckpoint", () => {
   it("saves and loads params when provided", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
     const params = { dcSlow: 55, dcFast: 20 };
-    saveCheckpoint(tmpDir, "// code", sampleMetrics, 3, params);
+    checkpoint.save(tmpDir, "// code", sampleMetrics, 3, params);
 
-    const loaded = loadCheckpoint(tmpDir);
+    const loaded = checkpoint.load(tmpDir);
     expect(loaded!.params).toEqual(params);
   });
 
   it("returns null when no checkpoint exists", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
-    expect(loadCheckpoint(tmpDir)).toBeNull();
+    expect(checkpoint.load(tmpDir)).toBeNull();
   });
 
   it("returns null when metrics JSON is corrupted", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
     fs.writeFileSync(path.join(tmpDir, "best-strategy.ts.bak"), "// valid");
     fs.writeFileSync(path.join(tmpDir, "best-metrics.json"), "not valid json{{{");
-    expect(loadCheckpoint(tmpDir)).toBeNull();
+    expect(checkpoint.load(tmpDir)).toBeNull();
   });
 
   it("does not leave .tmp files after save", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
-    saveCheckpoint(tmpDir, "// code", sampleMetrics, 3);
+    checkpoint.save(tmpDir, "// code", sampleMetrics, 3);
 
     expect(fs.existsSync(path.join(tmpDir, "best-strategy.ts.bak.tmp"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "best-metrics.json.tmp"))).toBe(false);
@@ -68,13 +68,13 @@ describe("saveCheckpoint / loadCheckpoint", () => {
 
   it("creates directory if it does not exist", () => {
     tmpDir = path.join(os.tmpdir(), "ckpt-new-" + Date.now());
-    saveCheckpoint(tmpDir, "code", sampleMetrics, 1);
+    checkpoint.save(tmpDir, "code", sampleMetrics, 1);
     expect(fs.existsSync(path.join(tmpDir, "best-strategy.ts.bak"))).toBe(true);
   });
 
 });
 
-describe("rollback", () => {
+describe("checkpoint.rollback", () => {
   it("restores strategy file from checkpoint", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
     const strategyFile = path.join(tmpDir, "strategy.ts");
@@ -84,34 +84,34 @@ describe("rollback", () => {
     fs.writeFileSync(path.join(checkpointDir, "best-strategy.ts.bak"), "// best version");
     fs.writeFileSync(strategyFile, "// current version");
 
-    const result = rollback(checkpointDir, strategyFile);
+    const result = checkpoint.rollback(checkpointDir, strategyFile);
     expect(result).toBe(true);
     expect(fs.readFileSync(strategyFile, "utf8")).toBe("// best version");
   });
 
   it("returns false when no checkpoint exists", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
-    const result = rollback(tmpDir, "/nonexistent/file");
+    const result = checkpoint.rollback(tmpDir, "/nonexistent/file");
     expect(result).toBe(false);
   });
 
 });
 
-describe("loadCheckpointParams", () => {
+describe("checkpoint.loadParams", () => {
   it("returns params when file exists", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
     fs.writeFileSync(path.join(tmpDir, "best-params.json"), JSON.stringify({ dcSlow: 55 }));
-    expect(loadCheckpointParams(tmpDir)).toEqual({ dcSlow: 55 });
+    expect(checkpoint.loadParams(tmpDir)).toEqual({ dcSlow: 55 });
   });
 
   it("returns null when file doesn't exist", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
-    expect(loadCheckpointParams(tmpDir)).toBeNull();
+    expect(checkpoint.loadParams(tmpDir)).toBeNull();
   });
 
   it("returns null on corrupt file", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
     fs.writeFileSync(path.join(tmpDir, "best-params.json"), "not json");
-    expect(loadCheckpointParams(tmpDir)).toBeNull();
+    expect(checkpoint.loadParams(tmpDir)).toBeNull();
   });
 });

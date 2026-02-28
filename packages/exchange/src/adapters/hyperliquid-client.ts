@@ -1,56 +1,13 @@
 import { Hyperliquid } from "hyperliquid";
-import { createChildLogger } from "../lib/logger.js";
-import { finiteOrThrow, finiteOr, isSanePrice } from "../lib/validators.js";
-import { truncateSize, truncatePrice } from "../lib/precision.js";
+import { logger } from "../lib/logger.js";
+import { finiteOrThrow } from "../lib/finite-or-throw.js";
+import { finiteOr } from "../lib/finite-or.js";
+import { isSanePrice } from "../lib/is-sane-price.js";
+import { truncateSize } from "../lib/truncate-size.js";
+import { truncatePrice } from "../lib/truncate-price.js";
+import type { HlClient, HlPosition, HlOpenOrder, HlHistoricalOrder, HlOrderResult, HlEntryResult, HlAccountState, HlSpotBalance } from "../types/hl-client.js";
 
-const log = createChildLogger("hlClient");
-
-export interface HlPosition {
-  coin: string;
-  direction: "long" | "short";
-  size: number;
-  entryPrice: number;
-  unrealizedPnl: number;
-  leverage: number;
-}
-
-export interface HlOpenOrder {
-  coin: string;
-  oid: number;
-  side: string;
-  sz: number;
-  limitPx: number;
-  orderType: string;
-  isTrigger: boolean;
-  triggerPx: number;
-  triggerCondition: string;
-  reduceOnly: boolean;
-  isPositionTpsl: boolean;
-}
-
-export interface HlHistoricalOrder {
-  oid: number;
-  status: "filled" | "open" | "canceled" | "triggered" | "rejected" | "marginCanceled";
-}
-
-export interface HlOrderResult {
-  orderId: string;
-  status: "placed" | "simulated";
-}
-
-export interface HlClient {
-  connect(): Promise<void>;
-  getSzDecimals(coin: string): number;
-  setLeverage(coin: string, leverage: number, isCross: boolean): Promise<void>;
-  placeMarketOrder(coin: string, isBuy: boolean, size: number): Promise<HlOrderResult>;
-  placeStopOrder(coin: string, isBuy: boolean, size: number, triggerPrice: number, reduceOnly: boolean): Promise<HlOrderResult>;
-  placeLimitOrder(coin: string, isBuy: boolean, size: number, price: number, reduceOnly: boolean): Promise<HlOrderResult>;
-  cancelOrder(coin: string, orderId: number): Promise<void>;
-  getPositions(walletAddress: string): Promise<HlPosition[]>;
-  getOpenOrders(walletAddress: string): Promise<HlOpenOrder[]>;
-  getHistoricalOrders(walletAddress: string): Promise<HlHistoricalOrder[]>;
-  getAccountEquity(walletAddress: string): Promise<number>;
-}
+const log = logger.createChild("hlClient");
 
 interface OrderResponse {
   status: string;
@@ -72,6 +29,24 @@ function extractOid(result: unknown): string {
   return String(oid ?? "unknown");
 }
 
+function extractFillInfo(result: unknown): HlEntryResult {
+  const resp = result as OrderResponse | undefined;
+  const status = resp?.response?.data?.statuses?.[0];
+  const filled = status?.filled;
+  if (!filled) {
+    const oid = status?.resting?.oid;
+    return { orderId: String(oid ?? "unknown"), filledSize: 0, avgPrice: 0, status: "placed" };
+  }
+  const filledSize = Number(filled.totalSz);
+  const avgPrice = Number(filled.avgPx);
+  return {
+    orderId: String(filled.oid ?? "unknown"),
+    filledSize: Number.isFinite(filledSize) ? filledSize : 0,
+    avgPrice: Number.isFinite(avgPrice) ? avgPrice : 0,
+    status: "placed",
+  };
+}
+
 export class HyperliquidClient implements HlClient {
   private sdk: Hyperliquid;
   private leverageCache = new Set<string>();
@@ -85,6 +60,11 @@ export class HyperliquidClient implements HlClient {
   /** SDK expects "BTC-PERP" format, domain uses plain "BTC" */
   private toSymbol(coin: string): string {
     return coin.includes("-") ? coin : `${coin}-PERP`;
+  }
+
+  /** SDK returns "BTC-PERP" format, domain uses plain "BTC" */
+  private fromSymbol(symbol: string): string {
+    return symbol.endsWith("-PERP") ? symbol.slice(0, -5) : symbol;
   }
 
   getSzDecimals(coin: string): number {
@@ -132,6 +112,43 @@ export class HyperliquidClient implements HlClient {
     const orderId = extractOid(result);
     log.info({ action: "placeMarketOrder", coin, isBuy, requestedSize: size, truncatedSize: sz, orderId, latencyMs: Math.round(performance.now() - t0) }, "Market order placed");
     return { orderId, status: "placed" };
+  }
+
+  async placeEntryOrder(
+    coin: string,
+    isBuy: boolean,
+    size: number,
+    currentPrice: number,
+    slippageBps: number,
+  ): Promise<HlEntryResult> {
+    const sz = truncateSize(size, this.getSzDecimals(coin));
+    if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
+    const slippageMul = isBuy ? 1 + slippageBps / 10000 : 1 - slippageBps / 10000;
+    const limitPrice = truncatePrice(currentPrice * slippageMul);
+    const t0 = performance.now();
+    const result = await this.sdk.exchange.placeOrder({
+      coin: this.toSymbol(coin),
+      is_buy: isBuy,
+      sz,
+      limit_px: limitPrice,
+      order_type: { limit: { tif: "Ioc" } },
+      reduce_only: false,
+    });
+    const entry = extractFillInfo(result);
+    log.info({
+      action: "placeEntryOrder",
+      coin,
+      isBuy,
+      requestedSize: size,
+      truncatedSize: sz,
+      limitPrice,
+      slippageBps,
+      orderId: entry.orderId,
+      filledSize: entry.filledSize,
+      avgPrice: entry.avgPrice,
+      latencyMs: Math.round(performance.now() - t0),
+    }, "Entry order placed (limit IOC)");
+    return entry;
   }
 
   async placeStopOrder(
@@ -217,7 +234,7 @@ export class HyperliquidClient implements HlClient {
       }
 
       positions.push({
-        coin: p.position.coin,
+        coin: this.fromSymbol(p.position.coin),
         direction: szi > 0 ? "long" : "short",
         size: Math.abs(szi),
         entryPrice,
@@ -241,7 +258,7 @@ export class HyperliquidClient implements HlClient {
         continue;
       }
       result.push({
-        coin: String(o.coin),
+        coin: this.fromSymbol(String(o.coin)),
         oid,
         side: String(o.side),
         sz: finiteOr(Number(o.sz), 0),
@@ -275,13 +292,66 @@ export class HyperliquidClient implements HlClient {
 
   async getAccountEquity(walletAddress: string): Promise<number> {
     const t0 = performance.now();
-    const state = await this.sdk.info.perpetuals.getClearinghouseState(walletAddress);
-    if (!state?.marginSummary) return 0;
-    const equity = finiteOr(Number(state.marginSummary.accountValue), 0);
-    if (equity === 0 && state.marginSummary.accountValue != null) {
-      log.warn({ action: "getAccountEquity", rawValue: state.marginSummary.accountValue }, "Equity parsed as invalid, returning 0");
-    }
-    log.debug({ action: "getAccountEquity", equity, latencyMs: Math.round(performance.now() - t0) }, "Fetched account equity");
+    const [perpState, spotState] = await Promise.all([
+      this.sdk.info.perpetuals.getClearinghouseState(walletAddress),
+      this.sdk.info.spot.getSpotClearinghouseState(walletAddress).catch(() => null),
+    ]);
+    const perpEquity = finiteOr(Number(perpState?.marginSummary?.accountValue), 0);
+    const spotUsdc = spotState?.balances
+      ?.filter((b: { coin: string; total: string }) => b.coin === "USDC" || b.coin === "USDC-SPOT")
+      .reduce((sum: number, b: { total: string }) => sum + finiteOr(Number(b.total), 0), 0) ?? 0;
+    const equity = perpEquity + spotUsdc;
+    log.debug({ action: "getAccountEquity", perpEquity, spotUsdc, equity, latencyMs: Math.round(performance.now() - t0) }, "Fetched account equity");
     return equity;
+  }
+
+  async getMidPrice(coin: string): Promise<number | null> {
+    try {
+      const mids = await this.sdk.info.getAllMids();
+      const raw = mids[this.toSymbol(coin)];
+      if (raw == null) return null;
+      const price = Number(raw);
+      return Number.isFinite(price) && price > 0 ? price : null;
+    } catch (err) {
+      log.warn({ action: "getMidPrice", coin, err }, "Failed to fetch mid-price");
+      return null;
+    }
+  }
+
+  async getAccountState(walletAddress: string): Promise<HlAccountState> {
+    const t0 = performance.now();
+    const [perpState, spotState] = await Promise.all([
+      this.sdk.info.perpetuals.getClearinghouseState(walletAddress),
+      this.sdk.info.spot.getSpotClearinghouseState(walletAddress).catch(() => null),
+    ]);
+    const ms = perpState?.marginSummary;
+
+    const spotBalances: HlSpotBalance[] = [];
+    if (spotState?.balances) {
+      for (const b of spotState.balances) {
+        const total = finiteOr(Number(b.total), 0);
+        if (total === 0) continue;
+        spotBalances.push({
+          coin: b.coin,
+          total,
+          hold: finiteOr(Number(b.hold), 0),
+        });
+      }
+    }
+
+    // Total equity = perps accountValue + spot USDC total
+    const perpEquity = finiteOr(Number(ms?.accountValue), 0);
+    const spotUsdc = spotBalances.find((b) => b.coin === "USDC" || b.coin === "USDC-SPOT")?.total ?? 0;
+
+    const result: HlAccountState = {
+      accountValue: perpEquity + spotUsdc,
+      totalMarginUsed: finiteOr(Number(ms?.totalMarginUsed), 0),
+      totalNtlPos: finiteOr(Number(ms?.totalNtlPos), 0),
+      totalRawUsd: finiteOr(Number(ms?.totalRawUsd), 0),
+      withdrawable: finiteOr(Number(perpState?.withdrawable), 0) + spotUsdc,
+      spotBalances,
+    };
+    log.debug({ action: "getAccountState", ...result, latencyMs: Math.round(performance.now() - t0) }, "Fetched account state");
+    return result;
   }
 }

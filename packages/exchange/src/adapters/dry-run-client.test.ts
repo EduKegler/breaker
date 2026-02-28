@@ -35,6 +35,15 @@ describe("DryRunHlClient", () => {
     expect(r.status).toBe("simulated");
   });
 
+  it("placeEntryOrder returns simulated full fill", async () => {
+    const client = new DryRunHlClient();
+    const r = await client.placeEntryOrder("BTC", true, 0.01, 95000, 10);
+    expect(r.orderId).toBe("dry-run-1");
+    expect(r.status).toBe("simulated");
+    expect(r.filledSize).toBe(0.01);
+    expect(r.avgPrice).toBe(95000);
+  });
+
   it("placeLimitOrder returns simulated result", async () => {
     const client = new DryRunHlClient();
     const r = await client.placeLimitOrder("BTC", false, 0.005, 97000, true);

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Exchange } from "ccxt";
-import { fetchCandles, toSymbol, type DataSource } from "./candle-client.js";
+import { fetchCandles } from "./fetch-candles.js";
+import { toSymbol, type DataSource } from "./to-symbol.js";
 
 /** Create a mock CCXT exchange with a spied fetchOHLCV. */
 function makeMockExchange(): Exchange {

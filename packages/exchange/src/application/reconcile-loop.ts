@@ -1,59 +1,13 @@
-import type { HlClient, HlPosition } from "../adapters/hyperliquid-client.js";
+import type { HlClient } from "../types/hl-client.js";
 import type { SqliteStore } from "../adapters/sqlite-store.js";
 import type { PositionBook } from "../domain/position-book.js";
 import type { EventLog } from "../adapters/event-log.js";
 import { resolveOrderStatus } from "../domain/order-status.js";
+import { reconcile, type ReconcileResult } from "./reconcile.js";
 import { setTimeout as sleep } from "node:timers/promises";
-import { createChildLogger } from "../lib/logger.js";
+import { logger } from "../lib/logger.js";
 
-const log = createChildLogger("reconcileLoop");
-
-interface ReconcileResult {
-  ok: boolean;
-  drifts: string[];
-  actions: string[];
-}
-
-export function reconcile(
-  localPositions: ReturnType<PositionBook["getAll"]>,
-  hlPositions: HlPosition[],
-): ReconcileResult {
-  const drifts: string[] = [];
-
-  const localMap = new Map(localPositions.map((p) => [p.coin, p]));
-  const hlMap = new Map(hlPositions.map((p) => [p.coin, p]));
-
-  // Check for positions that exist locally but not on HL
-  for (const [coin] of localMap) {
-    if (!hlMap.has(coin)) {
-      drifts.push(`${coin}: local position exists but not on Hyperliquid`);
-    }
-  }
-
-  // Check for positions on HL but not locally
-  for (const [coin] of hlMap) {
-    if (!localMap.has(coin)) {
-      drifts.push(`${coin}: Hyperliquid position exists but not tracked locally`);
-    }
-  }
-
-  // Check for size mismatches
-  for (const [coin, local] of localMap) {
-    const hl = hlMap.get(coin);
-    if (!hl) continue;
-
-    const sizeDiff = Math.abs(local.size - hl.size);
-    if (sizeDiff > local.size * 0.01) { // >1% tolerance
-      drifts.push(`${coin}: size drift — local=${local.size}, HL=${hl.size}`);
-    }
-  }
-
-  return {
-    ok: drifts.length === 0,
-    drifts,
-    actions: [],
-  };
-}
+const log = logger.createChild("reconcileLoop");
 
 export interface ReconciledData {
   positions: ReturnType<PositionBook["getAll"]>;

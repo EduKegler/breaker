@@ -17,7 +17,7 @@ export const SizingSchema = z.object({
 });
 
 export const ExchangeConfigSchema = z.object({
-  mode: z.enum(["testnet", "live"]),
+  mode: z.enum(["testnet", "mainnet"]),
   port: z.number().int().positive().default(3200),
   gatewayUrl: z.string().url().default("http://localhost:3100"),
   asset: z.string().min(1),
@@ -29,6 +29,8 @@ export const ExchangeConfigSchema = z.object({
   marginType: z.enum(["isolated", "cross"]).default("isolated"),
   guardrails: GuardrailsSchema,
   sizing: SizingSchema,
+  entrySlippageBps: z.number().int().nonnegative().default(10),
+  autoTradingEnabled: z.boolean().default(false),
   dryRun: z.boolean().default(false),
   logLevels: z.record(z.string()).default({}),
 });

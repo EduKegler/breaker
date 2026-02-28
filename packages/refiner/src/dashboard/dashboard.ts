@@ -19,7 +19,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");
 const artifactsDir = path.join(ROOT, "artifacts");
 
-export function getLatestRun(): string {
+function getLatestRun(): string {
   if (!fs.existsSync(artifactsDir)) {
     console.error("No artifacts directory found at: " + artifactsDir);
     process.exit(1);
@@ -64,7 +64,7 @@ const dashboardEventSchema = z.object({
   anomalies: z.array(z.string()).optional(),
 });
 
-export function parseEvents(file: string): DashboardEvent[] {
+function parseEvents(file: string): DashboardEvent[] {
   const raw = fs.readFileSync(file, "utf8");
   const lines = raw.split("\n").filter((l) => l.trim().length > 0);
   const events: DashboardEvent[] = [];
@@ -78,14 +78,14 @@ export function parseEvents(file: string): DashboardEvent[] {
   return events;
 }
 
-export function padR(str: string | number, width: number): string {
+function padR(str: string | number, width: number): string {
   const s = String(str);
   return s.length >= width
     ? s.slice(0, width)
     : s + " ".repeat(width - s.length);
 }
 
-export function padL(str: string | number, width: number): string {
+function padL(str: string | number, width: number): string {
   const s = String(str);
   return s.length >= width
     ? s.slice(0, width)

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { analyzeTradeList, getSessionForHour } from "./trade-analysis.js";
+import { analyzeTradeList } from "./trade-analysis.js";
+import { getSessionForHour } from "./get-session-for-hour.js";
 import type { CompletedTrade } from "../types/order.js";
 
 function makeTrade(overrides: Partial<CompletedTrade> = {}): CompletedTrade {

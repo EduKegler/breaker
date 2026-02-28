@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { truncateSize, truncatePrice } from "./precision.js";
+import { truncateSize } from "./truncate-size.js";
+import { truncatePrice } from "./truncate-price.js";
 
 describe("truncateSize", () => {
   it("truncates to szDecimals (floor)", () => {

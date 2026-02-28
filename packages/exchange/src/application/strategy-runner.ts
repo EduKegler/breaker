@@ -6,25 +6,24 @@ import {
   intervalToMs,
 } from "@breaker/backtest";
 import type { Strategy, Candle, CandleInterval, StrategyContext } from "@breaker/backtest";
-import type { CandlePoller } from "../adapters/candle-poller.js";
+import type { CandleStreamer } from "../adapters/candle-streamer.js";
 import type { ExchangeConfig } from "../types/config.js";
 import type { PositionBook } from "../domain/position-book.js";
-import { handleSignal, type SignalHandlerDeps } from "./signal-handler.js";
+import { handleSignal, type SignalHandlerDeps } from "./handle-signal.js";
 import type { EventLog } from "../adapters/event-log.js";
-import { setTimeout as sleep } from "node:timers/promises";
-import { createChildLogger } from "../lib/logger.js";
+import { logger } from "../lib/logger.js";
 
-const log = createChildLogger("strategyRunner");
+const log = logger.createChild("strategyRunner");
 
 export interface StrategyRunnerDeps {
   config: ExchangeConfig;
   strategy: Strategy;
-  poller: CandlePoller;
+  streamer: CandleStreamer;
   positionBook: PositionBook;
   signalHandlerDeps: SignalHandlerDeps;
   eventLog: EventLog;
   onNewCandle?: (candle: Candle) => void;
-  onStaleData?: (info: { consecutiveEmptyPolls: number; lastCandleAt: number }) => void;
+  onStaleData?: (info: { lastCandleAt: number; silentMs: number }) => void;
 }
 
 export class StrategyRunner {
@@ -38,7 +37,6 @@ export class StrategyRunner {
   private utcDayFormatter = createUtcDayFormatter();
   private signalCounter = 0;
   private lastExitLevel: number | null = null;
-  private consecutiveEmptyPolls = 0;
   private lastCandleAt = 0;
 
   constructor(deps: StrategyRunnerDeps) {
@@ -46,7 +44,7 @@ export class StrategyRunner {
   }
 
   async warmup(): Promise<void> {
-    const candles = await this.deps.poller.warmup(this.deps.config.warmupBars);
+    const candles = await this.deps.streamer.warmup(this.deps.config.warmupBars);
 
     const minBars = Math.ceil(this.deps.config.warmupBars * 0.5);
     if (candles.length < minBars) {
@@ -58,6 +56,34 @@ export class StrategyRunner {
     const higherTimeframes = this.buildHigherTimeframes(candles);
     this.deps.strategy.init?.(candles, higherTimeframes);
 
+    if (candles.length > 0) {
+      this.lastCandleAt = candles[candles.length - 1].t;
+    }
+
+    // Initialize trailing exit level for existing positions (cold-start).
+    const pos = this.deps.positionBook.get(this.deps.config.asset);
+    if (pos && this.deps.strategy.getExitLevel && candles.length > 0) {
+      const ctx = buildContext({
+        candles,
+        index: candles.length - 1,
+        position: {
+          direction: pos.direction,
+          entryPrice: pos.entryPrice,
+          size: pos.size,
+          entryTimestamp: new Date(pos.openedAt).getTime(),
+          entryBarIndex: 0,
+          unrealizedPnl: pos.unrealizedPnl,
+          fills: [],
+        },
+        higherTimeframes,
+        dailyPnl: this.dailyPnl,
+        tradesToday: this.tradesToday,
+        barsSinceExit: this.barsSinceExit,
+        consecutiveLosses: this.consecutiveLosses,
+      });
+      this.lastExitLevel = this.deps.strategy.getExitLevel(ctx);
+    }
+
     await this.deps.eventLog.append({
       type: "warmup_complete",
       timestamp: new Date().toISOString(),
@@ -65,25 +91,23 @@ export class StrategyRunner {
     });
   }
 
+  /**
+   * Public wrapper for tests — reads the latest candle from the streamer
+   * and processes it if it hasn't been processed yet.
+   */
   async tick(): Promise<void> {
-    const newCandle = await this.deps.poller.poll();
-    if (!newCandle) {
-      this.consecutiveEmptyPolls++;
-      if (this.consecutiveEmptyPolls === 5) {
-        log.warn(
-          { action: "candleStale", lastCandleAt: this.lastCandleAt, consecutiveEmptyPolls: this.consecutiveEmptyPolls },
-          "No new candle for 5 consecutive polls",
-        );
-        this.deps.onStaleData?.({ consecutiveEmptyPolls: this.consecutiveEmptyPolls, lastCandleAt: this.lastCandleAt });
-      }
-      return;
-    }
-    this.consecutiveEmptyPolls = 0;
+    const candles = this.deps.streamer.getCandles();
+    if (candles.length === 0) return;
+    const latest = candles[candles.length - 1];
+    if (latest.t <= this.lastCandleAt) return;
+    this.deps.onNewCandle?.(latest);
+    await this.processClosedCandle(latest);
+  }
+
+  private async processClosedCandle(newCandle: Candle): Promise<void> {
     this.lastCandleAt = newCandle.t;
 
-    this.deps.onNewCandle?.(newCandle);
-
-    const candles = this.deps.poller.getCandles();
+    const candles = this.deps.streamer.getCandles();
     const index = candles.length - 1;
 
     await this.deps.eventLog.append({
@@ -105,14 +129,14 @@ export class StrategyRunner {
 
     // Exit takes priority: if we close a position, skip entry check on the same
     // candle to avoid immediate re-entry oscillation from the same bar's signal.
-    const pos = this.deps.positionBook.get(this.deps.config.asset);
+    const pos = this.deps.positionBook.get(this.deps.config.asset) ?? null;
     if (pos) {
       this.deps.positionBook.updatePrice(this.deps.config.asset, newCandle.c);
       const exited = await this.checkExit(pos, candles, index, higherTimeframes);
       if (exited) return;
     }
 
-    if (this.deps.positionBook.isFlat(this.deps.config.asset)) {
+    if (pos === null) {
       await this.checkEntry(candles, index, higherTimeframes, newCandle.c);
     }
   }
@@ -268,13 +292,14 @@ export class StrategyRunner {
     return higherTimeframes;
   }
 
-  async start(): Promise<void> {
+  start(): void {
+    if (this.running) return;
     this.running = true;
-    const pollIntervalMs = intervalToMs(this.deps.config.interval as CandleInterval);
 
-    while (this.running) {
+    this.deps.streamer.on("candle:close", async (candle) => {
+      if (!this.running) return;
       try {
-        await this.tick();
+        await this.processClosedCandle(candle);
       } catch (err) {
         await this.deps.eventLog.append({
           type: "error",
@@ -282,12 +307,27 @@ export class StrategyRunner {
           data: { message: (err as Error).message, stack: (err as Error).stack },
         });
       }
-      await sleep(pollIntervalMs);
-    }
+    });
+
+    this.deps.streamer.on("candle:tick", (candle) => {
+      if (!this.running) return;
+      const tickPos = this.deps.positionBook.get(this.deps.config.asset);
+      if (tickPos) this.deps.positionBook.updatePrice(this.deps.config.asset, candle.c);
+      this.deps.onNewCandle?.(candle);
+    });
+
+    this.deps.streamer.on("stale", (info) => {
+      if (!this.running) return;
+      this.deps.onStaleData?.(info);
+    });
+
+    this.deps.streamer.start();
   }
 
   stop(): void {
     this.running = false;
+    this.deps.streamer.removeAllListeners();
+    this.deps.streamer.stop();
   }
 
   isRunning(): boolean {
@@ -296,5 +336,9 @@ export class StrategyRunner {
 
   getLastCandleAt(): number {
     return this.lastCandleAt;
+  }
+
+  getLastExitLevel(): number | null {
+    return this.lastExitLevel;
   }
 }

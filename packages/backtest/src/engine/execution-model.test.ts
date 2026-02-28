@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { applySlippage, calculateCommission, DEFAULT_EXECUTION } from "./execution-model.js";
+import { applySlippage } from "./apply-slippage.js";
+import { calculateCommission } from "./calculate-commission.js";
+import { DEFAULT_EXECUTION } from "./execution-model.js";
 
 describe("applySlippage", () => {
   it("increases price for buy orders", () => {

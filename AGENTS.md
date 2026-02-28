@@ -30,6 +30,8 @@ trading/
 
 ## Naming conventions
 - File names use **kebab-case** (hyphens, not underscores).
+- **One export per file**: each file must have a single primary function, class, or component. The file name must match the export name in kebab-case (e.g., `calculateRsi` → `calculate-rsi.ts`, `PositionCard` → `position-card.tsx`).
+- Exceptions: type-only files (`types.ts`), barrel re-exports (`index.ts`), co-located test files (`*.test.ts`), and co-located types/interfaces for params/return/config of the file's primary export.
 
 ## Configuration and secrets
 - `.env` is EXCLUSIVELY for secrets (API keys, tokens, credentials) that must not leak.

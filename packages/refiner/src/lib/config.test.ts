@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadConfig, resolveAssetCriteria, resolveDataConfig, resolveDateRange } from "./config.js";
+import { loadConfig } from "./config.js";
 
 function writeTempConfig(data: unknown): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "breaker-test-"));
@@ -38,7 +38,7 @@ describe("loadConfig", () => {
       },
     });
 
-    const config = loadConfig(configPath);
+    const { config } = loadConfig(configPath);
     expect(config.criteria.minTrades).toBe(150);
     expect(config.criteria.minPF).toBe(1.25);
     expect(config.modelRouting.optimize).toBe("claude-sonnet-4-6");
@@ -49,7 +49,7 @@ describe("loadConfig", () => {
 
   it("applies defaults for missing optional fields", () => {
     const configPath = writeTempConfig({});
-    const config = loadConfig(configPath);
+    const { config } = loadConfig(configPath);
 
     expect(config.criteria).toEqual({});
     expect(config.rollbackThreshold).toBeUndefined();
@@ -102,7 +102,7 @@ describe("loadConfig", () => {
         },
       },
     });
-    const config = loadConfig(configPath);
+    const { config } = loadConfig(configPath);
     const entry = config.assets.BTC.strategies.breakout;
     expect(entry.coin).toBe("BTC");
     expect(entry.dataSource).toBe("binance");
@@ -122,12 +122,12 @@ describe("loadConfig", () => {
         },
       },
     });
-    const config = loadConfig(configPath);
+    const { config } = loadConfig(configPath);
     expect(config.assets.BTC.strategies.breakout.dateRange).toBe("custom:2025-05-24:2026-02-24");
   });
 });
 
-describe("resolveAssetCriteria", () => {
+describe("resolveAssetCriteria (via loadConfig)", () => {
   it("merges global criteria with asset class overrides", () => {
     const configPath = writeTempConfig({
       criteria: { minTrades: 100, minPF: 1.2, maxDD: 20, minWR: 0 },
@@ -135,8 +135,7 @@ describe("resolveAssetCriteria", () => {
       assets: { BTC: { class: "crypto-major" } },
     });
 
-    const config = loadConfig(configPath);
-    const criteria = resolveAssetCriteria(config, "BTC");
+    const { criteria } = loadConfig(configPath, { asset: "BTC" });
 
     expect(criteria.minPF).toBe(1.25);
     expect(criteria.maxDD).toBe(12);
@@ -150,14 +149,13 @@ describe("resolveAssetCriteria", () => {
       assets: {},
     });
 
-    const config = loadConfig(configPath);
-    const criteria = resolveAssetCriteria(config, "UNKNOWN");
+    const { criteria } = loadConfig(configPath, { asset: "UNKNOWN" });
 
     expect(criteria.minTrades).toBe(100);
     expect(criteria.minPF).toBe(1.2);
   });
 
-  it("merges 3 layers: global → class → strategy profile", () => {
+  it("merges 3 layers: global -> class -> strategy profile", () => {
     const configPath = writeTempConfig({
       criteria: { minTrades: 100, minPF: 1.2, maxDD: 20, minWR: 30 },
       assetClasses: { "crypto-major": { minPF: 1.8, maxDD: 4, minTrades: 70 } },
@@ -165,8 +163,7 @@ describe("resolveAssetCriteria", () => {
       assets: { BTC: { class: "crypto-major", strategies: { "mean-reversion": { profile: "mean-reversion" } } } },
     });
 
-    const config = loadConfig(configPath);
-    const criteria = resolveAssetCriteria(config, "BTC", "mean-reversion");
+    const { criteria } = loadConfig(configPath, { asset: "BTC", strategy: "mean-reversion" });
 
     expect(criteria.minPF).toBe(1.3);
     expect(criteria.maxDD).toBe(8);
@@ -177,7 +174,7 @@ describe("resolveAssetCriteria", () => {
   });
 });
 
-describe("resolveDataConfig", () => {
+describe("resolveDataConfig (via loadConfig)", () => {
   it("returns strategy-level data config", () => {
     const configPath = writeTempConfig({
       assetClasses: { "crypto-major": {} },
@@ -197,28 +194,26 @@ describe("resolveDataConfig", () => {
       },
     });
 
-    const config = loadConfig(configPath);
-    const dc = resolveDataConfig(config, "BTC", "breakout");
+    const { dataConfig } = loadConfig(configPath, { asset: "BTC", strategy: "breakout" });
 
-    expect(dc.coin).toBe("BTC");
-    expect(dc.dataSource).toBe("binance");
-    expect(dc.interval).toBe("15m");
-    expect(dc.strategyFactory).toBe("createDonchianAdx");
+    expect(dataConfig.coin).toBe("BTC");
+    expect(dataConfig.dataSource).toBe("binance");
+    expect(dataConfig.interval).toBe("15m");
+    expect(dataConfig.strategyFactory).toBe("createDonchianAdx");
   });
 
   it("returns defaults for unknown asset", () => {
     const configPath = writeTempConfig({ assets: {} });
-    const config = loadConfig(configPath);
-    const dc = resolveDataConfig(config, "UNKNOWN");
+    const { dataConfig } = loadConfig(configPath, { asset: "UNKNOWN" });
 
-    expect(dc.coin).toBe("UNKNOWN");
-    expect(dc.dataSource).toBe("binance");
-    expect(dc.interval).toBe("15m");
-    expect(dc.strategyFactory).toBe("createDonchianAdx");
+    expect(dataConfig.coin).toBe("UNKNOWN");
+    expect(dataConfig.dataSource).toBe("binance");
+    expect(dataConfig.interval).toBe("15m");
+    expect(dataConfig.strategyFactory).toBe("createDonchianAdx");
   });
 });
 
-describe("resolveDateRange", () => {
+describe("resolveDateRange (via loadConfig)", () => {
   it("returns epoch ms for object dateRange", () => {
     const configPath = writeTempConfig({
       assetClasses: { "crypto-major": {} },
@@ -235,11 +230,10 @@ describe("resolveDateRange", () => {
       },
     });
 
-    const config = loadConfig(configPath);
-    const dr = resolveDateRange(config, "BTC", "breakout");
+    const { dateRange } = loadConfig(configPath, { asset: "BTC", strategy: "breakout" });
 
-    expect(dr.startTime).toBe(new Date("2025-05-24T00:00:00Z").getTime());
-    expect(dr.endTime).toBe(new Date("2026-02-24T23:59:59.999Z").getTime());
+    expect(dateRange.startTime).toBe(new Date("2025-05-24T00:00:00Z").getTime());
+    expect(dateRange.endTime).toBe(new Date("2026-02-24T23:59:59.999Z").getTime());
   });
 
   it("parses legacy custom string format", () => {
@@ -256,11 +250,10 @@ describe("resolveDateRange", () => {
       },
     });
 
-    const config = loadConfig(configPath);
-    const dr = resolveDateRange(config, "BTC", "breakout");
+    const { dateRange } = loadConfig(configPath, { asset: "BTC", strategy: "breakout" });
 
-    expect(dr.startTime).toBe(new Date("2025-08-01T00:00:00Z").getTime());
-    expect(dr.endTime).toBe(new Date("2026-02-01T23:59:59.999Z").getTime());
+    expect(dateRange.startTime).toBe(new Date("2025-08-01T00:00:00Z").getTime());
+    expect(dateRange.endTime).toBe(new Date("2026-02-01T23:59:59.999Z").getTime());
   });
 
   it("falls back to lastN when no strategy dateRange", () => {
@@ -269,21 +262,19 @@ describe("resolveDateRange", () => {
       assets: {},
     });
 
-    const config = loadConfig(configPath);
-    const dr = resolveDateRange(config, "UNKNOWN");
+    const { dateRange } = loadConfig(configPath, { asset: "UNKNOWN" });
 
-    expect(dr.endTime).toBeCloseTo(Date.now(), -4);
-    expect(dr.startTime).toBeLessThan(dr.endTime);
-    const days = (dr.endTime - dr.startTime) / (24 * 60 * 60 * 1000);
+    expect(dateRange.endTime).toBeCloseTo(Date.now(), -4);
+    expect(dateRange.startTime).toBeLessThan(dateRange.endTime);
+    const days = (dateRange.endTime - dateRange.startTime) / (24 * 60 * 60 * 1000);
     expect(days).toBeCloseTo(90, 0);
   });
 
   it("defaults to last365 when no config dateRange", () => {
     const configPath = writeTempConfig({ assets: {} });
-    const config = loadConfig(configPath);
-    const dr = resolveDateRange(config, "UNKNOWN");
+    const { dateRange } = loadConfig(configPath, { asset: "UNKNOWN" });
 
-    const days = (dr.endTime - dr.startTime) / (24 * 60 * 60 * 1000);
+    const days = (dateRange.endTime - dateRange.startTime) / (24 * 60 * 60 * 1000);
     expect(days).toBeCloseTo(365, 0);
   });
 });
@@ -302,8 +293,7 @@ describe("coreParameters and designChecklist", () => {
       assets: { BTC: { class: "crypto-major", strategies: { breakout: {} } } },
     });
 
-    const config = loadConfig(configPath);
-    const criteria = resolveAssetCriteria(config, "BTC", "breakout");
+    const { criteria } = loadConfig(configPath, { asset: "BTC", strategy: "breakout" });
     expect(criteria.coreParameters).toEqual([{ name: "dcSlow", min: 30, max: 60, step: 5 }]);
     expect(criteria.designChecklist).toEqual(["Donchian channel entry"]);
   });

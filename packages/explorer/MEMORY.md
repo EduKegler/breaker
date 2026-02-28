@@ -13,7 +13,7 @@
 - PositionCard shows inline TP/SL badges below position data, filtered by coin from openOrders.
 - Build output: ~781KB JS (recharts + lightweight-charts), 11KB CSS.
 - CandlestickChart component uses lightweight-charts v5.1 (createChart, CandlestickSeries, createSeriesMarkers, createPriceLine).
-- Entry markers: green arrowUp (long) / red arrowDown (short). Price lines: entry (amber dotted), SL (red dashed).
+- Entry markers: blue (auto) / yellow (manual), "L"/"S" text, size 1. Replay signals: blue arrows. Price lines: entry (amber dotted), SL (red dashed).
 - WS events: "candle" appends new candle, "signals" replaces signals array.
 
 ## Pending items
@@ -35,3 +35,6 @@
 - EquityChart uses AreaChart with gradient fill (linearGradient in SVG defs).
 - Order table has sticky header with max-h-[400px] scrollable body.
 - `glow-header` class uses box-shadow with green rgba for header glow effect.
+- API interfaces live in `src/types/api.ts`; `src/lib/api.ts` only exports the `api` object.
+- `ToastProvider` component in `lib/toast-provider.tsx`; `useToasts` hook in `lib/use-toasts.ts`.
+- `orderTypeLabel` helper extracted to `components/order-type-label.ts` (shared by open-orders-table + position-card).

@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { reconcile, ReconcileLoop } from "./reconcile-loop.js";
+import { reconcile } from "./reconcile.js";
+import { ReconcileLoop } from "./reconcile-loop.js";
 import { PositionBook } from "../domain/position-book.js";
 import { SqliteStore } from "../adapters/sqlite-store.js";
-import type { HlClient, HlPosition, HlOpenOrder, HlHistoricalOrder } from "../adapters/hyperliquid-client.js";
+import type { HlClient, HlPosition, HlOpenOrder, HlHistoricalOrder } from "../types/hl-client.js";
 
 function createMockHlClient(overrides: Partial<HlClient> = {}): HlClient {
   return {
@@ -10,6 +11,7 @@ function createMockHlClient(overrides: Partial<HlClient> = {}): HlClient {
     getSzDecimals: vi.fn().mockReturnValue(5),
     setLeverage: vi.fn(),
     placeMarketOrder: vi.fn(),
+    placeEntryOrder: vi.fn(),
     placeStopOrder: vi.fn(),
     placeLimitOrder: vi.fn(),
     cancelOrder: vi.fn(),

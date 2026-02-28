@@ -10,206 +10,45 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { execaSync } from "execa";
 import writeFileAtomic from "write-file-atomic";
 import { createActor } from "xstate";
 
-import { cac } from "cac";
 import { isMainModule } from "@breaker/kit";
 import { sendWhatsApp as sendWhatsAppWithRetry } from "@breaker/alerts";
-import { loadConfig, resolveAssetCriteria, resolveDataConfig, resolveDateRange } from "../lib/config.js";
-import { buildStrategyDir, getStrategySourcePath } from "../lib/strategy-path.js";
-import { getStrategyFactory } from "../lib/strategy-registry.js";
+import { getStrategySourcePath } from "../lib/get-strategy-source-path.js";
+import { strategyRegistry } from "../lib/strategy-registry.js";
 import { loadCandles } from "../lib/candle-loader.js";
-import { acquireLock, releaseLock } from "../lib/lock.js";
-import { classifyError, backoffDelay } from "./errors.js";
+import { lock } from "../lib/lock.js";
+import { classifyError } from "./classify-error.js";
+import { backoffDelay } from "./backoff-delay.js";
+import { parseArgs } from "./parse-args.js";
+import { buildLoopConfig } from "./build-loop-config.js";
+import { checkCriteria } from "./check-criteria.js";
+import { phaseHelpers } from "./phase-helpers.js";
 import { emitEvent } from "./stages/events.js";
-import { saveCheckpoint, loadCheckpoint, loadCheckpointParams, rollback } from "./stages/checkpoint.js";
+import { checkpoint } from "./stages/checkpoint.js";
 import { validateParamGuardrails } from "./stages/guardrails.js";
 import { buildSessionSummary } from "./stages/summary.js";
-import { runEngineInProcess, runEngineChild } from "./stages/run-engine.js";
-import { optimizeStrategy, fixStrategy } from "./stages/optimize.js";
-import { computeContentHash } from "./stages/integrity.js";
-import { computeScore, compareScores } from "./stages/scoring.js";
+import { runEngineInProcess } from "./stages/run-engine-in-process.js";
+import { runEngineChild } from "./stages/spawn-engine-child.js";
+import { optimizeStrategy } from "./stages/optimize.js";
+import { fixStrategy } from "./stages/fix-strategy.js";
+import { integrity } from "./stages/integrity.js";
+import { computeScore } from "./stages/scoring.js";
+import { compareScores } from "./stages/compare-scores.js";
 import { buildOptimizePrompt } from "../automation/build-optimize-prompt-ts.js";
 import { buildFixPrompt } from "../automation/build-fix-prompt-ts.js";
-import { updateParameterHistory, loadParameterHistory, backfillLastIteration } from "./stages/param-writer.js";
+import { paramWriter } from "./stages/param-writer.js";
 import { conductResearch } from "./stages/research.js";
 import { safeJsonParse } from "../lib/safe-json.js";
 import { breakerMachine } from "./state-machine.js";
-import type { Candle, CandleInterval, DataSource, Strategy, StrategyParam } from "@breaker/backtest";
-import type { ScoreVerdict } from "./stages/scoring.js";
+import type { Candle, CandleInterval, StrategyParam } from "@breaker/backtest";
 import type { IterationMetadata } from "./stages/param-writer.js";
-import type { LoopConfig, IterationState, LoopPhase } from "./types.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_REPO_ROOT = path.resolve(__dirname, "../..");
-
-export function parseArgs(): Partial<LoopConfig> & { initialPhase?: LoopPhase } {
-  const cli = cac("breaker");
-  cli.option("--asset <asset>", "Asset to optimize (e.g. BTC, ETH)");
-  cli.option("--strategy <name>", "Strategy name (e.g. breakout, mean-reversion)");
-  cli.option("--max-iter <n>", "Maximum optimization iterations");
-  cli.option("--repo-root <path>", "Repository root path");
-  cli.option("--auto-commit", "Auto-commit strategy changes after each iteration");
-  cli.option("--phase <phase>", "Starting phase (refine|research|restructure)");
-  cli.help();
-
-  const { options } = cli.parse(process.argv);
-
-  return {
-    asset: options.asset || process.env.ASSET,
-    strategy: options.strategy || process.env.STRATEGY || "breakout",
-    maxIter: parseInt(String(options.maxIter || process.env.MAX_ITER || "10")),
-    repoRoot: options.repoRoot || process.env.REPO_ROOT || DEFAULT_REPO_ROOT,
-    autoCommit: Boolean(options.autoCommit) || process.env.AUTO_COMMIT === "true",
-    initialPhase: (options.phase as LoopPhase) || undefined,
-  };
-}
-
-export function buildConfig(partial: Partial<LoopConfig>): LoopConfig {
-  const repoRoot = partial.repoRoot || DEFAULT_REPO_ROOT;
-  const asset = partial.asset || "BTC";
-  const strategy = partial.strategy || "breakout";
-  const configFile = path.join(repoRoot, "breaker-config.json");
-  const config = loadConfig(configFile);
-  const criteria = resolveAssetCriteria(config, asset, strategy);
-  const dataConfig = resolveDataConfig(config, asset, strategy);
-  const { startTime, endTime } = resolveDateRange(config, asset, strategy);
-  const strategyDir = buildStrategyDir(repoRoot, asset, strategy);
-  const runId = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").replace(/(\d{8})(\d{6})/, "$1_$2");
-
-  return {
-    asset,
-    strategy,
-    maxIter: partial.maxIter || 10,
-    maxFixAttempts: parseInt(process.env.MAX_FIX_ATTEMPTS || "3"),
-    maxTransientFailures: parseInt(process.env.MAX_TRANSIENT_FAILURES || "3"),
-    maxNoChange: parseInt(process.env.MAX_NO_CHANGE || "2"),
-    autoCommit: partial.autoCommit || false,
-    criteria,
-    modelRouting: config.modelRouting,
-    guardrails: config.guardrails,
-    phases: config.phases,
-    scoring: config.scoring,
-    research: config.research,
-    coin: dataConfig.coin,
-    dataSource: dataConfig.dataSource as DataSource,
-    interval: dataConfig.interval as CandleInterval,
-    strategyFactory: dataConfig.strategyFactory,
-    startTime,
-    endTime,
-    dbPath: path.join(repoRoot, "candles.db"),
-    repoRoot,
-    strategyDir,
-    strategyFile: "", // resolved in main() via getStrategySourcePath
-    configFile,
-    paramHistoryFile: path.join(strategyDir, "parameter-history.json"),
-    checkpointDir: path.join(strategyDir, "checkpoints"),
-    artifactsDir: path.join(repoRoot, "artifacts", runId),
-    runId,
-  };
-}
+import type { IterationState, LoopPhase } from "./types.js";
 
 function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
-}
-
-export function checkCriteria(
-  metrics: { totalPnl: number | null; numTrades: number | null; profitFactor: number | null; maxDrawdownPct: number | null; winRate: number | null; avgR: number | null },
-  criteria: LoopConfig["criteria"],
-): boolean {
-  const pnl = metrics.totalPnl ?? 0;
-  const trades = metrics.numTrades ?? 0;
-  const pf = metrics.profitFactor ?? 0;
-  const dd = metrics.maxDrawdownPct ?? 100;
-  const wr = metrics.winRate ?? 0;
-  const avgR = metrics.avgR ?? 0;
-
-  const minTrades = criteria.minTrades ?? 150;
-  const minPF = criteria.minPF ?? 1.25;
-  const maxDD = criteria.maxDD ?? 12;
-  const minWR = criteria.minWR ?? 20;
-  const minAvgR = criteria.minAvgR ?? 0.15;
-
-  return (
-    pnl > 0 &&
-    trades >= minTrades &&
-    pf >= minPF &&
-    dd <= maxDD &&
-    wr >= minWR &&
-    avgR >= minAvgR
-  );
-}
-
-/**
- * Determine if we should escalate from current phase.
- * refine -> research: 3+ consecutive neutral or 2+ no-change
- * research -> restructure: 2+ no-change
- * restructure -> refine (next cycle): 2+ no-change
- */
-export function shouldEscalatePhase(state: IterationState, _cfg: LoopConfig): boolean {
-  if (state.currentPhase === "refine") {
-    return state.neutralStreak >= 3 || state.noChangeCount >= 2;
-  }
-  if (state.currentPhase === "research" || state.currentPhase === "restructure") {
-    return state.noChangeCount >= 2;
-  }
-  return false;
-}
-
-/**
- * Reset counters that should not carry over between phases.
- */
-export function resetPhaseCounters(state: IterationState): void {
-  state.fixAttempts = 0;
-  state.transientFailures = 0;
-  state.neutralStreak = 0;
-  state.noChangeCount = 0;
-}
-
-/**
- * Compute effective maxIter for a phase.
- * Uses the larger of: config value OR proportional allocation of global maxIter.
- * Proportions: refine 40%, research 20%, restructure 40%.
- */
-export function getPhaseMaxIter(phase: LoopPhase, cfg: LoopConfig): number {
-  const proportions: Record<LoopPhase, number> = { refine: 0.4, research: 0.2, restructure: 0.4 };
-  const proportional = Math.max(1, Math.round(cfg.maxIter * proportions[phase]));
-  return Math.max(cfg.phases[phase].maxIter, proportional);
-}
-
-/**
- * Determine next phase when phaseIterCount exceeds the phase's maxIter.
- */
-export function transitionPhaseOnMaxIter(
-  currentPhase: LoopPhase,
-  phaseCycles: number,
-  maxCycles: number,
-): { nextPhase: LoopPhase; shouldBreak: boolean; incrementCycles: boolean } {
-  if (currentPhase === "refine") {
-    return { nextPhase: "research", shouldBreak: false, incrementCycles: false };
-  }
-  if (currentPhase === "research") {
-    return { nextPhase: "restructure", shouldBreak: false, incrementCycles: false };
-  }
-  // restructure
-  if (phaseCycles + 1 < maxCycles) {
-    return { nextPhase: "refine", shouldBreak: false, incrementCycles: true };
-  }
-  return { nextPhase: currentPhase, shouldBreak: true, incrementCycles: true };
-}
-
-/**
- * Downgrade "accept" verdict to "neutral" when trades are below minTrades.
- */
-export function computeEffectiveVerdict(
-  scoreVerdict: ScoreVerdict,
-  meetsMinTrades: boolean,
-): ScoreVerdict {
-  if (scoreVerdict === "accept" && !meetsMinTrades) return "neutral";
-  return scoreVerdict;
 }
 
 /**
@@ -219,7 +58,10 @@ function countOptimizableParams(params: Record<string, StrategyParam>): number {
   return Object.values(params).filter((p) => p.optimizable).length;
 }
 
-async function main(): Promise<void> {
+/**
+ * Main orchestration entry point for the B.R.E.A.K.E.R. optimization loop.
+ */
+export async function orchestrate(): Promise<void> {
   const startTime = Date.now();
   const partial = parseArgs();
 
@@ -228,14 +70,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const cfg = buildConfig(partial);
+  const cfg = buildLoopConfig(partial);
   log(`B.R.E.A.K.E.R. starting: asset=${cfg.asset} strategy=${cfg.strategy} maxIter=${cfg.maxIter} runId=${cfg.runId}`);
 
   // Resolve strategy source file
   cfg.strategyFile = getStrategySourcePath(cfg.repoRoot, cfg.strategyFactory);
 
   // Resolve strategy factory and create initial strategy
-  const factory = getStrategyFactory(cfg.strategyFactory);
+  const factory = strategyRegistry.get(cfg.strategyFactory);
 
   // Ensure strategy dir exists
   if (!fs.existsSync(cfg.strategyDir)) {
@@ -244,7 +86,7 @@ async function main(): Promise<void> {
   }
 
   // Acquire lock — everything after this MUST be inside try/finally
-  acquireLock(cfg.asset);
+  lock.acquire(cfg.asset);
   log(`Lock acquired for ${cfg.asset}`);
 
   let success = false;
@@ -263,11 +105,11 @@ async function main(): Promise<void> {
   log(`Candles loaded: ${candles.length} bars (${new Date(candles[0].t).toISOString()} -> ${new Date(candles[candles.length - 1].t).toISOString()})`);
 
   // Determine initial phase from param history or CLI
-  const existingHistory = loadParameterHistory(cfg.paramHistoryFile);
+  const existingHistory = paramWriter.loadHistory(cfg.paramHistoryFile);
   const initialPhase: LoopPhase = (partial as { initialPhase?: LoopPhase }).initialPhase || existingHistory.currentPhase || "refine";
 
   // Load initial param overrides from checkpoint
-  let paramOverrides: Record<string, number> = loadCheckpointParams(cfg.checkpointDir) ?? {};
+  let paramOverrides: Record<string, number> = checkpoint.loadParams(cfg.checkpointDir) ?? {};
 
   // Create initial strategy to get params
   const initialStrategy = factory(paramOverrides);
@@ -278,7 +120,7 @@ async function main(): Promise<void> {
   let initialBestPnl = 0;
   let initialBestIter = 0;
   let initialBestScore = 0;
-  const existingCheckpoint = loadCheckpoint(cfg.checkpointDir);
+  const existingCheckpoint = checkpoint.load(cfg.checkpointDir);
   if (existingCheckpoint) {
     initialBestPnl = existingCheckpoint.metrics.totalPnl ?? 0;
     initialBestIter = existingCheckpoint.iter;
@@ -375,7 +217,7 @@ async function main(): Promise<void> {
 
     // Check phase iter limits
     const activePhase = snap.value as LoopPhase;
-    const phaseMaxIter = getPhaseMaxIter(activePhase, cfg);
+    const phaseMaxIter = phaseHelpers.getMaxIter(activePhase, cfg);
     if (snap.context.phaseIterCount > phaseMaxIter) {
       const prevPhase2 = activePhase;
       actor.send({ type: "PHASE_TIMEOUT" });
@@ -436,7 +278,7 @@ async function main(): Promise<void> {
 
     // ---- Step 1: Run backtest ----
     const strategyContent = fs.readFileSync(cfg.strategyFile, "utf8");
-    const contentHash = computeContentHash(strategyContent);
+    const contentHash = integrity.computeHash(strategyContent);
 
     // Rebuild if strategy source changed (restructure phase)
     const needsRebuild = actor.getSnapshot().context.needsRebuild;
@@ -578,7 +420,7 @@ async function main(): Promise<void> {
 
     // ---- Backfill previous iteration's result in parameter-history ----
     try {
-      backfillLastIteration({
+      paramWriter.backfillLastIteration({
         historyPath: cfg.paramHistoryFile,
         currentMetrics: {
           pnl: currentPnl,
@@ -596,7 +438,7 @@ async function main(): Promise<void> {
     const scoreVerdict = machCtx.bestScore > 0
       ? compareScores(scoreResult.weighted, machCtx.bestScore)
       : (scoreResult.weighted > 0 ? "accept" : "neutral");
-    const effectiveVerdict = computeEffectiveVerdict(scoreVerdict, meetsMinTrades);
+    const effectiveVerdict = phaseHelpers.computeEffectiveVerdict(scoreVerdict, meetsMinTrades);
 
     let verdict: string;
     if (effectiveVerdict === "accept") {
@@ -635,7 +477,7 @@ async function main(): Promise<void> {
       state.bestScore = scoreResult.weighted;
       state.bestPnl = currentPnl;
       state.bestIter = iter;
-      saveCheckpoint(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides);
+      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides);
       break;
     }
 
@@ -646,19 +488,19 @@ async function main(): Promise<void> {
       state.bestScore = scoreResult.weighted;
       state.bestPnl = currentPnl;
       state.bestIter = iter;
-      saveCheckpoint(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides);
+      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides);
       log(`New best: Score=${scoreResult.weighted.toFixed(1)} PnL=$${currentPnl.toFixed(2)} at iter ${iter}`);
     } else if (scoreResult.weighted > bestScore && !meetsMinTrades) {
       log(`Score ${scoreResult.weighted.toFixed(1)} is best but trades=${metrics.numTrades} < minTrades=${cfg.criteria.minTrades} -- not saving checkpoint`);
     } else if (scoreVerdict === "reject") {
       log(`Rolling back: Score ${scoreResult.weighted.toFixed(1)} dropped below threshold vs best ${bestScore.toFixed(1)}`);
       // Restore best params
-      const bestParams = loadCheckpointParams(cfg.checkpointDir);
+      const bestParams = checkpoint.loadParams(cfg.checkpointDir);
       if (bestParams) {
         paramOverrides = bestParams;
       }
       // Restore best strategy source
-      const restored = rollback(cfg.checkpointDir, cfg.strategyFile);
+      const restored = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
       if (!restored) {
         log(`WARNING: Rollback failed -- no checkpoint found.`);
       } else if (phase !== "refine") {
@@ -788,7 +630,7 @@ async function main(): Promise<void> {
 
     if (metadata) {
       try {
-        updateParameterHistory({
+        paramWriter.updateHistory({
           historyPath: cfg.paramHistoryFile,
           metadata,
           globalIter: state.globalIter,
@@ -825,11 +667,11 @@ async function main(): Promise<void> {
 
   // ---- Restore best checkpoint to working file ----
   if (state.bestIter > 0) {
-    const restored = rollback(cfg.checkpointDir, cfg.strategyFile);
+    const restored = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
     if (restored) {
       log(`Restored best checkpoint (iter ${state.bestIter}) to working file`);
     }
-    const bestParams = loadCheckpointParams(cfg.checkpointDir);
+    const bestParams = checkpoint.loadParams(cfg.checkpointDir);
     if (bestParams) {
       paramOverrides = bestParams;
     }
@@ -881,7 +723,7 @@ async function main(): Promise<void> {
   actor.stop();
 
   } finally {
-    releaseLock(cfg.asset);
+    lock.release(cfg.asset);
     log(`Lock released for ${cfg.asset}`);
   }
 
@@ -890,7 +732,7 @@ async function main(): Promise<void> {
 
 // Only run when executed directly
 if (isMainModule(import.meta.url)) {
-  main().catch((err) => {
+  orchestrate().catch((err) => {
     console.error("Orchestrator error:", err);
     process.exit(1);
   });

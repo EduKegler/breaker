@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import type { HlClient, HlPosition } from "./hyperliquid-client.js";
+import type { HlClient, HlPosition } from "../types/hl-client.js";
 import { HyperliquidClient } from "./hyperliquid-client.js";
 import type { Hyperliquid } from "hyperliquid";
 
@@ -10,6 +10,7 @@ function createMockClient(): HlClient {
     getSzDecimals: vi.fn().mockReturnValue(5),
     setLeverage: vi.fn(),
     placeMarketOrder: vi.fn().mockResolvedValue({ orderId: "HL-1", status: "placed" }),
+    placeEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-E1", filledSize: 0.01, avgPrice: 95000, status: "placed" }),
     placeStopOrder: vi.fn().mockResolvedValue({ orderId: "HL-2", status: "placed" }),
     placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
     cancelOrder: vi.fn(),
@@ -17,6 +18,7 @@ function createMockClient(): HlClient {
     getOpenOrders: vi.fn().mockResolvedValue([]),
     getHistoricalOrders: vi.fn().mockResolvedValue([]),
     getAccountEquity: vi.fn().mockResolvedValue(1000),
+    getAccountState: vi.fn().mockResolvedValue({ accountValue: 1000, totalMarginUsed: 0, totalNtlPos: 0, totalRawUsd: 0, withdrawable: 1000, spotBalances: [] }),
   };
 }
 
@@ -26,6 +28,15 @@ describe("HlClient interface (mock)", () => {
     const result = await client.placeMarketOrder("BTC", true, 0.01);
     expect(result.orderId).toBe("HL-1");
     expect(client.placeMarketOrder).toHaveBeenCalledWith("BTC", true, 0.01);
+  });
+
+  it("places entry order (limit IOC)", async () => {
+    const client = createMockClient();
+    const result = await client.placeEntryOrder("BTC", true, 0.01, 95000, 10);
+    expect(result.orderId).toBe("HL-E1");
+    expect(result.filledSize).toBe(0.01);
+    expect(result.avgPrice).toBe(95000);
+    expect(client.placeEntryOrder).toHaveBeenCalledWith("BTC", true, 0.01, 95000, 10);
   });
 
   it("places stop order", async () => {
@@ -67,6 +78,9 @@ function createMockSdk(overrides: Record<string, unknown> = {}) {
       perpetuals: {
         getClearinghouseState: vi.fn(),
         getMeta: vi.fn().mockResolvedValue({ universe: [] }),
+      },
+      spot: {
+        getSpotClearinghouseState: vi.fn().mockResolvedValue({ balances: [] }),
       },
       getFrontendOpenOrders: vi.fn().mockResolvedValue([]),
       getHistoricalOrders: vi.fn().mockResolvedValue([]),
@@ -112,6 +126,134 @@ describe("HyperliquidClient.getSzDecimals", () => {
     const client = new HyperliquidClient(sdk);
     await client.loadSzDecimals("BTC");
     expect(client.getSzDecimals("SOL")).toBe(5);
+  });
+});
+
+describe("HyperliquidClient.placeEntryOrder", () => {
+  it("sends limit IOC order with correct slippage (buy)", async () => {
+    const sdk = createMockSdk();
+    (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{ filled: { oid: 42, totalSz: "0.01", avgPx: "95009.5" } }] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    const result = await client.placeEntryOrder("BTC", true, 0.01, 95000, 10);
+
+    expect(result.orderId).toBe("42");
+    expect(result.filledSize).toBe(0.01);
+    expect(result.avgPrice).toBe(95009.5);
+    expect(result.status).toBe("placed");
+
+    // Verify SDK call: limit price = truncatePrice(95000 * 1.001) = 95095
+    const call = (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.coin).toBe("BTC-PERP");
+    expect(call.is_buy).toBe(true);
+    expect(call.sz).toBe(0.01);
+    expect(call.order_type).toEqual({ limit: { tif: "Ioc" } });
+    expect(call.reduce_only).toBe(false);
+    // Price should be slightly above current (buy slippage)
+    expect(call.limit_px).toBeGreaterThan(95000);
+  });
+
+  it("sends limit IOC order with correct slippage (sell)", async () => {
+    const sdk = createMockSdk();
+    (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{ filled: { oid: 43, totalSz: "0.01", avgPx: "94990" } }] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    const result = await client.placeEntryOrder("BTC", false, 0.01, 95000, 10);
+
+    expect(result.filledSize).toBe(0.01);
+    const call = (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.is_buy).toBe(false);
+    // Price should be slightly below current (sell slippage)
+    expect(call.limit_px).toBeLessThan(95000);
+  });
+
+  it("returns zero fill when no filled status", async () => {
+    const sdk = createMockSdk();
+    (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{ resting: { oid: 44 } }] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    const result = await client.placeEntryOrder("BTC", true, 0.01, 95000, 10);
+
+    expect(result.filledSize).toBe(0);
+    expect(result.avgPrice).toBe(0);
+    expect(result.orderId).toBe("44");
+  });
+
+  it("throws when size too small after truncation", async () => {
+    const sdk = createMockSdk();
+    (sdk.info.perpetuals.getMeta as ReturnType<typeof vi.fn>).mockResolvedValue({
+      universe: [{ name: "BTC", szDecimals: 0 }],
+    });
+    const client = new HyperliquidClient(sdk);
+    await client.loadSzDecimals("BTC");
+
+    await expect(client.placeEntryOrder("BTC", true, 0.5, 95000, 10))
+      .rejects.toThrow("Size too small");
+  });
+});
+
+describe("HyperliquidClient.fromSymbol normalization", () => {
+  it("getPositions strips -PERP suffix from coin", async () => {
+    const sdk = createMockSdk();
+    (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+      assetPositions: [
+        { position: { coin: "BTC-PERP", szi: "0.5", entryPx: "95000", unrealizedPnl: "10", leverage: { value: 5 } } },
+      ],
+    });
+
+    const client = new HyperliquidClient(sdk);
+    const positions = await client.getPositions("0xtest");
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0].coin).toBe("BTC");
+  });
+
+  it("getPositions passes through plain coin unchanged", async () => {
+    const sdk = createMockSdk();
+    (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+      assetPositions: [
+        { position: { coin: "BTC", szi: "0.5", entryPx: "95000", unrealizedPnl: "10", leverage: { value: 5 } } },
+      ],
+    });
+
+    const client = new HyperliquidClient(sdk);
+    const positions = await client.getPositions("0xtest");
+
+    expect(positions[0].coin).toBe("BTC");
+  });
+
+  it("getOpenOrders strips -PERP suffix from coin", async () => {
+    const sdk = createMockSdk();
+    (sdk.info.getFrontendOpenOrders as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { coin: "ETH-PERP", oid: "100", side: "buy", sz: "1.0", limitPx: "3500" },
+    ]);
+
+    const client = new HyperliquidClient(sdk);
+    const orders = await client.getOpenOrders("0xtest");
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0].coin).toBe("ETH");
+  });
+
+  it("getOpenOrders passes through plain coin unchanged", async () => {
+    const sdk = createMockSdk();
+    (sdk.info.getFrontendOpenOrders as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { coin: "ETH", oid: "100", side: "buy", sz: "1.0", limitPx: "3500" },
+    ]);
+
+    const client = new HyperliquidClient(sdk);
+    const orders = await client.getOpenOrders("0xtest");
+
+    expect(orders[0].coin).toBe("ETH");
   });
 });
 
@@ -262,6 +404,21 @@ describe("HyperliquidClient input validation", () => {
       const equity = await client.getAccountEquity("0xtest");
 
       expect(equity).toBe(1234.56);
+    });
+
+    it("includes spot USDC in equity", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        marginSummary: { accountValue: "100" },
+      });
+      (sdk.info.spot.getSpotClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        balances: [{ coin: "USDC-SPOT", total: "15", hold: "0" }],
+      });
+
+      const client = new HyperliquidClient(sdk);
+      const equity = await client.getAccountEquity("0xtest");
+
+      expect(equity).toBe(115);
     });
   });
 });

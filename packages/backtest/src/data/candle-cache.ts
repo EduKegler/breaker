@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import type { Candle, CandleInterval } from "../types/candle.js";
-import { fetchCandles, type CandleClientOptions } from "./candle-client.js";
+import { fetchCandles, type CandleClientOptions } from "./fetch-candles.js";
 import { intervalToMs } from "../types/candle.js";
 
 const SCHEMA_SQL = `
