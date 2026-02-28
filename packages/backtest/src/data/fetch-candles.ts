@@ -104,14 +104,10 @@ export async function fetchCandles(
     }
 
     const lastTs = ohlcv[ohlcv.length - 1][0] as number;
-    if (lastTs <= since) break; // no progress — avoid infinite loop
+    if (lastTs < since) break; // no progress — avoid infinite loop
 
-    if (ohlcv.length >= limit) {
-      since = lastTs + ivlMs;
-      await sleep(delay);
-    } else {
-      break;
-    }
+    since = lastTs + ivlMs;
+    if (since < endTime) await sleep(delay);
   }
 
   return deduplicateCandles(allCandles);

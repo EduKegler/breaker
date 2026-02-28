@@ -115,13 +115,14 @@ describe("fetchCandles", () => {
     );
   });
 
-  it("paginates when receiving full batches", async () => {
+  it("paginates across multiple batches until empty response", async () => {
     const batch1 = Array.from({ length: 500 }, (_, i) => ohlcv(1000 + i * 900_000));
     const batch2 = [ohlcv(1000 + 500 * 900_000)];
 
     vi.mocked(exchange.fetchOHLCV)
       .mockResolvedValueOnce(batch1)
-      .mockResolvedValueOnce(batch2);
+      .mockResolvedValueOnce(batch2)
+      .mockResolvedValueOnce([]);
 
     const candles = await fetchCandles("BTC", "15m", 1000, Number.MAX_SAFE_INTEGER, {
       source: "hyperliquid",
@@ -131,10 +132,31 @@ describe("fetchCandles", () => {
     });
 
     expect(candles).toHaveLength(501);
-    expect(exchange.fetchOHLCV).toHaveBeenCalledTimes(2);
+    expect(exchange.fetchOHLCV).toHaveBeenCalledTimes(3);
   });
 
-  it("stops paginating when batch is partial", async () => {
+  it("continues paginating after partial batch when endTime not reached", async () => {
+    const endTime = 1000 + 10 * 900_000;
+    const batch1 = [ohlcv(1000), ohlcv(1000 + 900_000)]; // 2 < limit 500
+    const batch2 = [ohlcv(1000 + 2 * 900_000)];
+
+    vi.mocked(exchange.fetchOHLCV)
+      .mockResolvedValueOnce(batch1)
+      .mockResolvedValueOnce(batch2)
+      .mockResolvedValueOnce([]);
+
+    const candles = await fetchCandles("BTC", "15m", 1000, endTime, {
+      source: "hyperliquid",
+      candlesPerRequest: 500,
+      requestDelayMs: 0,
+      _exchange: exchange,
+    });
+
+    expect(candles).toHaveLength(3);
+    expect(exchange.fetchOHLCV).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops paginating when since passes endTime", async () => {
     vi.mocked(exchange.fetchOHLCV).mockResolvedValueOnce([
       ohlcv(1000),
       ohlcv(2000),
@@ -188,20 +210,22 @@ describe("fetchCandles", () => {
     expect(candles).toHaveLength(2);
   });
 
-  it("avoids infinite loop when lastTs <= since", async () => {
-    // Exchange keeps returning the same timestamp
+  it("avoids infinite loop when lastTs < since", async () => {
+    // Exchange keeps returning a stale timestamp behind since
     vi.mocked(exchange.fetchOHLCV)
       .mockResolvedValueOnce([ohlcv(1000)])
-      .mockResolvedValueOnce([ohlcv(1000)]);
+      .mockResolvedValueOnce([ohlcv(500)]); // behind since (1000 + 900_000)
 
-    const candles = await fetchCandles("BTC", "15m", 1000, 5000, {
+    const candles = await fetchCandles("BTC", "15m", 1000, Number.MAX_SAFE_INTEGER, {
       source: "binance",
       candlesPerRequest: 1,
+      requestDelayMs: 0,
       _exchange: exchange,
     });
 
-    // Should stop after detecting no progress
-    expect(candles).toHaveLength(1);
+    // Both candles collected, but stale lastTs stops pagination
+    expect(candles).toHaveLength(2);
+    expect(exchange.fetchOHLCV).toHaveBeenCalledTimes(2);
   });
 
   it("propagates exchange errors", async () => {
