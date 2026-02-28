@@ -70,6 +70,7 @@ export class ReconcileLoop {
           takeProfits: recovered.takeProfits,
           liquidationPx: hlPos.liquidationPx,
           trailingStopLoss: recovered.trailingStopLoss,
+          leverage: hlPos.leverage,
           openedAt: new Date().toISOString(),
           signalId: -1,
         });

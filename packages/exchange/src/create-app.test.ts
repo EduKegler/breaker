@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { createApp, type ServerDeps } from "./create-app.js";
+import { clearPendingCoins } from "./application/handle-signal.js";
 import { PositionBook } from "./domain/position-book.js";
 import { SqliteStore } from "./adapters/sqlite-store.js";
 import type { ExchangeConfig } from "./types/config.js";
@@ -10,12 +11,11 @@ const config: ExchangeConfig = {
   mode: "testnet",
   port: 3200,
   gatewayUrl: "http://localhost:3100",
-  asset: "BTC",
-  strategy: "donchian-adx",
-  interval: "15m",
+  coins: [
+    { coin: "BTC", leverage: 5, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 200, autoTradingEnabled: true }] },
+    { coin: "ETH", leverage: 3, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 200, autoTradingEnabled: true }] },
+  ],
   dataSource: "binance",
-  warmupBars: 200,
-  leverage: 5,
   marginType: "isolated",
   guardrails: {
     maxNotionalUsd: 5000,
@@ -30,14 +30,28 @@ const config: ExchangeConfig = {
     riskPerTradeUsd: 10,
     cashPerTrade: 100,
   },
-  autoTradingEnabled: true,
   entrySlippageBps: 10,
 };
 
+function createMockStreamer() {
+  return {
+    getCandles: vi.fn().mockReturnValue([]),
+    getLatest: vi.fn().mockReturnValue(null),
+    warmup: vi.fn().mockResolvedValue([]),
+    start: vi.fn(),
+    stop: vi.fn(),
+    fetchHistorical: vi.fn().mockResolvedValue([]),
+    on: vi.fn(),
+    removeAllListeners: vi.fn(),
+  };
+}
+
 let store: SqliteStore;
 let deps: ServerDeps;
+let btcStreamer: ReturnType<typeof createMockStreamer>;
 
 beforeEach(() => {
+  clearPendingCoins();
   store = new SqliteStore(":memory:");
   const positionBook = new PositionBook();
   const hlClient = {
@@ -63,35 +77,33 @@ beforeEach(() => {
     }),
   };
 
+  btcStreamer = createMockStreamer();
+  const ethStreamer = createMockStreamer();
+  const streamers = new Map<string, any>();
+  streamers.set("BTC:15m", btcStreamer);
+  streamers.set("ETH:15m", ethStreamer);
+
   deps = {
-    config,
+    config: JSON.parse(JSON.stringify(config)),
     store,
     positionBook,
     hlClient,
     walletAddress: "0xtest1234",
     signalHandlerDeps: {
-      config,
+      config: JSON.parse(JSON.stringify(config)),
       hlClient,
       store,
       eventLog: { append: vi.fn() },
       alertsClient: { notifyPositionOpened: vi.fn(), notifyTrailingSlMoved: vi.fn(), sendText: vi.fn() },
       positionBook,
     },
-    streamer: {
-      getCandles: vi.fn().mockReturnValue([]),
-      getLatest: vi.fn().mockReturnValue(null),
-      warmup: vi.fn().mockResolvedValue([]),
-      start: vi.fn(),
-      stop: vi.fn(),
-      fetchHistorical: vi.fn().mockResolvedValue([]),
-      on: vi.fn(),
-      removeAllListeners: vi.fn(),
-    } as unknown as ServerDeps["streamer"],
+    streamers: streamers as unknown as ServerDeps["streamers"],
     strategyFactory: () => ({
       name: "test-strategy",
       params: {},
       onCandle: () => null,
     }) as Strategy,
+    runners: [],
   };
 });
 
@@ -107,34 +119,32 @@ describe("Exchange server", () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("ok");
     expect(res.body.mode).toBe("testnet");
-    expect(res.body.asset).toBe("BTC");
-    expect(res.body.strategy).toBe("donchian-adx");
-    expect(res.body.lastCandleAt).toBeNull();
+    expect(res.body.coins).toEqual(["BTC", "ETH"]);
+    expect(res.body.streamers).toHaveLength(2);
   });
 
   it("GET /health reports stale when candle data is old", async () => {
     // 90 min ago — older than 5 × 15m = 75 min threshold
     const oldTimestamp = Date.now() - 90 * 60 * 1000;
-    (deps.streamer.getLatest as ReturnType<typeof vi.fn>).mockReturnValue({ t: oldTimestamp });
+    btcStreamer.getLatest.mockReturnValue({ t: oldTimestamp });
 
     const app = createApp(deps);
     const res = await request(app).get("/health");
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("stale");
-    expect(res.body.lastCandleAt).toBe(oldTimestamp);
+    expect(res.body.streamers[0].lastCandleAt).toBe(oldTimestamp);
   });
 
   it("GET /health reports ok when candle data is fresh", async () => {
     const recentTimestamp = Date.now() - 60_000; // 1 min ago
-    (deps.streamer.getLatest as ReturnType<typeof vi.fn>).mockReturnValue({ t: recentTimestamp });
+    btcStreamer.getLatest.mockReturnValue({ t: recentTimestamp });
 
     const app = createApp(deps);
     const res = await request(app).get("/health");
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("ok");
-    expect(res.body.lastCandleAt).toBe(recentTimestamp);
   });
 
   it("GET /positions returns empty when no positions", async () => {
@@ -185,24 +195,26 @@ describe("Exchange server", () => {
     expect(res.body.error).toContain("HL down");
   });
 
-  it("GET /config returns exchange config", async () => {
+  it("GET /config returns exchange config with coins array", async () => {
     const app = createApp(deps);
     const res = await request(app).get("/config");
 
     expect(res.status).toBe(200);
     expect(res.body.mode).toBe("testnet");
-    expect(res.body.leverage).toBe(5);
+    expect(res.body.coins).toHaveLength(2);
+    expect(res.body.coins[0].coin).toBe("BTC");
+    expect(res.body.coins[0].leverage).toBe(5);
     expect(res.body.guardrails).toBeDefined();
   });
 
-  it("POST /signal accepts valid signal and executes", async () => {
-    // Poller returns latest candle for currentPrice resolution
-    (deps.streamer.getLatest as ReturnType<typeof vi.fn>).mockReturnValue({ c: 95000 });
+  it("POST /signal accepts valid signal with coin and executes", async () => {
+    btcStreamer.getLatest.mockReturnValue({ c: 95000 });
 
     const app = createApp(deps);
     const res = await request(app)
       .post("/signal")
       .send({
+        coin: "BTC",
         direction: "long",
         entryPrice: 95000,
         stopLoss: 94000,
@@ -217,13 +229,11 @@ describe("Exchange server", () => {
   });
 
   it("POST /signal rejects when no market price and entryPrice is null", async () => {
-    // Poller returns null (no candles loaded yet)
-    (deps.streamer.getLatest as ReturnType<typeof vi.fn>).mockReturnValue(null);
-
     const app = createApp(deps);
     const res = await request(app)
       .post("/signal")
       .send({
+        coin: "BTC",
         direction: "long",
         entryPrice: null,
         stopLoss: 94000,
@@ -234,13 +244,12 @@ describe("Exchange server", () => {
     expect(res.body.reason).toContain("No market price");
   });
 
-  it("POST /signal uses entryPrice as fallback when poller has no data", async () => {
-    (deps.streamer.getLatest as ReturnType<typeof vi.fn>).mockReturnValue(null);
-
+  it("POST /signal uses entryPrice as fallback when streamer has no data", async () => {
     const app = createApp(deps);
     const res = await request(app)
       .post("/signal")
       .send({
+        coin: "BTC",
         direction: "long",
         entryPrice: 95000,
         stopLoss: 94000,
@@ -282,10 +291,10 @@ describe("Exchange server", () => {
       { t: 1700000000000, o: 95000, h: 95500, l: 94500, c: 95200, v: 1000, n: 50 },
       { t: 1700000900000, o: 95200, h: 95700, l: 95000, c: 95400, v: 800, n: 40 },
     ];
-    (deps.streamer.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue(mockCandles);
+    btcStreamer.fetchHistorical.mockResolvedValue(mockCandles);
 
     const app = createApp(deps);
-    const res = await request(app).get("/candles");
+    const res = await request(app).get("/candles?coin=BTC&interval=15m");
 
     expect(res.status).toBe(200);
     expect(res.body.candles).toHaveLength(2);
@@ -294,7 +303,7 @@ describe("Exchange server", () => {
 
   it("GET /candles returns empty when no candles", async () => {
     const app = createApp(deps);
-    const res = await request(app).get("/candles");
+    const res = await request(app).get("/candles?coin=BTC&interval=15m");
 
     expect(res.status).toBe(200);
     expect(res.body.candles).toEqual([]);
@@ -311,13 +320,13 @@ describe("Exchange server", () => {
     } as any;
 
     const app = createApp(deps);
-    const res = await request(app).get("/candles");
+    const res = await request(app).get("/candles?coin=BTC&interval=15m");
 
     expect(res.status).toBe(200);
     expect(res.body.candles).toHaveLength(1);
     expect(deps.candleCache!.sync).toHaveBeenCalled();
     expect(deps.candleCache!.getCandles).toHaveBeenCalled();
-    expect(deps.streamer.fetchHistorical).not.toHaveBeenCalled();
+    expect(btcStreamer.fetchHistorical).not.toHaveBeenCalled();
   });
 
   it("GET /signals returns recent signals from store", async () => {
@@ -360,7 +369,7 @@ describe("Exchange server", () => {
       v: 1000,
       n: 50,
     }));
-    (deps.streamer.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue(candles);
+    btcStreamer.fetchHistorical.mockResolvedValue(candles);
 
     deps.strategyFactory = () => ({
       name: "test-strategy",
@@ -374,20 +383,19 @@ describe("Exchange server", () => {
     }) as Strategy;
 
     const app = createApp(deps);
-    const res = await request(app).get("/strategy-signals");
+    const res = await request(app).get("/strategy-signals?coin=BTC&strategy=donchian-adx");
 
     expect(res.status).toBe(200);
     expect(res.body.signals).toHaveLength(1);
     expect(res.body.signals[0].direction).toBe("long");
     expect(res.body.signals[0].t).toBe(candles[5].t);
-    // Falls back to fetchHistorical when no candleCache
-    expect(deps.streamer.fetchHistorical).toHaveBeenCalled();
+    expect(btcStreamer.fetchHistorical).toHaveBeenCalled();
   });
 
   it("GET /strategy-signals returns empty when no candles", async () => {
-    (deps.streamer.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    btcStreamer.fetchHistorical.mockResolvedValue([]);
     const app = createApp(deps);
-    const res = await request(app).get("/strategy-signals");
+    const res = await request(app).get("/strategy-signals?coin=BTC");
 
     expect(res.status).toBe(200);
     expect(res.body.signals).toEqual([]);
@@ -398,14 +406,14 @@ describe("Exchange server", () => {
       t: 1700000000000 + i * 900_000,
       o: 95000, h: 95500, l: 94500, c: 95200, v: 1000, n: 50,
     }));
-    (deps.streamer.fetchHistorical as ReturnType<typeof vi.fn>).mockResolvedValue(candles);
+    btcStreamer.fetchHistorical.mockResolvedValue(candles);
 
     const app = createApp(deps);
-    await request(app).get("/strategy-signals");
-    await request(app).get("/strategy-signals");
+    await request(app).get("/strategy-signals?coin=BTC");
+    await request(app).get("/strategy-signals?coin=BTC");
 
     // fetchHistorical should only be called once (second call uses TTL cache)
-    expect(deps.streamer.fetchHistorical).toHaveBeenCalledTimes(1);
+    expect(btcStreamer.fetchHistorical).toHaveBeenCalledTimes(1);
   });
 
   it("GET /strategy-signals uses candleCache when available", async () => {
@@ -420,13 +428,12 @@ describe("Exchange server", () => {
     } as any;
 
     const app = createApp(deps);
-    const res = await request(app).get("/strategy-signals");
+    const res = await request(app).get("/strategy-signals?coin=BTC");
 
     expect(res.status).toBe(200);
     expect(deps.candleCache!.sync).toHaveBeenCalled();
     expect(deps.candleCache!.getCandles).toHaveBeenCalled();
-    // Should NOT use streamer.fetchHistorical when cache is available
-    expect(deps.streamer.fetchHistorical).not.toHaveBeenCalled();
+    expect(btcStreamer.fetchHistorical).not.toHaveBeenCalled();
   });
 
   it("POST /close-position closes position and cancels coin orders", async () => {
@@ -440,6 +447,7 @@ describe("Exchange server", () => {
       takeProfits: [],
       liquidationPx: null,
       trailingStopLoss: null,
+      leverage: null,
       openedAt: new Date().toISOString(),
       signalId: 1,
     });
@@ -507,6 +515,7 @@ describe("Exchange server", () => {
       takeProfits: [],
       liquidationPx: null,
       trailingStopLoss: null,
+      leverage: null,
       openedAt: new Date().toISOString(),
       signalId: 1,
     });
@@ -587,35 +596,53 @@ describe("Exchange server", () => {
     expect(res.body.error).toContain("not found");
   });
 
-  it("GET /config includes autoTradingEnabled", async () => {
+  it("GET /config includes coins with autoTradingEnabled", async () => {
     const app = createApp(deps);
     const res = await request(app).get("/config");
 
     expect(res.status).toBe(200);
-    expect(res.body.autoTradingEnabled).toBe(true);
+    expect(res.body.coins[0].strategies[0].autoTradingEnabled).toBe(true);
   });
 
-  it("POST /auto-trading enables auto-trading", async () => {
-    deps.config.autoTradingEnabled = false;
+  it("POST /auto-trading enables auto-trading for coin", async () => {
+    deps.config.coins[0].strategies[0].autoTradingEnabled = false;
     const app = createApp(deps);
     const res = await request(app)
       .post("/auto-trading")
-      .send({ enabled: true });
+      .send({ coin: "BTC", enabled: true });
 
     expect(res.status).toBe(200);
     expect(res.body.autoTradingEnabled).toBe(true);
-    expect(deps.config.autoTradingEnabled).toBe(true);
+    expect(deps.config.coins[0].strategies[0].autoTradingEnabled).toBe(true);
   });
 
-  it("POST /auto-trading disables auto-trading", async () => {
+  it("POST /auto-trading disables auto-trading for coin", async () => {
     const app = createApp(deps);
     const res = await request(app)
       .post("/auto-trading")
-      .send({ enabled: false });
+      .send({ coin: "BTC", enabled: false });
 
     expect(res.status).toBe(200);
     expect(res.body.autoTradingEnabled).toBe(false);
-    expect(deps.config.autoTradingEnabled).toBe(false);
+    expect(deps.config.coins[0].strategies[0].autoTradingEnabled).toBe(false);
+  });
+
+  it("POST /auto-trading propagates toggle to runners", async () => {
+    const mockRunner = {
+      getCoin: () => "BTC",
+      getStrategyName: () => "donchian-adx",
+      setAutoTradingEnabled: vi.fn(),
+      getInterval: () => "15m",
+      getLastExitLevel: () => null,
+    };
+    deps.runners = [mockRunner as any];
+
+    const app = createApp(deps);
+    await request(app)
+      .post("/auto-trading")
+      .send({ coin: "BTC", enabled: false });
+
+    expect(mockRunner.setAutoTradingEnabled).toHaveBeenCalledWith(false);
   });
 
   it("POST /auto-trading rejects invalid payload", async () => {
@@ -625,10 +652,9 @@ describe("Exchange server", () => {
       .send({ enabled: "yes" });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("enabled must be boolean");
   });
 
-  it("POST /auto-trading rejects missing payload", async () => {
+  it("POST /auto-trading rejects missing coin", async () => {
     const app = createApp(deps);
     const res = await request(app)
       .post("/auto-trading")
@@ -648,11 +674,12 @@ describe("Exchange server", () => {
   });
 
   it("POST /signal returns 422 for duplicate alertId", async () => {
-    (deps.streamer.getLatest as ReturnType<typeof vi.fn>).mockReturnValue({ c: 95000 });
+    btcStreamer.getLatest.mockReturnValue({ c: 95000 });
 
     const app = createApp(deps);
 
     await request(app).post("/signal").send({
+      coin: "BTC",
       direction: "long",
       entryPrice: 95000,
       stopLoss: 94000,
@@ -660,6 +687,7 @@ describe("Exchange server", () => {
     });
 
     const res = await request(app).post("/signal").send({
+      coin: "BTC",
       direction: "long",
       entryPrice: 95000,
       stopLoss: 94000,

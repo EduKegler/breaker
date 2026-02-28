@@ -1,6 +1,6 @@
 // Types
-export type { ExchangeConfig, Guardrails, Sizing } from "./types/config.js";
-export { ExchangeConfigSchema, GuardrailsSchema, SizingSchema } from "./types/config.js";
+export type { ExchangeConfig, Guardrails, Sizing, CoinStrategy, CoinConfig } from "./types/config.js";
+export { ExchangeConfigSchema, GuardrailsSchema, SizingSchema, CoinStrategySchema, CoinConfigSchema } from "./types/config.js";
 export type { ExchangeEvent, EventType } from "./types/events.js";
 export type { HlClient, HlPosition, HlOrderResult, HlEntryResult, HlOpenOrder, HlHistoricalOrder, HlAccountState, HlSpotBalance } from "./types/hl-client.js";
 export type { WsOrder, WsUserFill, HlEventStreamCallbacks } from "./types/hl-event-stream.js";

@@ -18,6 +18,11 @@ const log = logger.createChild("strategyRunner");
 
 export interface StrategyRunnerDeps {
   config: ExchangeConfig;
+  coin: string;
+  leverage: number;
+  interval: CandleInterval;
+  warmupBars: number;
+  autoTradingEnabled: boolean;
   strategy: Strategy;
   streamer: CandleStreamer;
   positionBook: PositionBook;
@@ -47,12 +52,12 @@ export class StrategyRunner {
   }
 
   async warmup(): Promise<void> {
-    const candles = await this.deps.streamer.warmup(this.deps.config.warmupBars);
+    const candles = await this.deps.streamer.warmup(this.deps.warmupBars);
 
-    const minBars = Math.ceil(this.deps.config.warmupBars * 0.5);
+    const minBars = Math.ceil(this.deps.warmupBars * 0.5);
     if (candles.length < minBars) {
       throw new Error(
-        `Insufficient warmup data: got ${candles.length}, need ≥${minBars} (${this.deps.config.warmupBars} requested)`,
+        `Insufficient warmup data: got ${candles.length}, need ≥${minBars} (${this.deps.warmupBars} requested)`,
       );
     }
 
@@ -64,11 +69,13 @@ export class StrategyRunner {
     }
 
     // Recover trailing SL oid from SQLite for existing positions (cold-start).
-    const pos = this.deps.positionBook.get(this.deps.config.asset);
+    const pos = this.deps.positionBook.get(this.deps.coin);
     if (pos) {
+      this.entryBarIndex = this.findEntryBarIndex(candles, pos.openedAt);
+
       const pendingOrders = this.deps.signalHandlerDeps.store.getPendingOrders();
       const trailingSlOrder = pendingOrders.find(
-        (o) => o.coin === this.deps.config.asset && o.tag === "trailing-sl",
+        (o) => o.coin === this.deps.coin && o.tag === "trailing-sl",
       );
       if (trailingSlOrder?.hl_order_id) {
         this.trailingSlOid = Number(trailingSlOrder.hl_order_id);
@@ -101,7 +108,7 @@ export class StrategyRunner {
     await this.deps.eventLog.append({
       type: "warmup_complete",
       timestamp: new Date().toISOString(),
-      data: { bars: candles.length },
+      data: { bars: candles.length, coin: this.deps.coin },
     });
   }
 
@@ -143,9 +150,13 @@ export class StrategyRunner {
 
     // Exit takes priority: if we close a position, skip entry check on the same
     // candle to avoid immediate re-entry oscillation from the same bar's signal.
-    const pos = this.deps.positionBook.get(this.deps.config.asset) ?? null;
-    if (pos) {
-      this.deps.positionBook.updatePrice(this.deps.config.asset, newCandle.c);
+    const pos = this.deps.positionBook.get(this.deps.coin) ?? null;
+
+    // Ownership guard: only manage exits if this runner opened the position
+    // (entryBarIndex !== null). If another runner opened it, skip exit checks
+    // — the SL/TP on the exchange protect the position regardless.
+    if (pos && this.entryBarIndex !== null) {
+      this.deps.positionBook.updatePrice(this.deps.coin, newCandle.c);
       const exited = await this.checkExit(pos, candles, index, higherTimeframes);
       if (exited) return;
     }
@@ -184,11 +195,11 @@ export class StrategyRunner {
 
     const exitSignal = this.deps.strategy.shouldExit(ctx);
     if (exitSignal?.exit) {
-      log.info({ action: "exitTriggered", coin: this.deps.config.asset, direction: pos.direction, unrealizedPnl: pos.unrealizedPnl, comment: exitSignal.comment }, "Strategy exit triggered");
+      log.info({ action: "exitTriggered", coin: this.deps.coin, direction: pos.direction, unrealizedPnl: pos.unrealizedPnl, comment: exitSignal.comment }, "Strategy exit triggered");
       const { hlClient } = this.deps.signalHandlerDeps;
       const closeSide = pos.direction === "long" ? "sell" : "buy";
-      await hlClient.placeMarketOrder(this.deps.config.asset, closeSide === "buy", pos.size);
-      this.deps.positionBook.close(this.deps.config.asset);
+      await hlClient.placeMarketOrder(this.deps.coin, closeSide === "buy", pos.size);
+      this.deps.positionBook.close(this.deps.coin);
       this.barsSinceExit = 0;
       this.lastExitLevel = null;
       this.trailingSlOid = null;
@@ -196,7 +207,7 @@ export class StrategyRunner {
       if (pos.unrealizedPnl < 0) this.consecutiveLosses++;
       else this.consecutiveLosses = 0;
       this.dailyPnl += pos.unrealizedPnl;
-      log.info({ action: "positionClosed", coin: this.deps.config.asset, pnl: pos.unrealizedPnl }, "Position closed");
+      log.info({ action: "positionClosed", coin: this.deps.coin, pnl: pos.unrealizedPnl }, "Position closed");
       return true;
     }
 
@@ -226,10 +237,10 @@ export class StrategyRunner {
     const shouldPlace = isMoreProtective && (movedFavorably || isFirstLevel);
 
     if (movedFavorably) {
-      log.info({ action: "trailingSlMoved", coin: this.deps.config.asset, oldLevel: this.lastExitLevel, newLevel }, "Trailing SL moved");
+      log.info({ action: "trailingSlMoved", coin: this.deps.coin, oldLevel: this.lastExitLevel, newLevel }, "Trailing SL moved");
       Promise.resolve(
         this.deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved(
-          this.deps.config.asset,
+          this.deps.coin,
           pos.direction,
           this.lastExitLevel!,
           newLevel,
@@ -253,7 +264,7 @@ export class StrategyRunner {
     newLevel: number,
   ): Promise<void> {
     const { hlClient, store } = this.deps.signalHandlerDeps;
-    const coin = this.deps.config.asset;
+    const coin = this.deps.coin;
     const truncatedLevel = truncatePrice(newLevel);
     const oldOid = this.trailingSlOid;
 
@@ -347,13 +358,21 @@ export class StrategyRunner {
     const signal = this.deps.strategy.onCandle(ctx);
     if (!signal) return;
 
-    log.info({ action: "signalGenerated", coin: this.deps.config.asset, direction: signal.direction, entryPrice: signal.entryPrice, stopLoss: signal.stopLoss }, "Strategy signal generated");
+    log.info({ action: "signalGenerated", coin: this.deps.coin, direction: signal.direction, entryPrice: signal.entryPrice, stopLoss: signal.stopLoss }, "Strategy signal generated");
 
     this.signalCounter++;
     const alertId = `runner-${Date.now()}-${this.signalCounter}`;
 
     const result = await handleSignal(
-      { signal, currentPrice, source: "strategy-runner", alertId },
+      {
+        signal,
+        currentPrice,
+        source: "strategy-runner",
+        alertId,
+        coin: this.deps.coin,
+        leverage: this.deps.leverage,
+        autoTradingEnabled: this.deps.autoTradingEnabled,
+      },
       this.deps.signalHandlerDeps,
     );
 
@@ -382,7 +401,7 @@ export class StrategyRunner {
       for (const tf of this.deps.strategy.requiredTimeframes) {
         higherTimeframes[tf] = aggregateCandles(
           candles,
-          this.deps.config.interval as CandleInterval,
+          this.deps.interval,
           tf as CandleInterval,
         );
       }
@@ -409,8 +428,8 @@ export class StrategyRunner {
 
     this.deps.streamer.on("candle:tick", (candle) => {
       if (!this.running) return;
-      const tickPos = this.deps.positionBook.get(this.deps.config.asset);
-      if (tickPos) this.deps.positionBook.updatePrice(this.deps.config.asset, candle.c);
+      const tickPos = this.deps.positionBook.get(this.deps.coin);
+      if (tickPos) this.deps.positionBook.updatePrice(this.deps.coin, candle.c);
       this.deps.onNewCandle?.(candle);
     });
 
@@ -438,5 +457,21 @@ export class StrategyRunner {
 
   getLastExitLevel(): number | null {
     return this.lastExitLevel;
+  }
+
+  getCoin(): string {
+    return this.deps.coin;
+  }
+
+  getInterval(): CandleInterval {
+    return this.deps.interval;
+  }
+
+  getStrategyName(): string {
+    return this.deps.strategy.name;
+  }
+
+  setAutoTradingEnabled(enabled: boolean): void {
+    this.deps.autoTradingEnabled = enabled;
   }
 }

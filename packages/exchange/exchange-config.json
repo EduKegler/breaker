@@ -2,12 +2,21 @@
   "mode": "mainnet",
   "port": 3200,
   "gatewayUrl": "https://tv.kegler.dev/send/pine-alerts-2026",
-  "asset": "BTC",
-  "strategy": "donchian-adx",
-  "interval": "15m",
+  "coins": [
+    {
+      "coin": "BTC",
+      "leverage": 5,
+      "strategies": [
+        {
+          "name": "donchian-adx",
+          "interval": "15m",
+          "warmupBars": 200,
+          "autoTradingEnabled": false
+        }
+      ]
+    }
+  ],
   "dataSource": "binance",
-  "warmupBars": 200,
-  "leverage": 5,
   "marginType": "isolated",
   "guardrails": {
     "maxNotionalUsd": 5000,
@@ -22,7 +31,6 @@
     "riskPerTradeUsd": 10,
     "cashPerTrade": 100
   },
-  "autoTradingEnabled": false,
   "entrySlippageBps": 10,
   "dryRun": false,
   "logLevels": {}

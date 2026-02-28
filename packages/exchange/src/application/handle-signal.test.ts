@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { handleSignal, type SignalHandlerDeps, type HandleSignalInput } from "./handle-signal.js";
+import { handleSignal, clearPendingCoins, type SignalHandlerDeps, type HandleSignalInput } from "./handle-signal.js";
 import { PositionBook } from "../domain/position-book.js";
 import { SqliteStore } from "../adapters/sqlite-store.js";
 import type { ExchangeConfig } from "../types/config.js";
@@ -9,12 +9,11 @@ const config: ExchangeConfig = {
   mode: "testnet",
   port: 3200,
   gatewayUrl: "http://localhost:3100",
-  asset: "BTC",
-  strategy: "donchian-adx",
-  interval: "15m",
+  coins: [
+    { coin: "BTC", leverage: 5, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 200, autoTradingEnabled: true }] },
+    { coin: "ETH", leverage: 3, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 200, autoTradingEnabled: true }] },
+  ],
   dataSource: "binance",
-  warmupBars: 200,
-  leverage: 5,
   marginType: "isolated",
   guardrails: {
     maxNotionalUsd: 5000,
@@ -29,7 +28,6 @@ const config: ExchangeConfig = {
     riskPerTradeUsd: 10,
     cashPerTrade: 100,
   },
-  autoTradingEnabled: true,
   entrySlippageBps: 10,
 };
 
@@ -40,6 +38,18 @@ const signal: Signal = {
   takeProfits: [{ price: 97000, pctOfPosition: 0.5 }],
   comment: "Donchian breakout",
 };
+
+function createInput(overrides?: Partial<HandleSignalInput>): HandleSignalInput {
+  return {
+    signal,
+    currentPrice: 95000,
+    source: "strategy-runner",
+    coin: "BTC",
+    leverage: 5,
+    autoTradingEnabled: true,
+    ...overrides,
+  };
+}
 
 function createDeps(): SignalHandlerDeps {
   return {
@@ -69,16 +79,12 @@ let deps: SignalHandlerDeps;
 
 beforeEach(() => {
   deps = createDeps();
+  clearPendingCoins();
 });
 
 describe("handleSignal", () => {
   it("processes signal end-to-end successfully", async () => {
-    const input: HandleSignalInput = {
-      signal,
-      currentPrice: 95000,
-      source: "strategy-runner",
-      alertId: "test-001",
-    };
+    const input = createInput({ alertId: "test-001" });
 
     const result = await handleSignal(input, deps);
 
@@ -111,12 +117,7 @@ describe("handleSignal", () => {
   });
 
   it("rejects duplicate alert_id (idempotency)", async () => {
-    const input: HandleSignalInput = {
-      signal,
-      currentPrice: 95000,
-      source: "strategy-runner",
-      alertId: "dup-001",
-    };
+    const input = createInput({ alertId: "dup-001" });
 
     await handleSignal(input, deps);
     const result = await handleSignal(input, deps);
@@ -136,16 +137,12 @@ describe("handleSignal", () => {
       takeProfits: [],
       liquidationPx: null,
       trailingStopLoss: null,
+      leverage: null,
       openedAt: new Date().toISOString(),
       signalId: 0,
     });
 
-    const input: HandleSignalInput = {
-      signal,
-      currentPrice: 95000,
-      source: "strategy-runner",
-      alertId: "risk-001",
-    };
+    const input = createInput({ alertId: "risk-001" });
 
     const result = await handleSignal(input, deps);
     expect(result.success).toBe(false);
@@ -161,12 +158,7 @@ describe("handleSignal", () => {
       comment: "Big entry",
     };
 
-    const input: HandleSignalInput = {
-      signal: bigSignal,
-      currentPrice: 95000,
-      source: "strategy-runner",
-      alertId: "notional-001",
-    };
+    const input = createInput({ signal: bigSignal, alertId: "notional-001" });
 
     const result = await handleSignal(input, deps);
     expect(result.success).toBe(false);
@@ -183,7 +175,7 @@ describe("handleSignal", () => {
     };
 
     const result = await handleSignal(
-      { signal: zeroSignal, currentPrice: 100, source: "api", alertId: "zero-001" },
+      createInput({ signal: zeroSignal, currentPrice: 100, source: "api", alertId: "zero-001" }),
       deps,
     );
 
@@ -196,7 +188,7 @@ describe("handleSignal", () => {
     deps.onSignalProcessed = onSignalProcessed;
 
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "strategy-runner", alertId: "callback-001" },
+      createInput({ alertId: "callback-001" }),
       deps,
     );
 
@@ -209,12 +201,7 @@ describe("handleSignal", () => {
       new Error("Insufficient margin"),
     );
 
-    const input: HandleSignalInput = {
-      signal,
-      currentPrice: 95000,
-      source: "strategy-runner",
-      alertId: "entry-fail-001",
-    };
+    const input = createInput({ alertId: "entry-fail-001" });
 
     await expect(handleSignal(input, deps)).rejects.toThrow("Insufficient margin");
 
@@ -230,12 +217,7 @@ describe("handleSignal", () => {
       new Error("Stop order rejected"),
     );
 
-    const input: HandleSignalInput = {
-      signal,
-      currentPrice: 95000,
-      source: "strategy-runner",
-      alertId: "sl-fail-001",
-    };
+    const input = createInput({ alertId: "sl-fail-001" });
 
     await expect(handleSignal(input, deps)).rejects.toThrow("Stop order rejected");
 
@@ -257,12 +239,7 @@ describe("handleSignal", () => {
     (deps.hlClient.placeMarketOrder as ReturnType<typeof vi.fn>)
       .mockRejectedValueOnce(new Error("Cannot close"));
 
-    const input: HandleSignalInput = {
-      signal,
-      currentPrice: 95000,
-      source: "strategy-runner",
-      alertId: "sl-rollback-fail-001",
-    };
+    const input = createInput({ alertId: "sl-rollback-fail-001" });
 
     await expect(handleSignal(input, deps)).rejects.toThrow("Stop order rejected");
 
@@ -279,12 +256,7 @@ describe("handleSignal", () => {
       new Error("TP order rejected"),
     );
 
-    const input: HandleSignalInput = {
-      signal,
-      currentPrice: 95000,
-      source: "strategy-runner",
-      alertId: "tp-fail-001",
-    };
+    const input = createInput({ alertId: "tp-fail-001" });
 
     // TP failure should NOT crash — position is protected by SL
     const result = await handleSignal(input, deps);
@@ -315,7 +287,7 @@ describe("handleSignal", () => {
     };
 
     const result = await handleSignal(
-      { signal: tightSignal, currentPrice: 100, source: "strategy-runner", alertId: "trunc-001" },
+      createInput({ signal: tightSignal, currentPrice: 100, alertId: "trunc-001" }),
       deps,
     );
 
@@ -339,7 +311,7 @@ describe("handleSignal", () => {
 
     // riskPerTradeUsd=10, stopDist=1000 → raw size = 0.01, truncated to 0
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "strategy-runner", alertId: "trunc-zero-001" },
+      createInput({ alertId: "trunc-zero-001" }),
       deps,
     );
 
@@ -355,7 +327,7 @@ describe("handleSignal", () => {
     });
 
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "strategy-runner", alertId: "no-fill-001" },
+      createInput({ alertId: "no-fill-001" }),
       deps,
     );
 
@@ -381,7 +353,7 @@ describe("handleSignal", () => {
     });
 
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "strategy-runner", alertId: "trunc-fill-001" },
+      createInput({ alertId: "trunc-fill-001" }),
       deps,
     );
 
@@ -397,7 +369,7 @@ describe("handleSignal", () => {
     });
 
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "strategy-runner", alertId: "partial-001" },
+      createInput({ alertId: "partial-001" }),
       deps,
     );
 
@@ -423,7 +395,7 @@ describe("handleSignal", () => {
     });
 
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "strategy-runner", alertId: "avgpx-001" },
+      createInput({ alertId: "avgpx-001" }),
       deps,
     );
 
@@ -434,10 +406,8 @@ describe("handleSignal", () => {
   });
 
   it("blocks strategy-runner signal when autoTradingEnabled is false", async () => {
-    deps.config = { ...config, autoTradingEnabled: false };
-
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "strategy-runner", alertId: "auto-off-001" },
+      createInput({ alertId: "auto-off-001", autoTradingEnabled: false }),
       deps,
     );
 
@@ -450,10 +420,8 @@ describe("handleSignal", () => {
   });
 
   it("allows api signal when autoTradingEnabled is false", async () => {
-    deps.config = { ...config, autoTradingEnabled: false };
-
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "api", alertId: "auto-off-api-001" },
+      createInput({ source: "api", alertId: "auto-off-api-001", autoTradingEnabled: false }),
       deps,
     );
 
@@ -462,10 +430,8 @@ describe("handleSignal", () => {
   });
 
   it("allows router signal when autoTradingEnabled is false", async () => {
-    deps.config = { ...config, autoTradingEnabled: false };
-
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "router", alertId: "auto-off-router-001" },
+      createInput({ source: "router", alertId: "auto-off-router-001", autoTradingEnabled: false }),
       deps,
     );
 
@@ -488,6 +454,7 @@ describe("handleSignal", () => {
           takeProfits: [],      // reconcile has no TP info
           liquidationPx: null,
           trailingStopLoss: null,
+          leverage: null,
           openedAt: new Date().toISOString(),
           signalId: 0,          // reconcile has no signalId
         });
@@ -496,7 +463,7 @@ describe("handleSignal", () => {
     });
 
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "api", alertId: "race-001" },
+      createInput({ source: "api", alertId: "race-001" }),
       deps,
     );
 
@@ -512,7 +479,7 @@ describe("handleSignal", () => {
     (deps.alertsClient.notifyPositionOpened as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("WhatsApp down"));
 
     const result = await handleSignal(
-      { signal, currentPrice: 95000, source: "strategy-runner", alertId: "notify-fail" },
+      createInput({ alertId: "notify-fail" }),
       deps,
     );
 
@@ -521,5 +488,82 @@ describe("handleSignal", () => {
     const calls = (deps.eventLog.append as ReturnType<typeof vi.fn>).mock.calls;
     const failEvent = calls.find((c: unknown[]) => (c[0] as { type: string }).type === "notification_failed");
     expect(failEvent).toBeDefined();
+  });
+
+  it("uses per-coin leverage when opening position", async () => {
+    const ethSignal: Signal = {
+      direction: "short",
+      entryPrice: 3500,
+      stopLoss: 3600,
+      takeProfits: [],
+      comment: "ETH short",
+    };
+
+    (deps.hlClient.placeEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "HL-E2", filledSize: 0.5, avgPrice: 3500, status: "placed",
+    });
+
+    const result = await handleSignal(
+      createInput({ signal: ethSignal, currentPrice: 3500, coin: "ETH", leverage: 3, alertId: "eth-001" }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    expect(deps.hlClient.setLeverage).toHaveBeenCalledWith("ETH", 3, false);
+    const pos = deps.positionBook.get("ETH")!;
+    expect(pos.leverage).toBe(3);
+  });
+
+  it("rejects second concurrent signal for same coin (pendingCoins guard)", async () => {
+    // Make placeEntryOrder hang (never resolves during this test)
+    let resolveEntry!: (v: unknown) => void;
+    (deps.hlClient.placeEntryOrder as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      new Promise((r) => { resolveEntry = r; }),
+    );
+
+    // Start first signal (will await placeEntryOrder indefinitely)
+    const first = handleSignal(
+      createInput({ alertId: "race-a" }),
+      deps,
+    );
+
+    // Second signal for same coin should be rejected synchronously
+    const second = await handleSignal(
+      createInput({ alertId: "race-b" }),
+      deps,
+    );
+
+    expect(second.success).toBe(false);
+    expect(second.reason).toBe("Position already open/pending");
+
+    // Clean up: resolve the hanging promise
+    resolveEntry({ orderId: "HL-E1", filledSize: 0.01, avgPrice: 95000, status: "placed" });
+    await first;
+  });
+
+  it("allows signals for different coins concurrently", async () => {
+    const ethSignal: Signal = {
+      direction: "short",
+      entryPrice: 3500,
+      stopLoss: 3600,
+      takeProfits: [],
+      comment: "ETH short",
+    };
+
+    (deps.hlClient.placeEntryOrder as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ orderId: "HL-E1", filledSize: 0.01, avgPrice: 95000, status: "placed" })
+      .mockResolvedValueOnce({ orderId: "HL-E2", filledSize: 0.5, avgPrice: 3500, status: "placed" });
+
+    // Increase maxOpenPositions to allow 2 concurrent positions
+    deps.config = { ...config, guardrails: { ...config.guardrails, maxOpenPositions: 2 } };
+
+    const [btcResult, ethResult] = await Promise.all([
+      handleSignal(createInput({ alertId: "multi-btc" }), deps),
+      handleSignal(createInput({ signal: ethSignal, currentPrice: 3500, coin: "ETH", leverage: 3, alertId: "multi-eth" }), deps),
+    ]);
+
+    expect(btcResult.success).toBe(true);
+    expect(ethResult.success).toBe(true);
+    expect(deps.positionBook.count()).toBe(2);
   });
 });

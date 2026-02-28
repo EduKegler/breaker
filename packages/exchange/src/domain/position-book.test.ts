@@ -10,6 +10,7 @@ const basePos = {
   takeProfits: [{ price: 97000, pctOfPosition: 0.5 }],
   liquidationPx: null as number | null,
   trailingStopLoss: null as number | null,
+  leverage: null as number | null,
   openedAt: "2024-01-01T00:00:00Z",
   signalId: 1,
 };

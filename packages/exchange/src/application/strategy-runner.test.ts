@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { StrategyRunner, type StrategyRunnerDeps } from "./strategy-runner.js";
+import { clearPendingCoins } from "./handle-signal.js";
 import { PositionBook } from "../domain/position-book.js";
 import { SqliteStore } from "../adapters/sqlite-store.js";
 import type { Strategy, Candle, Signal, StrategyContext } from "@breaker/backtest";
@@ -10,12 +11,10 @@ const config: ExchangeConfig = {
   mode: "testnet",
   port: 3200,
   gatewayUrl: "http://localhost:3100",
-  asset: "BTC",
-  strategy: "donchian-adx",
-  interval: "15m",
+  coins: [
+    { coin: "BTC", leverage: 5, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 5, autoTradingEnabled: true }] },
+  ],
   dataSource: "binance",
-  warmupBars: 5,
-  leverage: 5,
   marginType: "isolated",
   guardrails: {
     maxNotionalUsd: 50000,
@@ -30,7 +29,6 @@ const config: ExchangeConfig = {
     riskPerTradeUsd: 10,
     cashPerTrade: 100,
   },
-  autoTradingEnabled: true,
   entrySlippageBps: 10,
 };
 
@@ -86,6 +84,11 @@ function createDeps(strategy: Strategy, streamer: ReturnType<typeof createMockSt
   const positionBook = new PositionBook();
   return {
     config,
+    coin: "BTC",
+    leverage: 5,
+    interval: "15m",
+    warmupBars: 5,
+    autoTradingEnabled: true,
     strategy,
     streamer: streamer as unknown as StrategyRunnerDeps["streamer"],
     positionBook,
@@ -113,6 +116,10 @@ function createDeps(strategy: Strategy, streamer: ReturnType<typeof createMockSt
     },
   };
 }
+
+beforeEach(() => {
+  clearPendingCoins();
+});
 
 describe("StrategyRunner", () => {
   it("warms up strategy with historical candles", async () => {
@@ -508,6 +515,7 @@ describe("StrategyRunner", () => {
       takeProfits: [],
       liquidationPx: null,
       trailingStopLoss: 94500,
+      leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
     });
@@ -588,7 +596,7 @@ describe("StrategyRunner", () => {
       const candles = [makeCandle(0), makeCandle(1)];
       const streamer = createMockStreamer(candles);
       const deps = createDeps(createTestStrategy(), streamer);
-      deps.config = { ...config, warmupBars: 10 };
+      deps.warmupBars = 10;
 
       const runner = new StrategyRunner(deps);
       await expect(runner.warmup()).rejects.toThrow(/Insufficient warmup data/);
@@ -599,7 +607,7 @@ describe("StrategyRunner", () => {
       const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
       const streamer = createMockStreamer(candles);
       const deps = createDeps(createTestStrategy(), streamer);
-      deps.config = { ...config, warmupBars: 10 };
+      deps.warmupBars = 10;
 
       const runner = new StrategyRunner(deps);
       await expect(runner.warmup()).resolves.toBeUndefined();
@@ -636,17 +644,15 @@ describe("StrategyRunner", () => {
   });
 
   it("does not false-timeout position opened recently with many warmup candles", async () => {
-    // Simulate realistic scenario: 200 warmup candles, position opened 3 bars ago
+    // Simulate realistic scenario: 200 warmup candles, position opened 3 bars ago.
+    // Position must exist BEFORE warmup so the runner assumes ownership (sets entryBarIndex).
     const candles = Array.from({ length: 200 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);
     const strategy = createTestStrategy();
     const deps = createDeps(strategy, streamer);
-    deps.config = { ...config, warmupBars: 200 };
+    deps.warmupBars = 200;
 
-    const runner = new StrategyRunner(deps);
-    await runner.warmup();
-
-    // Manually open position with openedAt matching candle 198's timestamp
+    // Open position before warmup (simulates restart with existing position)
     const entryCandle = candles[198];
     deps.positionBook.open({
       coin: "BTC",
@@ -657,8 +663,12 @@ describe("StrategyRunner", () => {
       takeProfits: [],
       liquidationPx: null,
       trailingStopLoss: null,
+      leverage: null,
       openedAt: new Date(entryCandle.t).toISOString(),
     });
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
 
     // shouldExit should get entryBarIndex=198, barsInTrade=2 (not 200!)
     let capturedCtx: StrategyContext | null = null;
@@ -673,6 +683,39 @@ describe("StrategyRunner", () => {
     expect(capturedCtx).not.toBeNull();
     expect(capturedCtx!.positionEntryBarIndex).toBe(198);
     // barsInTrade = 200 - 198 = 2 → no timeout
+  });
+
+  it("skips exit check when entryBarIndex is null (position opened by another runner)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy();
+    const deps = createDeps(strategy, streamer);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Another runner opened a position for BTC — this runner's entryBarIndex is null
+    deps.positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000,
+      takeProfits: [],
+      liquidationPx: null,
+      trailingStopLoss: null,
+      leverage: 5,
+      openedAt: new Date().toISOString(),
+      signalId: 1,
+    });
+
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // shouldExit should NOT be called because this runner doesn't own the position
+    expect(strategy.shouldExit).not.toHaveBeenCalled();
+    // onCandle should NOT be called either (position exists → no entry check)
+    expect(strategy.onCandle).not.toHaveBeenCalled();
   });
 
   describe("staleness and lastCandleAt", () => {

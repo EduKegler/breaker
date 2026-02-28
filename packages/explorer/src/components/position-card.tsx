@@ -124,6 +124,18 @@ export function PositionCard({
             {fmt(position.size * position.currentPrice)}
           </span>
         </div>
+        <div className="text-txt-secondary">
+          Leverage{" "}
+          <span className="text-txt-primary font-mono">
+            {position.leverage ?? "—"}x
+          </span>
+        </div>
+        <div className="text-txt-secondary">
+          Margin{" "}
+          <span className="text-txt-primary font-mono">
+            {position.leverage ? fmt(position.size * position.currentPrice / position.leverage) : "—"}
+          </span>
+        </div>
       </div>
 
       {/* TP / SL orders from exchange */}

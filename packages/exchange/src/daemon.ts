@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Hyperliquid } from "hyperliquid";
 import { isMainModule } from "@breaker/kit";
 import { createDonchianAdx, createKeltnerRsi2 } from "@breaker/backtest";
+import type { CandleInterval } from "@breaker/backtest";
 import { ExchangeConfigSchema, type ExchangeConfig } from "./types/config.js";
 import { loadEnv } from "./lib/load-env.js";
 import { logger } from "./lib/logger.js";
@@ -81,6 +82,7 @@ async function syncPositionsAndBroadcast(deps: {
         takeProfits: recovered.takeProfits,
         liquidationPx: hlPos.liquidationPx,
         trailingStopLoss: recovered.trailingStopLoss,
+        leverage: hlPos.leverage,
         openedAt: new Date().toISOString(),
         signalId: -1,
       });
@@ -138,7 +140,8 @@ async function main() {
   logger.setLogConfig(config.logLevels);
 
   const isDryRun = config.dryRun;
-  logger.info({ mode: config.mode, asset: config.asset, strategy: config.strategy, dryRun: isDryRun }, "Starting exchange daemon");
+  const allCoins = config.coins.map((c) => c.coin);
+  logger.info({ mode: config.mode, coins: allCoins, dryRun: isDryRun }, "Starting exchange daemon");
 
   // Initialize adapters
   const dataDir = join(__dirname, "../data");
@@ -162,7 +165,8 @@ async function main() {
     logger.info("Connected to Hyperliquid");
 
     const realClient = new HyperliquidClient(sdk);
-    await realClient.loadSzDecimals(config.asset);
+    // loadSzDecimals caches all coins on first call
+    await realClient.loadSzDecimals(allCoins[0]);
     hlClient = realClient;
     eventStream = new HlEventStream(sdk, env.HL_ACCOUNT_ADDRESS);
   }
@@ -170,15 +174,16 @@ async function main() {
   const alertsClient = new HttpAlertsClient(config.gatewayUrl);
   const positionBook = new PositionBook();
 
-  // Set leverage before any trading
-  await hlClient.setLeverage(config.asset, config.leverage, config.marginType === "cross");
-  logger.info({ asset: config.asset, leverage: config.leverage }, "Leverage set");
-
-  await eventLog.append({
-    type: "leverage_set",
-    timestamp: new Date().toISOString(),
-    data: { asset: config.asset, leverage: config.leverage },
-  });
+  // Set leverage per coin before any trading (parallel — independent per coin)
+  await Promise.all(config.coins.map(async (coinCfg) => {
+    await hlClient.setLeverage(coinCfg.coin, coinCfg.leverage, config.marginType === "cross");
+    logger.info({ coin: coinCfg.coin, leverage: coinCfg.leverage }, "Leverage set");
+    await eventLog.append({
+      type: "leverage_set",
+      timestamp: new Date().toISOString(),
+      data: { coin: coinCfg.coin, leverage: coinCfg.leverage },
+    });
+  }));
 
   // WebSocket broker
   const wsBroker = new WsBroker();
@@ -207,49 +212,91 @@ async function main() {
     },
   };
 
-  // Initialize strategy, candle streamer, and candle cache
-  const strategy = createStrategy(config.strategy);
-  const streamer = new CandleStreamer({
-    coin: config.asset,
-    interval: config.interval,
-    dataSource: config.dataSource,
-  });
+  // CandleStreamer deduplication: key = "COIN:interval"
+  const streamers = new Map<string, CandleStreamer>();
+  for (const coinCfg of config.coins) {
+    for (const strat of coinCfg.strategies) {
+      const key = `${coinCfg.coin}:${strat.interval}`;
+      if (!streamers.has(key)) {
+        streamers.set(key, new CandleStreamer({
+          coin: coinCfg.coin,
+          interval: strat.interval,
+          dataSource: config.dataSource,
+        }));
+      }
+    }
+  }
+
   const candleCache = new CandleCache(join(dataDir, "candles.db"));
 
-  // Price ticker — broadcasts data source price + HL mid-price every ~5s
+  // StrategyRunner per (coin, strategy)
+  const runners: StrategyRunner[] = [];
+  for (const coinCfg of config.coins) {
+    for (const strat of coinCfg.strategies) {
+      const key = `${coinCfg.coin}:${strat.interval}`;
+      const streamer = streamers.get(key)!;
+      const strategy = createStrategy(strat.name);
+
+      runners.push(new StrategyRunner({
+        config,
+        coin: coinCfg.coin,
+        leverage: coinCfg.leverage,
+        interval: strat.interval as CandleInterval,
+        warmupBars: strat.warmupBars,
+        autoTradingEnabled: strat.autoTradingEnabled,
+        strategy,
+        streamer,
+        positionBook,
+        signalHandlerDeps,
+        eventLog,
+        onNewCandle: (candle) => {
+          wsBroker.broadcastEvent("candle", { ...candle, coin: coinCfg.coin });
+        },
+        onStaleData: ({ lastCandleAt, silentMs }) => {
+          const lastAt = lastCandleAt > 0 ? new Date(lastCandleAt).toISOString() : "never";
+          const silentMin = Math.round(silentMs / 60_000);
+          alertsClient.sendText(
+            `⚠️ ${coinCfg.coin} candle data stale: no data for ${silentMin}min (last candle: ${lastAt}) — ${config.mode}`,
+          ).catch(() => {});
+        },
+      }));
+    }
+  }
+
+  // Pre-compute lookup maps for O(1) access in hot paths
+  const coinStreamerMap = new Map<string, CandleStreamer>();
+  const coinRunnersMap = new Map<string, StrategyRunner[]>();
+  for (const coinCfg of config.coins) {
+    const streamer = Array.from(streamers.entries()).find(([k]) => k.startsWith(`${coinCfg.coin}:`))?.[1];
+    if (streamer) coinStreamerMap.set(coinCfg.coin, streamer);
+    coinRunnersMap.set(coinCfg.coin, runners.filter((r) => r.getCoin() === coinCfg.coin));
+  }
+
+  // Price ticker — broadcasts data source price + HL mid-price every ~5s per coin
   const PRICE_TICK_MS = 5_000;
   let priceTickInterval: ReturnType<typeof setInterval> | null = null;
   function startPriceTicker() {
     priceTickInterval = setInterval(async () => {
-      const latest = streamer.getLatest();
-      const dataSourcePrice = latest?.c ?? null;
-      const hlMidPrice = await hlClient.getMidPrice(config.asset);
-      const trailingExitLevel = runner.getLastExitLevel();
-      if (dataSourcePrice != null || hlMidPrice != null) {
-        wsBroker.broadcastEvent("prices", { dataSourcePrice, hlMidPrice, trailingExitLevel });
-      }
+      await Promise.all(config.coins.map(async (coinCfg) => {
+        const streamer = coinStreamerMap.get(coinCfg.coin);
+        const latest = streamer?.getLatest();
+        const dataSourcePrice = latest?.c ?? null;
+        const hlMidPrice = await hlClient.getMidPrice(coinCfg.coin);
+
+        const coinRunners = coinRunnersMap.get(coinCfg.coin) ?? [];
+        const trailingExitLevel = coinRunners.reduce<number | null>((acc, r) => acc ?? r.getLastExitLevel(), null);
+
+        if (dataSourcePrice != null || hlMidPrice != null) {
+          wsBroker.broadcastEvent("prices", {
+            coin: coinCfg.coin,
+            dataSourcePrice,
+            hlMidPrice,
+            trailingExitLevel,
+          });
+        }
+      }));
     }, PRICE_TICK_MS);
   }
-
-  // Strategy runner
-  const runner = new StrategyRunner({
-    config,
-    strategy,
-    streamer,
-    positionBook,
-    signalHandlerDeps,
-    eventLog,
-    onNewCandle: (candle) => {
-      wsBroker.broadcastEvent("candle", candle);
-    },
-    onStaleData: ({ lastCandleAt, silentMs }) => {
-      const lastAt = lastCandleAt > 0 ? new Date(lastCandleAt).toISOString() : "never";
-      const silentMin = Math.round(silentMs / 60_000);
-      alertsClient.sendText(
-        `⚠️ ${config.asset} candle data stale: no data for ${silentMin}min (last candle: ${lastAt}) — ${config.mode}`,
-      ).catch(() => {});
-    },
-  });
 
   // Reconcile loop
   const reconciler = new ReconcileLoop({
@@ -279,10 +326,10 @@ async function main() {
     logger.info({ actions: startupResult.actions }, "Startup corrections applied");
   }
 
-  // Warmup
-  logger.info({ bars: config.warmupBars }, "Starting warmup...");
-  await runner.warmup();
-  logger.info("Warmup complete");
+  // Warmup all runners in parallel (each fetches from independent APIs)
+  logger.info({ runners: runners.map((r) => `${r.getCoin()}:${r.getInterval()}`) }, "Starting warmups...");
+  await Promise.all(runners.map((r) => r.warmup()));
+  logger.info("All warmups complete");
 
   // Express server
   const app = createApp({
@@ -292,9 +339,10 @@ async function main() {
     hlClient,
     walletAddress: env.HL_ACCOUNT_ADDRESS,
     signalHandlerDeps,
-    streamer,
+    streamers,
     candleCache,
-    strategyFactory: () => createStrategy(config.strategy),
+    strategyFactory: createStrategy,
+    runners,
   });
 
   const server = app.listen(config.port, () => {
@@ -304,6 +352,11 @@ async function main() {
   // Attach WebSocket to same HTTP server
   wsBroker.attach(server);
   wsBroker.on("client:connected", async (ws: WebSocket) => {
+    const coinsSummary = config.coins.map((c) => ({
+      coin: c.coin,
+      leverage: c.leverage,
+      strategies: c.strategies.map((s) => ({ name: s.name, interval: s.interval, autoTradingEnabled: s.autoTradingEnabled })),
+    }));
     const snapshot = {
       positions: positionBook.getAll(),
       orders: store.getRecentOrders(100),
@@ -312,7 +365,7 @@ async function main() {
         return [];
       }),
       equity: store.getEquitySnapshots(500),
-      health: { status: "ok", mode: config.mode, asset: config.asset, strategy: config.strategy, dryRun: isDryRun, uptime: process.uptime() },
+      health: { status: "ok", mode: config.mode, coins: coinsSummary, dryRun: isDryRun, uptime: process.uptime() },
       signals: store.getRecentSignals(100),
     };
     ws.send(JSON.stringify({ type: "snapshot", timestamp: new Date().toISOString(), data: snapshot }));
@@ -322,7 +375,7 @@ async function main() {
   await eventLog.append({
     type: "daemon_started",
     timestamp: new Date().toISOString(),
-    data: { mode: config.mode, asset: config.asset, strategy: config.strategy, dryRun: isDryRun },
+    data: { mode: config.mode, coins: allCoins, dryRun: isDryRun },
   });
 
   // Hyperliquid event stream (only in live mode)
@@ -362,15 +415,15 @@ async function main() {
     logger.info("Subscribed to HL order updates and user fills");
   }
 
-  // Start loops
-  runner.start();
+  // Start all runners and loops
+  for (const runner of runners) runner.start();
   reconciler.start();
   startPriceTicker();
 
   // Graceful shutdown
   const shutdown = async () => {
     logger.info("Shutting down...");
-    runner.stop();
+    for (const runner of runners) runner.stop();
     reconciler.stop();
     if (priceTickInterval) clearInterval(priceTickInterval);
     eventStream?.stop();

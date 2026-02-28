@@ -29,6 +29,9 @@ export interface HandleSignalInput {
   currentPrice: number;
   source: "strategy-runner" | "api" | "router";
   alertId?: string;
+  coin: string;
+  leverage: number;
+  autoTradingEnabled: boolean;
 }
 
 interface HandleSignalResult {
@@ -38,16 +41,20 @@ interface HandleSignalResult {
   intent?: OrderIntent;
 }
 
+// Synchronous guard: prevents two concurrent handleSignal calls for the same coin
+// from both passing isFlat() before either reaches positionBook.open().
+const pendingCoins = new Set<string>();
+
 export async function handleSignal(
   input: HandleSignalInput,
   deps: SignalHandlerDeps,
 ): Promise<HandleSignalResult> {
-  const { signal, currentPrice, source } = input;
+  const { signal, currentPrice, source, coin, leverage, autoTradingEnabled } = input;
   const { config, hlClient, store, eventLog, alertsClient, positionBook } = deps;
   const alertId = input.alertId ?? randomUUID();
 
   // Auto-trading kill switch: block strategy-runner entries when disabled
-  if (source === "strategy-runner" && !config.autoTradingEnabled) {
+  if (source === "strategy-runner" && !autoTradingEnabled) {
     log.info({ action: "autoTradingDisabled", alertId }, "Auto-trading disabled — signal ignored");
     return { success: false, signalId: -1, reason: "Auto-trading disabled" };
   }
@@ -58,10 +65,37 @@ export async function handleSignal(
     return { success: false, signalId: -1, reason: "Duplicate alert_id" };
   }
 
+  // Race condition guard: first signal wins per coin
+  if (pendingCoins.has(coin) || !positionBook.isFlat(coin)) {
+    log.info({ action: "coinBusy", coin, alertId }, "Position already open or pending for coin");
+    return { success: false, signalId: -1, reason: "Position already open/pending" };
+  }
+  pendingCoins.add(coin);
+
+  try {
+    return await handleSignalInner(input, deps, alertId);
+  } finally {
+    pendingCoins.delete(coin);
+  }
+}
+
+// Exported for testing: allows clearing the pendingCoins set between tests
+export function clearPendingCoins(): void {
+  pendingCoins.clear();
+}
+
+async function handleSignalInner(
+  input: HandleSignalInput,
+  deps: SignalHandlerDeps,
+  alertId: string,
+): Promise<HandleSignalResult> {
+  const { signal, currentPrice, source, coin, leverage } = input;
+  const { config, hlClient, store, eventLog, alertsClient, positionBook } = deps;
+
   // Convert signal to order intent, then truncate to exchange precision.
   // This ensures values stored in positionBook/SQLite match what the exchange receives.
-  const intent = signalToIntent(signal, currentPrice, config.asset, config.sizing);
-  const szDecimals = hlClient.getSzDecimals(config.asset);
+  const intent = signalToIntent(signal, currentPrice, coin, config.sizing);
+  const szDecimals = hlClient.getSzDecimals(coin);
   intent.size = truncateSize(intent.size, szDecimals);
   intent.entryPrice = truncatePrice(intent.entryPrice);
   intent.stopLoss = truncatePrice(intent.stopLoss);
@@ -72,7 +106,7 @@ export async function handleSignal(
     const signalId = store.insertSignal({
       alert_id: alertId,
       source,
-      asset: config.asset,
+      asset: coin,
       side: signal.direction.toUpperCase(),
       entry_price: intent.entryPrice,
       stop_loss: intent.stopLoss,
@@ -86,10 +120,10 @@ export async function handleSignal(
   // Risk check
   const riskInput: RiskCheckInput = {
     notionalUsd: intent.notionalUsd,
-    leverage: config.leverage,
+    leverage,
     openPositions: positionBook.count(),
     dailyLossUsd: Math.abs(store.getTodayRealizedPnl()),
-    tradesToday: store.getTodayTradeCount(config.asset),
+    tradesToday: store.getTodayTradeCount(coin),
     entryPrice: intent.entryPrice,
     currentPrice,
   };
@@ -98,7 +132,7 @@ export async function handleSignal(
   const signalId = store.insertSignal({
     alert_id: alertId,
     source,
-    asset: config.asset,
+    asset: coin,
     side: signal.direction.toUpperCase(),
     entry_price: intent.entryPrice,
     stop_loss: intent.stopLoss,
@@ -121,14 +155,14 @@ export async function handleSignal(
   // Leverage may have been reset externally (HL dashboard, API). Re-setting
   // on every trade is idempotent and ensures consistency.
   await hlClient.setLeverage(
-    config.asset,
-    config.leverage,
+    coin,
+    leverage,
     config.marginType === "cross",
   );
 
   // Place entry limit IOC order (controlled slippage)
   const entryResult = await hlClient.placeEntryOrder(
-    config.asset,
+    coin,
     intent.side === "buy",
     intent.size,
     currentPrice,
@@ -143,7 +177,7 @@ export async function handleSignal(
     store.insertOrder({
       signal_id: signalId,
       hl_order_id: entryResult.orderId,
-      coin: config.asset,
+      coin,
       side: intent.side,
       size: intent.size,
       price: intent.entryPrice,
@@ -173,7 +207,7 @@ export async function handleSignal(
   const entryOrderId = store.insertOrder({
     signal_id: signalId,
     hl_order_id: entryResult.orderId,
-    coin: config.asset,
+    coin,
     side: intent.side,
     size: actualSize,
     price: actualPrice,
@@ -196,7 +230,7 @@ export async function handleSignal(
   let slResult: Awaited<ReturnType<typeof hlClient.placeStopOrder>>;
   try {
     slResult = await hlClient.placeStopOrder(
-      config.asset,
+      coin,
       intent.side === "sell",
       actualSize,
       intent.stopLoss,
@@ -206,17 +240,17 @@ export async function handleSignal(
     log.error({ action: "slPlacementFailed", signalId, err: slErr }, "SL placement failed after entry — rolling back");
 
     try {
-      await hlClient.placeMarketOrder(config.asset, intent.side !== "buy", actualSize);
+      await hlClient.placeMarketOrder(coin, intent.side !== "buy", actualSize);
       log.info({ action: "entryRolledBack", signalId }, "Entry rolled back (position closed)");
     } catch (closeErr) {
       // Worst case: position stuck on HL without SL AND without local tracking.
       // Hydrate into positionBook so reconcile loop can see it.
       // Reconcile may have already hydrated it — close stale entry first.
-      if (!positionBook.isFlat(config.asset)) {
-        positionBook.close(config.asset);
+      if (!positionBook.isFlat(coin)) {
+        positionBook.close(coin);
       }
       positionBook.open({
-        coin: config.asset,
+        coin,
         direction: intent.direction,
         entryPrice: actualPrice,
         size: actualSize,
@@ -224,6 +258,7 @@ export async function handleSignal(
         takeProfits: [],
         liquidationPx: null,
         trailingStopLoss: null,
+        leverage,
         openedAt: new Date().toISOString(),
         signalId,
       });
@@ -237,7 +272,7 @@ export async function handleSignal(
   store.insertOrder({
     signal_id: signalId,
     hl_order_id: slResult.orderId,
-    coin: config.asset,
+    coin,
     side: intent.side === "buy" ? "sell" : "buy",
     size: actualSize,
     price: intent.stopLoss,
@@ -255,7 +290,7 @@ export async function handleSignal(
     const tpSize = truncateSize(actualSize * tp.pctOfPosition, szDecimals);
     try {
       const tpResult = await hlClient.placeLimitOrder(
-        config.asset,
+        coin,
         intent.side === "sell",
         tpSize,
         tp.price,
@@ -266,7 +301,7 @@ export async function handleSignal(
       store.insertOrder({
         signal_id: signalId,
         hl_order_id: tpResult.orderId,
-        coin: config.asset,
+        coin,
         side: intent.side === "buy" ? "sell" : "buy",
         size: tpSize,
         price: tp.price,
@@ -285,11 +320,11 @@ export async function handleSignal(
   // The reconcile loop may have already hydrated this position (race: entry order fills
   // on HL → reconcile sees it → hydrates with stopLoss=0 before we reach this line).
   // In that case, close the stale hydrated entry and re-open with accurate data.
-  if (!positionBook.isFlat(config.asset)) {
-    positionBook.close(config.asset);
+  if (!positionBook.isFlat(coin)) {
+    positionBook.close(coin);
   }
   positionBook.open({
-    coin: config.asset,
+    coin,
     direction: intent.direction,
     entryPrice: actualPrice,
     size: actualSize,
@@ -297,6 +332,7 @@ export async function handleSignal(
     takeProfits: intent.takeProfits,
     liquidationPx: null,
     trailingStopLoss: null,
+    leverage,
     openedAt: new Date().toISOString(),
     signalId,
   });
@@ -304,13 +340,13 @@ export async function handleSignal(
   await eventLog.append({
     type: "position_opened",
     timestamp: new Date().toISOString(),
-    data: { signalId, coin: config.asset, direction: intent.direction, size: actualSize, avgPrice: actualPrice },
+    data: { signalId, coin, direction: intent.direction, size: actualSize, avgPrice: actualPrice },
   });
 
   log.info({
     action: "positionOpened",
     signalId,
-    coin: config.asset,
+    coin,
     direction: intent.direction,
     size: actualSize,
     entryPrice: actualPrice,

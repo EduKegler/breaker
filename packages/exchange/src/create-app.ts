@@ -7,11 +7,13 @@ import type { HlClient } from "./types/hl-client.js";
 import { handleSignal, type SignalHandlerDeps } from "./application/handle-signal.js";
 import { replayStrategy } from "./application/replay-strategy.js";
 import type { CandleStreamer } from "./adapters/candle-streamer.js";
+import type { StrategyRunner } from "./application/strategy-runner.js";
 import { intervalToMs, atr, type Strategy, type CandleInterval, type CandleCache } from "@breaker/backtest";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 const SignalPayloadSchema = z.object({
+  coin: z.string().min(1),
   direction: z.enum(["long", "short"]),
   entryPrice: z.number().positive().nullable(),
   stopLoss: z.number().positive(),
@@ -30,9 +32,10 @@ export interface ServerDeps {
   hlClient: HlClient;
   walletAddress: string;
   signalHandlerDeps: SignalHandlerDeps;
-  streamer: CandleStreamer;
+  streamers: Map<string, CandleStreamer>;
   candleCache?: CandleCache;
-  strategyFactory: () => Strategy;
+  strategyFactory: (name: string) => Strategy;
+  runners: StrategyRunner[];
 }
 
 export function createApp(deps: ServerDeps): express.Express {
@@ -42,18 +45,39 @@ export function createApp(deps: ServerDeps): express.Express {
   // Rate limit POST endpoints: 10 req/min per IP
   const postLimiter = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: false, legacyHeaders: false }) as unknown as express.RequestHandler;
 
+  // Pre-compute O(1) lookup maps (computed once per createApp call)
+  const coinConfigMap = new Map(deps.config.coins.map((c) => [c.coin, c]));
+  const coinStreamerMap = new Map<string, CandleStreamer>();
+  for (const [key, streamer] of deps.streamers) {
+    const coin = key.split(":")[0];
+    if (!coinStreamerMap.has(coin)) coinStreamerMap.set(coin, streamer);
+  }
+
+  function findCoinConfig(coin: string) {
+    return coinConfigMap.get(coin) ?? null;
+  }
+
+  function findStreamerForCoin(coin: string): CandleStreamer | null {
+    return coinStreamerMap.get(coin) ?? null;
+  }
+
   app.get("/health", (_req, res) => {
-    const latestCandle = deps.streamer.getLatest();
-    const lastCandleAt = latestCandle?.t ?? null;
-    const ivlMs = intervalToMs(deps.config.interval as CandleInterval);
-    const candleStale = lastCandleAt != null && (Date.now() - lastCandleAt) > 5 * ivlMs;
+    const streamerStatuses = Array.from(deps.streamers.entries()).map(([key, streamer]) => {
+      const [coin, interval] = key.split(":");
+      const latestCandle = streamer.getLatest();
+      const lastCandleAt = latestCandle?.t ?? null;
+      const ivlMs = intervalToMs(interval as CandleInterval);
+      const candleStale = lastCandleAt != null && (Date.now() - lastCandleAt) > 5 * ivlMs;
+      return { coin, interval, lastCandleAt, status: candleStale ? "stale" as const : "ok" as const };
+    });
+
+    const anyStale = streamerStatuses.some((s) => s.status === "stale");
 
     res.json({
-      status: candleStale ? "stale" : "ok",
-      lastCandleAt,
+      status: anyStale ? "stale" : "ok",
+      streamers: streamerStatuses,
       mode: deps.config.mode,
-      asset: deps.config.asset,
-      strategy: deps.config.strategy,
+      coins: deps.config.coins.map((c) => c.coin),
       uptime: process.uptime(),
     });
   });
@@ -82,9 +106,16 @@ export function createApp(deps: ServerDeps): express.Express {
     }
   });
 
-  app.get("/candles", async (_req, res) => {
+  app.get("/candles", async (req, res) => {
     try {
-      const candles = await fetchCandlesForReplay(Date.now(), REPLAY_WARMUP);
+      const coin = (req.query.coin as string) || deps.config.coins[0]?.coin;
+      const interval = (req.query.interval as string) || deps.config.coins[0]?.strategies[0]?.interval;
+      if (!coin || !interval) {
+        res.status(400).json({ error: "coin and interval required" });
+        return;
+      }
+
+      const candles = await fetchCandlesForReplay(coin, interval as CandleInterval, Date.now(), REPLAY_WARMUP);
       res.json({ candles });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -102,50 +133,65 @@ export function createApp(deps: ServerDeps): express.Express {
   const REPLAY_WARMUP = 15000;
 
   /** Fetch candles using SQLite cache (sync → read) or streamer fallback. */
-  async function fetchCandlesForReplay(endTime: number, bars: number) {
-    const ivlMs = intervalToMs(deps.config.interval as CandleInterval);
+  async function fetchCandlesForReplay(coin: string, interval: CandleInterval, endTime: number, bars: number) {
+    const ivlMs = intervalToMs(interval);
     const startTime = endTime - bars * ivlMs;
 
     if (deps.candleCache) {
       await deps.candleCache.sync(
-        deps.config.asset,
-        deps.config.interval as CandleInterval,
+        coin,
+        interval,
         startTime,
         endTime,
         { source: deps.config.dataSource },
       );
       return deps.candleCache.getCandles(
-        deps.config.asset,
-        deps.config.interval as CandleInterval,
+        coin,
+        interval,
         startTime,
         endTime,
         deps.config.dataSource,
       );
     }
 
-    return deps.streamer.fetchHistorical(endTime, bars);
+    const streamer = deps.streamers.get(`${coin}:${interval}`);
+    if (streamer) return streamer.fetchHistorical(endTime, bars);
+
+    return [];
   }
 
-  // TTL cache: replay is deterministic, re-compute once per candle interval
-  let replayCache: { cachedAt: number; signals: ReturnType<typeof replayStrategy> } | null = null;
-  const replayCacheTtlMs = intervalToMs(deps.config.interval as CandleInterval);
+  // TTL cache per coin:interval
+  const replayCache = new Map<string, { cachedAt: number; signals: ReturnType<typeof replayStrategy> }>();
 
-  app.get("/strategy-signals", async (_req, res) => {
+  app.get("/strategy-signals", async (req, res) => {
     const now = Date.now();
 
     try {
-      if (replayCache && (now - replayCache.cachedAt) < replayCacheTtlMs) {
-        res.json({ signals: replayCache.signals });
+      const coin = (req.query.coin as string) || deps.config.coins[0]?.coin;
+      const strategyName = (req.query.strategy as string) || deps.config.coins[0]?.strategies[0]?.name;
+      const coinCfg = findCoinConfig(coin);
+      if (!coinCfg) {
+        res.status(400).json({ error: `Unknown coin: ${coin}` });
+        return;
+      }
+      const stratCfg = coinCfg.strategies.find((s) => s.name === strategyName) ?? coinCfg.strategies[0];
+      const interval = stratCfg.interval as CandleInterval;
+      const cacheKey = `${coin}:${stratCfg.name}:${interval}`;
+      const cacheTtlMs = intervalToMs(interval);
+
+      const cached = replayCache.get(cacheKey);
+      if (cached && (now - cached.cachedAt) < cacheTtlMs) {
+        res.json({ signals: cached.signals });
         return;
       }
 
-      const candles = await fetchCandlesForReplay(now, REPLAY_WARMUP);
+      const candles = await fetchCandlesForReplay(coin, interval, now, REPLAY_WARMUP);
       const signals = replayStrategy({
-        strategyFactory: deps.strategyFactory,
+        strategyFactory: () => deps.strategyFactory(stratCfg.name),
         candles,
-        interval: deps.config.interval as CandleInterval,
+        interval,
       });
-      replayCache = { cachedAt: now, signals };
+      replayCache.set(cacheKey, { cachedAt: now, signals });
       res.json({ signals });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -165,18 +211,52 @@ export function createApp(deps: ServerDeps): express.Express {
   });
 
   app.get("/config", (_req, res) => {
-    const { mode, asset, strategy, interval, leverage, guardrails, sizing, dataSource, autoTradingEnabled } = deps.config;
-    res.json({ mode, asset, strategy, interval, leverage, guardrails, sizing, dataSource, autoTradingEnabled });
+    const { mode, coins, guardrails, sizing, dataSource } = deps.config;
+    res.json({ mode, coins, guardrails, sizing, dataSource });
+  });
+
+  const AutoTradingSchema = z.object({
+    coin: z.string().min(1),
+    strategy: z.string().min(1).optional(),
+    enabled: z.boolean(),
   });
 
   app.post("/auto-trading", postLimiter, (req, res) => {
-    const { enabled } = req.body;
-    if (typeof enabled !== "boolean") {
-      res.status(400).json({ error: "enabled must be boolean" });
+    const parsed = AutoTradingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid payload", details: parsed.error.issues });
       return;
     }
-    deps.config.autoTradingEnabled = enabled;
-    res.json({ autoTradingEnabled: enabled });
+
+    const { coin, strategy: stratName, enabled } = parsed.data;
+    const coinCfg = findCoinConfig(coin);
+    if (!coinCfg) {
+      res.status(400).json({ error: `Unknown coin: ${coin}` });
+      return;
+    }
+
+    // Toggle per-strategy or all strategies for the coin
+    const targets = stratName
+      ? coinCfg.strategies.filter((s) => s.name === stratName)
+      : coinCfg.strategies;
+
+    if (targets.length === 0) {
+      res.status(400).json({ error: `Strategy ${stratName} not found for ${coin}` });
+      return;
+    }
+
+    for (const strat of targets) {
+      strat.autoTradingEnabled = enabled;
+    }
+
+    // Propagate to runner instances so the change takes effect immediately
+    for (const runner of deps.runners) {
+      if (runner.getCoin() !== coin) continue;
+      if (stratName && runner.getStrategyName() !== stratName) continue;
+      runner.setAutoTradingEnabled(enabled);
+    }
+
+    res.json({ coin, autoTradingEnabled: enabled });
   });
 
   app.post("/signal", postLimiter, async (req, res) => {
@@ -186,10 +266,16 @@ export function createApp(deps: ServerDeps): express.Express {
       return;
     }
 
-    const { direction, entryPrice, stopLoss, takeProfits, comment, alertId } = parsed.data;
+    const { coin, direction, entryPrice, stopLoss, takeProfits, comment, alertId } = parsed.data;
+    const coinCfg = findCoinConfig(coin);
+    if (!coinCfg) {
+      res.status(400).json({ error: `Unknown coin: ${coin}` });
+      return;
+    }
 
-    // Use market price from poller; fall back to entryPrice only if poller has data
-    const latestCandle = deps.streamer.getLatest();
+    // Use market price from streamer; fall back to entryPrice
+    const streamer = findStreamerForCoin(coin);
+    const latestCandle = streamer?.getLatest();
     const currentPrice = latestCandle?.c ?? entryPrice;
     if (currentPrice == null || currentPrice <= 0) {
       res.status(422).json({ status: "rejected", reason: "No market price available and entryPrice is null" });
@@ -203,6 +289,9 @@ export function createApp(deps: ServerDeps): express.Express {
           currentPrice,
           source: "api",
           alertId,
+          coin,
+          leverage: coinCfg.leverage,
+          autoTradingEnabled: true, // API signals always allowed
         },
         deps.signalHandlerDeps,
       );
@@ -291,6 +380,7 @@ export function createApp(deps: ServerDeps): express.Express {
   });
 
   const QuickSignalSchema = z.object({
+    coin: z.string().min(1),
     direction: z.enum(["long", "short"]),
   });
 
@@ -301,8 +391,20 @@ export function createApp(deps: ServerDeps): express.Express {
       return;
     }
 
-    const { direction } = parsed.data;
-    const candles = deps.streamer.getCandles();
+    const { coin, direction } = parsed.data;
+    const coinCfg = findCoinConfig(coin);
+    if (!coinCfg) {
+      res.status(400).json({ error: `Unknown coin: ${coin}` });
+      return;
+    }
+
+    const streamer = findStreamerForCoin(coin);
+    if (!streamer) {
+      res.status(400).json({ error: `No streamer for ${coin}` });
+      return;
+    }
+
+    const candles = streamer.getCandles();
     if (candles.length < 20) {
       res.status(422).json({ status: "rejected", reason: "Not enough candles for ATR" });
       return;
@@ -312,7 +414,8 @@ export function createApp(deps: ServerDeps): express.Express {
     const price = lastCandle.c;
 
     // Compute SL from ATR using strategy params (same logic as the strategy)
-    const strategy = deps.strategyFactory();
+    const stratName = coinCfg.strategies[0]?.name ?? "donchian-adx";
+    const strategy = deps.strategyFactory(stratName);
     const atrLen = strategy.params.atrLen?.value ?? strategy.params.atrStopMult ? 14 : 14;
     const atrMult = strategy.params.atrStopMult?.value ?? 2.0;
     const atrValues = atr(candles, atrLen);
@@ -338,7 +441,15 @@ export function createApp(deps: ServerDeps): express.Express {
 
     try {
       const result = await handleSignal(
-        { signal, currentPrice: price, source: "api", alertId },
+        {
+          signal,
+          currentPrice: price,
+          source: "api",
+          alertId,
+          coin,
+          leverage: coinCfg.leverage,
+          autoTradingEnabled: true, // Manual signals always allowed
+        },
         deps.signalHandlerDeps,
       );
 
