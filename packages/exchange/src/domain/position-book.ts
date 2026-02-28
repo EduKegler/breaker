@@ -39,6 +39,18 @@ export class PositionBook {
     pos.liquidationPx = liqPx;
   }
 
+  updateStopLoss(coin: string, stopLoss: number): void {
+    const pos = this.positions.get(coin);
+    if (!pos) return;
+    pos.stopLoss = stopLoss;
+  }
+
+  updateTakeProfits(coin: string, takeProfits: { price: number; pctOfPosition: number }[]): void {
+    const pos = this.positions.get(coin);
+    if (!pos) return;
+    pos.takeProfits = takeProfits;
+  }
+
   updatePrice(coin: string, price: number): void {
     const pos = this.positions.get(coin);
     if (!pos) return;

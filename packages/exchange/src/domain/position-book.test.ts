@@ -156,4 +156,34 @@ describe("PositionBook", () => {
     const book = new PositionBook();
     book.updateLiquidationPx("ETH", 2000); // should not throw
   });
+
+  it("updates stop loss", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+
+    book.updateStopLoss("BTC", 93000);
+    expect(book.get("BTC")!.stopLoss).toBe(93000);
+  });
+
+  it("ignores updateStopLoss for non-existent coin", () => {
+    const book = new PositionBook();
+    book.updateStopLoss("ETH", 3000); // should not throw
+  });
+
+  it("updates take profits", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+
+    const newTps = [
+      { price: 97000, pctOfPosition: 0.5 },
+      { price: 99000, pctOfPosition: 0.5 },
+    ];
+    book.updateTakeProfits("BTC", newTps);
+    expect(book.get("BTC")!.takeProfits).toEqual(newTps);
+  });
+
+  it("ignores updateTakeProfits for non-existent coin", () => {
+    const book = new PositionBook();
+    book.updateTakeProfits("ETH", [{ price: 5000, pctOfPosition: 1 }]); // should not throw
+  });
 });

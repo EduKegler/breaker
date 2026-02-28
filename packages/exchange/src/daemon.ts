@@ -18,6 +18,7 @@ import { CandleCache } from "@breaker/backtest";
 import { HttpAlertsClient } from "./adapters/alerts-client.js";
 import { PositionBook } from "./domain/position-book.js";
 import { resolveOrderStatus } from "./domain/order-status.js";
+import { recoverSlTp } from "./domain/recover-sl-tp.js";
 import { StrategyRunner } from "./application/strategy-runner.js";
 import { ReconcileLoop } from "./application/reconcile-loop.js";
 import { createApp } from "./create-app.js";
@@ -68,20 +69,32 @@ async function syncPositionsAndBroadcast(deps: {
     }
   }
   for (const hlPos of hlPositions) {
-    if (!positionBook.get(hlPos.coin)) {
+    const localPos = positionBook.get(hlPos.coin);
+    if (!localPos) {
+      const recovered = recoverSlTp(hlPos.coin, hlPos.size, openOrders);
       positionBook.open({
         coin: hlPos.coin,
         direction: hlPos.direction,
         entryPrice: hlPos.entryPrice,
         size: hlPos.size,
-        stopLoss: 0,
-        takeProfits: [],
+        stopLoss: recovered.stopLoss,
+        takeProfits: recovered.takeProfits,
         liquidationPx: hlPos.liquidationPx,
         openedAt: new Date().toISOString(),
         signalId: -1,
       });
     } else {
       positionBook.updateLiquidationPx(hlPos.coin, hlPos.liquidationPx);
+      // Recover SL/TP if lost (e.g. after daemon restart)
+      if (localPos.stopLoss === 0) {
+        const recovered = recoverSlTp(hlPos.coin, hlPos.size, openOrders);
+        if (recovered.stopLoss > 0) {
+          positionBook.updateStopLoss(hlPos.coin, recovered.stopLoss);
+        }
+        if (recovered.takeProfits.length > 0) {
+          positionBook.updateTakeProfits(hlPos.coin, recovered.takeProfits);
+        }
+      }
     }
   }
 

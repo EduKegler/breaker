@@ -10,6 +10,7 @@ src/
 │   ├── check-risk.ts    # Guardrails: max-notional, leverage, positions, daily-loss, trades/day
 │   ├── signal-to-intent.ts  # Signal → OrderIntent conversion with sizing
 │   ├── position-book.ts # In-memory position state, price updates, PnL
+│   ├── recover-sl-tp.ts # Recover SL/TP from HL open orders (trigger→SL, limit→TP)
 │   └── order-status.ts  # HL → internal order status mapping
 ├── adapters/            # External I/O (injectable, mockable)
 │   ├── hyperliquid-client.ts  # SDK wrapper (HyperliquidClient class)
@@ -67,11 +68,12 @@ src/
 ## Known pitfalls
 - Must build `@breaker/backtest` before running exchange tests (workspace dependency)
 - PositionBook is in-memory — ReconcileLoop auto-corrects via hydration/auto-close/order sync
+- HL position data does NOT include SL/TP — `recoverSlTp()` extracts them from open orders (trigger→SL, limit reduceOnly→TP)
 - Signal handler has SL failure rollback (compensating transaction)
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 295 tests across 20 files
+- `pnpm test` — 312 tests across 21 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

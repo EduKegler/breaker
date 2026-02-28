@@ -181,6 +181,99 @@ describe("ReconcileLoop", () => {
     expect(positionBook.get("BTC")!.stopLoss).toBe(0);
   });
 
+  it("hydrates position with SL/TP recovered from open orders", async () => {
+    const positionBook = new PositionBook();
+    const hlPositions: HlPosition[] = [
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+    ];
+    const openOrders: HlOpenOrder[] = [
+      { coin: "BTC", oid: 10, side: "A", sz: 0.01, limitPx: 0, orderType: "Stop Market", isTrigger: true, triggerPx: 93000, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
+      { coin: "BTC", oid: 11, side: "A", sz: 0.005, limitPx: 97000, orderType: "Limit", isTrigger: false, triggerPx: 0, triggerCondition: "", reduceOnly: true, isPositionTpsl: false },
+    ];
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue(hlPositions),
+      getOpenOrders: vi.fn().mockResolvedValue(openOrders),
+    });
+    const eventLog = { append: vi.fn() };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    const pos = positionBook.get("BTC")!;
+    expect(pos.stopLoss).toBe(93000);
+    expect(pos.takeProfits).toEqual([{ price: 97000, pctOfPosition: 0.5 }]);
+  });
+
+  it("recovers SL/TP for existing position with stopLoss=0 on tick", async () => {
+    const positionBook = new PositionBook();
+    positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 0, // lost SL
+      takeProfits: [],
+      liquidationPx: null,
+      openedAt: "2024-01-01T00:00:00Z",
+      signalId: -1,
+    });
+
+    const hlPositions: HlPosition[] = [
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+    ];
+    const openOrders: HlOpenOrder[] = [
+      { coin: "BTC", oid: 20, side: "A", sz: 0.01, limitPx: 0, orderType: "Stop Market", isTrigger: true, triggerPx: 93500, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
+      { coin: "BTC", oid: 21, side: "A", sz: 0.005, limitPx: 98000, orderType: "Limit", isTrigger: false, triggerPx: 0, triggerCondition: "", reduceOnly: true, isPositionTpsl: false },
+    ];
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue(hlPositions),
+      getOpenOrders: vi.fn().mockResolvedValue(openOrders),
+    });
+    const eventLog = { append: vi.fn() };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    const pos = positionBook.get("BTC")!;
+    expect(pos.stopLoss).toBe(93500);
+    expect(pos.takeProfits).toEqual([{ price: 98000, pctOfPosition: 0.5 }]);
+  });
+
+  it("does not overwrite existing SL when stopLoss > 0", async () => {
+    const positionBook = new PositionBook();
+    positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000, // already has SL
+      takeProfits: [{ price: 97000, pctOfPosition: 0.5 }],
+      liquidationPx: null,
+      openedAt: "2024-01-01T00:00:00Z",
+      signalId: 1,
+    });
+
+    const hlPositions: HlPosition[] = [
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+    ];
+    // Open orders have a different SL price, but we shouldn't overwrite
+    const openOrders: HlOpenOrder[] = [
+      { coin: "BTC", oid: 30, side: "A", sz: 0.01, limitPx: 0, orderType: "Stop Market", isTrigger: true, triggerPx: 93000, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
+    ];
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue(hlPositions),
+      getOpenOrders: vi.fn().mockResolvedValue(openOrders),
+    });
+    const eventLog = { append: vi.fn() };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    const pos = positionBook.get("BTC")!;
+    expect(pos.stopLoss).toBe(94000); // unchanged
+    expect(pos.takeProfits).toEqual([{ price: 97000, pctOfPosition: 0.5 }]); // unchanged
+  });
+
   it("auto-closes position when local has it but HL does not", async () => {
     const positionBook = new PositionBook();
     positionBook.open({

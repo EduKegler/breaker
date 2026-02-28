@@ -3,6 +3,7 @@ import type { SqliteStore } from "../adapters/sqlite-store.js";
 import type { PositionBook } from "../domain/position-book.js";
 import type { EventLog } from "../adapters/event-log.js";
 import { resolveOrderStatus } from "../domain/order-status.js";
+import { recoverSlTp } from "../domain/recover-sl-tp.js";
 import { reconcile, type ReconcileResult } from "./reconcile.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import { logger } from "../lib/logger.js";
@@ -40,8 +41,11 @@ export class ReconcileLoop {
     const { hlClient, positionBook, eventLog, store, walletAddress } = this.deps;
     const actions: string[] = [];
 
-    // 1. Fetch positions from HL and local
-    const hlPositions = await hlClient.getPositions(walletAddress);
+    // 1. Fetch positions and open orders from HL
+    const [hlPositions, allOpenOrders] = await Promise.all([
+      hlClient.getPositions(walletAddress),
+      hlClient.getOpenOrders(walletAddress),
+    ]);
     const localPositions = positionBook.getAll();
     const result = reconcile(localPositions, hlPositions);
 
@@ -56,13 +60,14 @@ export class ReconcileLoop {
     // 2a. HL has position, local doesn't → hydrate
     for (const [coin, hlPos] of hlMap) {
       if (!localMap.has(coin)) {
+        const recovered = recoverSlTp(coin, hlPos.size, allOpenOrders);
         positionBook.open({
           coin,
           direction: hlPos.direction,
           entryPrice: hlPos.entryPrice,
           size: hlPos.size,
-          stopLoss: 0,
-          takeProfits: [],
+          stopLoss: recovered.stopLoss,
+          takeProfits: recovered.takeProfits,
           liquidationPx: hlPos.liquidationPx,
           openedAt: new Date().toISOString(),
           signalId: -1,
@@ -81,11 +86,23 @@ export class ReconcileLoop {
       }
     }
 
-    // 2c. Update prices and liquidation for all positions that exist on both sides
+    // 2c. Update prices, liquidation, and recover lost SL/TP for all positions that exist on both sides
     for (const [coin, hlPos] of hlMap) {
-      if (!positionBook.get(coin)) continue;
+      const localPos = positionBook.get(coin);
+      if (!localPos) continue;
 
       positionBook.updateLiquidationPx(coin, hlPos.liquidationPx);
+
+      // Recover SL/TP if lost (e.g. after daemon restart with partial state)
+      if (localPos.stopLoss === 0) {
+        const recovered = recoverSlTp(coin, hlPos.size, allOpenOrders);
+        if (recovered.stopLoss > 0) {
+          positionBook.updateStopLoss(coin, recovered.stopLoss);
+        }
+        if (recovered.takeProfits.length > 0) {
+          positionBook.updateTakeProfits(coin, recovered.takeProfits);
+        }
+      }
 
       if (
         hlPos.size > 0
@@ -108,10 +125,8 @@ export class ReconcileLoop {
       return !Number.isNaN(Number(o.hl_order_id));
     });
 
-    let allOpenOrders = await hlClient.getOpenOrders(walletAddress);
     if (trackable.length > 0) {
-      const openOrders = allOpenOrders;
-      const openOidSet = new Set(openOrders.map((o) => o.oid));
+      const openOidSet = new Set(allOpenOrders.map((o) => o.oid));
 
       // Find resolved: pending locally but no longer open on HL
       const resolved = trackable.filter((o) => !openOidSet.has(Number(o.hl_order_id)));
