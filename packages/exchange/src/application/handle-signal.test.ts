@@ -471,6 +471,39 @@ describe("handleSignal", () => {
     expect(deps.hlClient.placeEntryOrder).toHaveBeenCalledOnce();
   });
 
+  it("succeeds when reconcile loop already hydrated the position (race condition)", async () => {
+    // Simulate: entry order fills on HL → reconcile loop detects it → hydrates positionBook
+    // BEFORE handleSignal reaches its own positionBook.open() call.
+    (deps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      // Side effect: reconcile fires between entry fill and positionBook.open()
+      if (deps.positionBook.isFlat("BTC")) {
+        deps.positionBook.open({
+          coin: "BTC",
+          direction: "long",
+          entryPrice: 95000,
+          size: 0.01,
+          stopLoss: 0,         // reconcile hydrates with stopLoss=0
+          takeProfits: [],      // reconcile has no TP info
+          openedAt: new Date().toISOString(),
+          signalId: 0,          // reconcile has no signalId
+        });
+      }
+      return { orderId: "HL-2", status: "placed" };
+    });
+
+    const result = await handleSignal(
+      { signal, currentPrice: 95000, source: "api", alertId: "race-001" },
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    // Position should be updated with accurate data from handleSignal
+    const pos = deps.positionBook.get("BTC")!;
+    expect(pos.stopLoss).toBe(94000);       // updated from 0
+    expect(pos.takeProfits).toHaveLength(1); // updated from []
+    expect(pos.signalId).toBe(1);            // updated from 0
+  });
+
   it("continues even when notification fails", async () => {
     (deps.alertsClient.notifyPositionOpened as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("WhatsApp down"));
 

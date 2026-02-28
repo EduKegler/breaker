@@ -211,6 +211,10 @@ export async function handleSignal(
     } catch (closeErr) {
       // Worst case: position stuck on HL without SL AND without local tracking.
       // Hydrate into positionBook so reconcile loop can see it.
+      // Reconcile may have already hydrated it — close stale entry first.
+      if (!positionBook.isFlat(config.asset)) {
+        positionBook.close(config.asset);
+      }
       positionBook.open({
         coin: config.asset,
         direction: intent.direction,
@@ -275,7 +279,13 @@ export async function handleSignal(
     }
   }
 
-  // Update position book
+  // Update position book.
+  // The reconcile loop may have already hydrated this position (race: entry order fills
+  // on HL → reconcile sees it → hydrates with stopLoss=0 before we reach this line).
+  // In that case, close the stale hydrated entry and re-open with accurate data.
+  if (!positionBook.isFlat(config.asset)) {
+    positionBook.close(config.asset);
+  }
   positionBook.open({
     coin: config.asset,
     direction: intent.direction,
