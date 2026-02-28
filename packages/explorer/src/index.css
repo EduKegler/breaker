@@ -77,6 +77,29 @@ body::after {
 .animate-toast-in { animation: toast-in 0.25s ease-out forwards; }
 .animate-toast-out { animation: toast-out 0.2s ease-in forwards; }
 
+@keyframes price-flash {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.price-flash-up::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: rgba(0, 255, 136, 0.15);
+  animation: price-flash 0.6s ease-out forwards;
+  pointer-events: none;
+}
+.price-flash-down::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: rgba(255, 51, 102, 0.15);
+  animation: price-flash 0.6s ease-out forwards;
+  pointer-events: none;
+}
+
 /* ── Utility ──────────────────────── */
 .glow-header {
   box-shadow: 0 1px 24px var(--glow-green), inset 0 -1px 0 var(--border);

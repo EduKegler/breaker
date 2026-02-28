@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./lib/api.js";
-import type { HealthResponse, LivePosition, OrderRow, EquitySnapshot, ConfigResponse, OpenOrder, CandleData, SignalRow, ReplaySignal, AccountResponse } from "./types/api.js";
+import type { HealthResponse, LivePosition, OrderRow, EquitySnapshot, ConfigResponse, OpenOrder, CandleData, SignalRow, ReplaySignal, AccountResponse, PricesEvent } from "./types/api.js";
 import { useWebSocket, type WsMessage, type WsStatus } from "./lib/use-websocket.js";
 import { useToasts } from "./lib/use-toasts.js";
 import { EquityChart } from "./components/equity-chart.js";
@@ -51,9 +51,12 @@ export function App() {
   const [signals, setSignals] = useState<SignalRow[]>([]);
   const [replaySignals, setReplaySignals] = useState<ReplaySignal[]>([]);
   const [account, setAccount] = useState<AccountResponse | null>(null);
+  const [prices, setPrices] = useState<PricesEvent | null>(null);
   const [httpError, setHttpError] = useState(false);
   const [showSignalPopover, setShowSignalPopover] = useState(false);
   const { addToast } = useToasts();
+  const prevPricesRef = useRef<PricesEvent | null>(null);
+  const [priceFlash, setPriceFlash] = useState<"up" | "down" | null>(null);
 
   const handleClosePosition = useCallback(async (coin: string) => {
     try {
@@ -110,6 +113,13 @@ export function App() {
       api.account().then(setAccount).catch(() => {}),
     ]);
   }, []);
+
+  // Clear price flash after animation
+  useEffect(() => {
+    if (!priceFlash) return;
+    const id = setTimeout(() => setPriceFlash(null), 700);
+    return () => clearTimeout(id);
+  }, [priceFlash]);
 
   // Periodic account refresh (no WS event for account state)
   useEffect(() => {
@@ -173,6 +183,19 @@ export function App() {
       case "signals":
         setSignals(msg.data as SignalRow[]);
         break;
+      case "prices": {
+        const p = msg.data as PricesEvent;
+        setPrices((prev) => {
+          const refPrice = p.hlMidPrice ?? p.dataSourcePrice;
+          const prevRefPrice = prev?.hlMidPrice ?? prev?.dataSourcePrice;
+          if (refPrice != null && prevRefPrice != null && refPrice !== prevRefPrice) {
+            setPriceFlash(refPrice > prevRefPrice ? "up" : "down");
+          }
+          prevPricesRef.current = prev;
+          return p;
+        });
+        break;
+      }
     }
   }, []);
 
@@ -294,14 +317,35 @@ export function App() {
 
         {/* Candlestick chart (full width) */}
         <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
-            Price Chart
-            {c?.dataSource && (
-              <span className="ml-2 font-mono font-medium text-[10px] text-txt-secondary/60 lowercase">
-                via {c.dataSource}
-              </span>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary">
+              Price Chart
+              {c?.dataSource && (
+                <span className="ml-2 font-mono font-medium text-[10px] text-txt-secondary/60 lowercase">
+                  via {c.dataSource}
+                </span>
+              )}
+            </h2>
+            {prices && (prices.hlMidPrice != null || prices.dataSourcePrice != null) && (
+              <div className={`relative flex items-center gap-3 ${priceFlash === "up" ? "price-flash-up" : priceFlash === "down" ? "price-flash-down" : ""}`}>
+                {prices.hlMidPrice != null && (
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-txt-secondary/60">HL</span>
+                    <span className="font-mono text-sm font-medium text-txt-primary">{prices.hlMidPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </span>
+                )}
+                {prices.hlMidPrice != null && prices.dataSourcePrice != null && (
+                  <span className="text-txt-secondary/30 text-xs">·</span>
+                )}
+                {prices.dataSourcePrice != null && (
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-txt-secondary/60">BIN</span>
+                    <span className="font-mono text-sm font-medium text-txt-primary">{prices.dataSourcePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </span>
+                )}
+              </div>
             )}
-          </h2>
+          </div>
           <CandlestickChart candles={candles} signals={signals} replaySignals={replaySignals} positions={positions} onLoadMore={handleLoadMoreCandles} />
         </section>
 

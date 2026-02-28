@@ -95,6 +95,12 @@ export interface AccountResponse {
   spotBalances: { coin: string; total: number }[];
 }
 
+export interface PricesEvent {
+  dataSourcePrice: number | null;
+  hlMidPrice: number | null;
+  trailingExitLevel: number | null;
+}
+
 export interface ConfigResponse {
   mode: string;
   asset: string;
