@@ -300,6 +300,17 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
       }
     }
 
+    if (pos.trailingStopLoss != null && pos.trailingStopLoss > 0) {
+      seriesRef.current.createPriceLine({
+        price: pos.trailingStopLoss,
+        color: "#ff9900",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "TSL",
+      });
+    }
+
     if (pos.liquidationPx != null && pos.liquidationPx > 0) {
       seriesRef.current.createPriceLine({
         price: pos.liquidationPx,

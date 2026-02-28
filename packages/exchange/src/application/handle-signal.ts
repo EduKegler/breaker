@@ -223,6 +223,7 @@ export async function handleSignal(
         stopLoss: 0,
         takeProfits: [],
         liquidationPx: null,
+        trailingStopLoss: null,
         openedAt: new Date().toISOString(),
         signalId,
       });
@@ -295,6 +296,7 @@ export async function handleSignal(
     stopLoss: intent.stopLoss,
     takeProfits: intent.takeProfits,
     liquidationPx: null,
+    trailingStopLoss: null,
     openedAt: new Date().toISOString(),
     signalId,
   });

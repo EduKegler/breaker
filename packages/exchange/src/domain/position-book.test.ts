@@ -9,6 +9,7 @@ const basePos = {
   stopLoss: 94000,
   takeProfits: [{ price: 97000, pctOfPosition: 0.5 }],
   liquidationPx: null as number | null,
+  trailingStopLoss: null as number | null,
   openedAt: "2024-01-01T00:00:00Z",
   signalId: 1,
 };
@@ -185,5 +186,29 @@ describe("PositionBook", () => {
   it("ignores updateTakeProfits for non-existent coin", () => {
     const book = new PositionBook();
     book.updateTakeProfits("ETH", [{ price: 5000, pctOfPosition: 1 }]); // should not throw
+  });
+
+  it("updates trailing stop loss", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+
+    expect(book.get("BTC")!.trailingStopLoss).toBeNull();
+
+    book.updateTrailingStopLoss("BTC", 94500);
+    expect(book.get("BTC")!.trailingStopLoss).toBe(94500);
+  });
+
+  it("clears trailing stop loss with null", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+
+    book.updateTrailingStopLoss("BTC", 94500);
+    book.updateTrailingStopLoss("BTC", null);
+    expect(book.get("BTC")!.trailingStopLoss).toBeNull();
+  });
+
+  it("ignores updateTrailingStopLoss for non-existent coin", () => {
+    const book = new PositionBook();
+    book.updateTrailingStopLoss("ETH", 3000); // should not throw
   });
 });

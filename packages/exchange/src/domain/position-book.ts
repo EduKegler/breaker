@@ -6,6 +6,7 @@ export interface LivePosition {
   stopLoss: number;
   takeProfits: { price: number; pctOfPosition: number }[];
   liquidationPx: number | null;
+  trailingStopLoss: number | null;
   currentPrice: number;
   unrealizedPnl: number;
   openedAt: string;
@@ -49,6 +50,12 @@ export class PositionBook {
     const pos = this.positions.get(coin);
     if (!pos) return;
     pos.takeProfits = takeProfits;
+  }
+
+  updateTrailingStopLoss(coin: string, trailingStopLoss: number | null): void {
+    const pos = this.positions.get(coin);
+    if (!pos) return;
+    pos.trailingStopLoss = trailingStopLoss;
   }
 
   updatePrice(coin: string, price: number): void {

@@ -34,6 +34,7 @@ describe("reconcile", () => {
         stopLoss: 94000,
         takeProfits: [],
         liquidationPx: null,
+        trailingStopLoss: null,
         currentPrice: 95500,
         unrealizedPnl: 5,
         openedAt: "2024-01-01T00:00:00Z",
@@ -59,6 +60,7 @@ describe("reconcile", () => {
         stopLoss: 94000,
         takeProfits: [],
         liquidationPx: null,
+        trailingStopLoss: null,
         currentPrice: 95000,
         unrealizedPnl: 0,
         openedAt: "2024-01-01T00:00:00Z",
@@ -92,6 +94,7 @@ describe("reconcile", () => {
         stopLoss: 94000,
         takeProfits: [],
         liquidationPx: null,
+        trailingStopLoss: null,
         currentPrice: 95000,
         unrealizedPnl: 0,
         openedAt: "2024-01-01T00:00:00Z",
@@ -117,6 +120,7 @@ describe("reconcile", () => {
         stopLoss: 94000,
         takeProfits: [],
         liquidationPx: null,
+        trailingStopLoss: null,
         currentPrice: 95000,
         unrealizedPnl: 0,
         openedAt: "2024-01-01T00:00:00Z",
@@ -214,6 +218,7 @@ describe("ReconcileLoop", () => {
       stopLoss: 0, // lost SL
       takeProfits: [],
       liquidationPx: null,
+      trailingStopLoss: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: -1,
     });
@@ -249,6 +254,7 @@ describe("ReconcileLoop", () => {
       stopLoss: 94000, // already has SL
       takeProfits: [{ price: 97000, pctOfPosition: 0.5 }],
       liquidationPx: null,
+      trailingStopLoss: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
     });
@@ -284,6 +290,7 @@ describe("ReconcileLoop", () => {
       stopLoss: 94000,
       takeProfits: [],
       liquidationPx: null,
+      trailingStopLoss: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
     });
@@ -496,6 +503,7 @@ describe("ReconcileLoop", () => {
       stopLoss: 94000,
       takeProfits: [],
       liquidationPx: null,
+      trailingStopLoss: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
     });
@@ -528,6 +536,7 @@ describe("ReconcileLoop", () => {
       stopLoss: 94000,
       takeProfits: [],
       liquidationPx: null,
+      trailingStopLoss: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
     });
@@ -561,6 +570,7 @@ describe("ReconcileLoop", () => {
       stopLoss: 94000,
       takeProfits: [],
       liquidationPx: null,
+      trailingStopLoss: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
     });
@@ -685,6 +695,7 @@ describe("ReconcileLoop", () => {
       stopLoss: 94000,
       takeProfits: [],
       liquidationPx: null,
+      trailingStopLoss: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
     });

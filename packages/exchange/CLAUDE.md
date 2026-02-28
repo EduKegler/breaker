@@ -69,11 +69,13 @@ src/
 - Must build `@breaker/backtest` before running exchange tests (workspace dependency)
 - PositionBook is in-memory — ReconcileLoop auto-corrects via hydration/auto-close/order sync
 - HL position data does NOT include SL/TP — `recoverSlTp()` extracts them from open orders (trigger→SL, limit reduceOnly→TP)
+- Dual SL architecture: fixed SL (never moves) + trailing SL (moves favorably). Both `reduceOnly` trigger orders on HL. If daemon crashes, trailing SL order lives on the exchange. `recoverSlTp(direction)` discriminates fixed vs trailing by price ordering
+- Trailing SL placement uses place-first/cancel-after pattern — guarantees continuous coverage even if cancel fails (briefly 3 orders, all reduceOnly)
 - Signal handler has SL failure rollback (compensating transaction)
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 312 tests across 21 files
+- `pnpm test` — 324 tests across 21 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

@@ -82,4 +82,42 @@ describe("recoverSlTp", () => {
     const result = recoverSlTp("BTC", 0, orders);
     expect(result.takeProfits).toEqual([{ price: 97000, pctOfPosition: 0 }]);
   });
+
+  it("returns trailingStopLoss=null with single trigger order", () => {
+    const orders = [
+      makeOrder({ isTrigger: true, reduceOnly: true, triggerPx: 93000 }),
+    ];
+    const result = recoverSlTp("BTC", 0.01, orders, "long");
+    expect(result.stopLoss).toBe(93000);
+    expect(result.trailingStopLoss).toBeNull();
+  });
+
+  it("returns trailingStopLoss=null when no direction provided (backward compat)", () => {
+    const orders = [
+      makeOrder({ oid: 1, isTrigger: true, reduceOnly: true, triggerPx: 93000 }),
+      makeOrder({ oid: 2, isTrigger: true, reduceOnly: true, triggerPx: 94000 }),
+    ];
+    const result = recoverSlTp("BTC", 0.01, orders);
+    expect(result.trailingStopLoss).toBeNull();
+  });
+
+  it("discriminates fixed vs trailing SL for long: lower=fixed, higher=trailing", () => {
+    const orders = [
+      makeOrder({ oid: 1, isTrigger: true, reduceOnly: true, triggerPx: 93000 }),
+      makeOrder({ oid: 2, isTrigger: true, reduceOnly: true, triggerPx: 94500 }),
+    ];
+    const result = recoverSlTp("BTC", 0.01, orders, "long");
+    expect(result.stopLoss).toBe(93000);
+    expect(result.trailingStopLoss).toBe(94500);
+  });
+
+  it("discriminates fixed vs trailing SL for short: higher=fixed, lower=trailing", () => {
+    const orders = [
+      makeOrder({ oid: 1, isTrigger: true, reduceOnly: true, triggerPx: 97000 }),
+      makeOrder({ oid: 2, isTrigger: true, reduceOnly: true, triggerPx: 95500 }),
+    ];
+    const result = recoverSlTp("BTC", 0.01, orders, "short");
+    expect(result.stopLoss).toBe(97000);
+    expect(result.trailingStopLoss).toBe(95500);
+  });
 });

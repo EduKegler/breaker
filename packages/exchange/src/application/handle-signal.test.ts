@@ -135,6 +135,7 @@ describe("handleSignal", () => {
       stopLoss: 3400,
       takeProfits: [],
       liquidationPx: null,
+      trailingStopLoss: null,
       openedAt: new Date().toISOString(),
       signalId: 0,
     });
@@ -486,6 +487,7 @@ describe("handleSignal", () => {
           stopLoss: 0,         // reconcile hydrates with stopLoss=0
           takeProfits: [],      // reconcile has no TP info
           liquidationPx: null,
+          trailingStopLoss: null,
           openedAt: new Date().toISOString(),
           signalId: 0,          // reconcile has no signalId
         });

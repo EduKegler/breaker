@@ -368,6 +368,174 @@ describe("StrategyRunner", () => {
     expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).not.toHaveBeenCalled();
   });
 
+  it("places trailing SL order when level is more protective than fixed SL (long)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    // getExitLevel returns level above fixed SL (94200 in signal is entry-1000)
+    let exitLevelCall = 0;
+    strategy.getExitLevel = vi.fn(() => {
+      exitLevelCall++;
+      return exitLevelCall === 1 ? 94500 : 94800;
+    });
+    const deps = createDeps(strategy, streamer);
+    // placeStopOrder: first call is from handleSignal (fixed SL), subsequent from trailing
+    const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
+    placeStopOrder
+      .mockResolvedValueOnce({ orderId: "HL-SL-FIXED", status: "placed" })  // fixed SL
+      .mockResolvedValueOnce({ orderId: "100", status: "placed" })   // first trailing
+      .mockResolvedValueOnce({ orderId: "101", status: "placed" });  // second trailing
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Tick 1: open position (signal stopLoss = entry - 1000)
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+    const pos = deps.positionBook.get("BTC")!;
+    expect(pos.stopLoss).toBeLessThan(94500); // fixed SL is below trailing level
+
+    // Tick 2: first exit level (94500) — more protective than fixed SL → place trailing
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+    expect(placeStopOrder).toHaveBeenCalledTimes(2); // fixed + first trailing
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(94500);
+
+    // Tick 3: exit level moved up (94800) → place new, cancel old
+    streamer.addCandle(makeCandle(7));
+    await runner.tick();
+    expect(placeStopOrder).toHaveBeenCalledTimes(3);
+    expect(deps.signalHandlerDeps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 100);
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(94800);
+  });
+
+  it("does not place trailing SL when level <= fixed SL (long)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    // getExitLevel returns a level BELOW the fixed SL — not more protective
+    strategy.getExitLevel = vi.fn(() => 93000);
+    const deps = createDeps(strategy, streamer);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    // Only 1 call: the fixed SL from handleSignal
+    expect(deps.signalHandlerDeps.hlClient.placeStopOrder).toHaveBeenCalledTimes(1);
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBeNull();
+  });
+
+  it("logs error and continues when trailing SL placement fails", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    strategy.getExitLevel = vi.fn(() => 94500);
+    const deps = createDeps(strategy, streamer);
+    const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
+    placeStopOrder
+      .mockResolvedValueOnce({ orderId: "HL-SL-FIXED", status: "placed" })
+      .mockRejectedValueOnce(new Error("Exchange error"));
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // Trailing SL placement fails — should NOT throw, position still protected by fixed SL
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBeNull();
+  });
+
+  it("logs warning when cancel of old trailing SL fails", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    let exitLevelCall = 0;
+    strategy.getExitLevel = vi.fn(() => {
+      exitLevelCall++;
+      return exitLevelCall === 1 ? 94500 : 94800;
+    });
+    const deps = createDeps(strategy, streamer);
+    const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
+    placeStopOrder
+      .mockResolvedValueOnce({ orderId: "HL-SL-FIXED", status: "placed" })
+      .mockResolvedValueOnce({ orderId: "100", status: "placed" })
+      .mockResolvedValueOnce({ orderId: "101", status: "placed" });
+    (deps.signalHandlerDeps.hlClient.cancelOrder as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("Cancel failed"));
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    // Even if cancel fails, new trailing SL was placed successfully
+    streamer.addCandle(makeCandle(7));
+    await runner.tick();
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(94800);
+  });
+
+  it("recovers trailingSlOid from SQLite on warmup", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy();
+    let exitCall = 0;
+    strategy.getExitLevel = vi.fn(() => {
+      exitCall++;
+      return exitCall === 1 ? 94500 : 94800; // warmup=94500, tick=94800
+    });
+    const deps = createDeps(strategy, streamer);
+
+    // Pre-populate a position and a trailing-sl order in SQLite
+    deps.positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000,
+      takeProfits: [],
+      liquidationPx: null,
+      trailingStopLoss: 94500,
+      openedAt: "2024-01-01T00:00:00Z",
+      signalId: 1,
+    });
+    deps.signalHandlerDeps.store.insertSignal({
+      alert_id: "warm-001", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 95000, stop_loss: 94000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+    });
+    deps.signalHandlerDeps.store.insertOrder({
+      signal_id: 1, hl_order_id: "200", coin: "BTC", side: "sell",
+      size: 0.01, price: 94500, order_type: "stop", tag: "trailing-sl",
+      status: "pending", mode: "testnet", filled_at: null,
+    });
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Now simulate trailing SL moving: should cancel old oid=200
+    const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
+    placeStopOrder.mockResolvedValueOnce({ orderId: "201", status: "placed" });
+
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // The old trailing SL (oid 200) should be cancelled
+    expect(deps.signalHandlerDeps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 200);
+  });
+
   it("position is not removed from PositionBook when exit placeMarketOrder fails", async () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);

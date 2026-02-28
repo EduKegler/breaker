@@ -71,7 +71,7 @@ async function syncPositionsAndBroadcast(deps: {
   for (const hlPos of hlPositions) {
     const localPos = positionBook.get(hlPos.coin);
     if (!localPos) {
-      const recovered = recoverSlTp(hlPos.coin, hlPos.size, openOrders);
+      const recovered = recoverSlTp(hlPos.coin, hlPos.size, openOrders, hlPos.direction);
       positionBook.open({
         coin: hlPos.coin,
         direction: hlPos.direction,
@@ -80,6 +80,7 @@ async function syncPositionsAndBroadcast(deps: {
         stopLoss: recovered.stopLoss,
         takeProfits: recovered.takeProfits,
         liquidationPx: hlPos.liquidationPx,
+        trailingStopLoss: recovered.trailingStopLoss,
         openedAt: new Date().toISOString(),
         signalId: -1,
       });
@@ -87,13 +88,14 @@ async function syncPositionsAndBroadcast(deps: {
       positionBook.updateLiquidationPx(hlPos.coin, hlPos.liquidationPx);
       // Recover SL/TP if lost (e.g. after daemon restart)
       if (localPos.stopLoss === 0) {
-        const recovered = recoverSlTp(hlPos.coin, hlPos.size, openOrders);
+        const recovered = recoverSlTp(hlPos.coin, hlPos.size, openOrders, hlPos.direction);
         if (recovered.stopLoss > 0) {
           positionBook.updateStopLoss(hlPos.coin, recovered.stopLoss);
         }
         if (recovered.takeProfits.length > 0) {
           positionBook.updateTakeProfits(hlPos.coin, recovered.takeProfits);
         }
+        positionBook.updateTrailingStopLoss(hlPos.coin, recovered.trailingStopLoss);
       }
     }
   }

@@ -60,7 +60,7 @@ export class ReconcileLoop {
     // 2a. HL has position, local doesn't → hydrate
     for (const [coin, hlPos] of hlMap) {
       if (!localMap.has(coin)) {
-        const recovered = recoverSlTp(coin, hlPos.size, allOpenOrders);
+        const recovered = recoverSlTp(coin, hlPos.size, allOpenOrders, hlPos.direction);
         positionBook.open({
           coin,
           direction: hlPos.direction,
@@ -69,6 +69,7 @@ export class ReconcileLoop {
           stopLoss: recovered.stopLoss,
           takeProfits: recovered.takeProfits,
           liquidationPx: hlPos.liquidationPx,
+          trailingStopLoss: recovered.trailingStopLoss,
           openedAt: new Date().toISOString(),
           signalId: -1,
         });
@@ -95,13 +96,14 @@ export class ReconcileLoop {
 
       // Recover SL/TP if lost (e.g. after daemon restart with partial state)
       if (localPos.stopLoss === 0) {
-        const recovered = recoverSlTp(coin, hlPos.size, allOpenOrders);
+        const recovered = recoverSlTp(coin, hlPos.size, allOpenOrders, hlPos.direction);
         if (recovered.stopLoss > 0) {
           positionBook.updateStopLoss(coin, recovered.stopLoss);
         }
         if (recovered.takeProfits.length > 0) {
           positionBook.updateTakeProfits(coin, recovered.takeProfits);
         }
+        positionBook.updateTrailingStopLoss(coin, recovered.trailingStopLoss);
       }
 
       if (
