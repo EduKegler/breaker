@@ -40,6 +40,7 @@ export class StrategyRunner {
   private lastExitLevel: number | null = null;
   private trailingSlOid: number | null = null;
   private lastCandleAt = 0;
+  private entryBarIndex: number | null = null;
 
   constructor(deps: StrategyRunnerDeps) {
     this.deps = deps;
@@ -84,7 +85,7 @@ export class StrategyRunner {
           entryPrice: pos.entryPrice,
           size: pos.size,
           entryTimestamp: new Date(pos.openedAt).getTime(),
-          entryBarIndex: 0,
+          entryBarIndex: this.entryBarIndex ?? this.findEntryBarIndex(candles, pos.openedAt),
           unrealizedPnl: pos.unrealizedPnl,
           fills: [],
         },
@@ -170,7 +171,7 @@ export class StrategyRunner {
         entryPrice: pos.entryPrice,
         size: pos.size,
         entryTimestamp: new Date(pos.openedAt).getTime(),
-        entryBarIndex: 0,
+        entryBarIndex: this.entryBarIndex ?? this.findEntryBarIndex(candles, pos.openedAt),
         unrealizedPnl: pos.unrealizedPnl,
         fills: [],
       },
@@ -191,6 +192,7 @@ export class StrategyRunner {
       this.barsSinceExit = 0;
       this.lastExitLevel = null;
       this.trailingSlOid = null;
+      this.entryBarIndex = null;
       if (pos.unrealizedPnl < 0) this.consecutiveLosses++;
       else this.consecutiveLosses = 0;
       this.dailyPnl += pos.unrealizedPnl;
@@ -359,7 +361,19 @@ export class StrategyRunner {
       this.tradesToday++;
       this.lastExitLevel = null;
       this.trailingSlOid = null;
+      this.entryBarIndex = index;
     }
+  }
+
+  /** Find the candle index closest to the position's openedAt timestamp. */
+  private findEntryBarIndex(candles: Candle[], openedAt: string): number {
+    const entryTs = new Date(openedAt).getTime();
+    // Binary-style: find first candle with t >= entryTs
+    for (let i = 0; i < candles.length; i++) {
+      if (candles[i].t >= entryTs) return i;
+    }
+    // Entry was after all candles — use last index
+    return candles.length - 1;
   }
 
   private buildHigherTimeframes(candles: Candle[]): Record<string, Candle[]> {

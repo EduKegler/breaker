@@ -606,6 +606,75 @@ describe("StrategyRunner", () => {
     });
   });
 
+  it("passes correct entryBarIndex to shouldExit based on position openedAt", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+
+    // Capture the context passed to shouldExit to verify entryBarIndex
+    let capturedCtx: StrategyContext | null = null;
+    vi.mocked(strategy.shouldExit!).mockImplementation((ctx: StrategyContext) => {
+      capturedCtx = ctx;
+      return null;
+    });
+
+    const deps = createDeps(strategy, streamer);
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Open position on bar 5
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+    expect(deps.positionBook.count()).toBe(1);
+
+    // Tick with position open — shouldExit should receive entryBarIndex near 5, not 0
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+    expect(capturedCtx).not.toBeNull();
+    // Position was opened at candle 5's timestamp; entryBarIndex should be 5
+    expect(capturedCtx!.positionEntryBarIndex).toBe(5);
+  });
+
+  it("does not false-timeout position opened recently with many warmup candles", async () => {
+    // Simulate realistic scenario: 200 warmup candles, position opened 3 bars ago
+    const candles = Array.from({ length: 200 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy();
+    const deps = createDeps(strategy, streamer);
+    deps.config = { ...config, warmupBars: 200 };
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Manually open position with openedAt matching candle 198's timestamp
+    const entryCandle = candles[198];
+    deps.positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: entryCandle.c,
+      size: 0.01,
+      stopLoss: entryCandle.c - 1000,
+      takeProfits: [],
+      liquidationPx: null,
+      trailingStopLoss: null,
+      openedAt: new Date(entryCandle.t).toISOString(),
+    });
+
+    // shouldExit should get entryBarIndex=198, barsInTrade=2 (not 200!)
+    let capturedCtx: StrategyContext | null = null;
+    vi.mocked(strategy.shouldExit!).mockImplementation((ctx: StrategyContext) => {
+      capturedCtx = ctx;
+      return null;
+    });
+
+    streamer.addCandle(makeCandle(200));
+    await runner.tick();
+
+    expect(capturedCtx).not.toBeNull();
+    expect(capturedCtx!.positionEntryBarIndex).toBe(198);
+    // barsInTrade = 200 - 198 = 2 → no timeout
+  });
+
   describe("staleness and lastCandleAt", () => {
     it("forwards stale events from streamer to onStaleData", async () => {
       const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
