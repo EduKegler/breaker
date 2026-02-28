@@ -283,6 +283,33 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
         title: "SL",
       });
     }
+
+    if (pos.takeProfits) {
+      for (let i = 0; i < pos.takeProfits.length; i++) {
+        const tp = pos.takeProfits[i];
+        if (tp.price > 0) {
+          seriesRef.current.createPriceLine({
+            price: tp.price,
+            color: "#00ff88",
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `TP${i + 1}`,
+          });
+        }
+      }
+    }
+
+    if (pos.liquidationPx != null && pos.liquidationPx > 0) {
+      seriesRef.current.createPriceLine({
+        price: pos.liquidationPx,
+        color: "#ff3366",
+        lineWidth: 2,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: true,
+        title: "Liq",
+      });
+    }
   }, [positions]);
 
   return (

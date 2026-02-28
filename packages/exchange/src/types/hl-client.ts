@@ -5,6 +5,7 @@ export interface HlPosition {
   entryPrice: number;
   unrealizedPnl: number;
   leverage: number;
+  liquidationPx: number | null;
 }
 
 export interface HlOpenOrder {

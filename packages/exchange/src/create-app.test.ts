@@ -438,6 +438,7 @@ describe("Exchange server", () => {
       size: 0.01,
       stopLoss: 94000,
       takeProfits: [],
+      liquidationPx: null,
       openedAt: new Date().toISOString(),
       signalId: 1,
     });
@@ -503,6 +504,7 @@ describe("Exchange server", () => {
       size: 0.01,
       stopLoss: 94000,
       takeProfits: [],
+      liquidationPx: null,
       openedAt: new Date().toISOString(),
       signalId: 1,
     });

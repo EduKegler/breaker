@@ -206,7 +206,7 @@ describe("HyperliquidClient.fromSymbol normalization", () => {
     const sdk = createMockSdk();
     (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
       assetPositions: [
-        { position: { coin: "BTC-PERP", szi: "0.5", entryPx: "95000", unrealizedPnl: "10", leverage: { value: 5 } } },
+        { position: { coin: "BTC-PERP", szi: "0.5", entryPx: "95000", unrealizedPnl: "10", leverage: { value: 5 }, liquidationPx: "80000" } },
       ],
     });
 
@@ -221,7 +221,7 @@ describe("HyperliquidClient.fromSymbol normalization", () => {
     const sdk = createMockSdk();
     (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
       assetPositions: [
-        { position: { coin: "BTC", szi: "0.5", entryPx: "95000", unrealizedPnl: "10", leverage: { value: 5 } } },
+        { position: { coin: "BTC", szi: "0.5", entryPx: "95000", unrealizedPnl: "10", leverage: { value: 5 }, liquidationPx: null } },
       ],
     });
 
@@ -263,8 +263,8 @@ describe("HyperliquidClient input validation", () => {
       const sdk = createMockSdk();
       (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
         assetPositions: [
-          { position: { coin: "BTC", szi: "0.01", entryPx: "not-a-number", unrealizedPnl: "5", leverage: { value: 5 } } },
-          { position: { coin: "ETH", szi: "1.0", entryPx: "3500", unrealizedPnl: "10", leverage: { value: 3 } } },
+          { position: { coin: "BTC", szi: "0.01", entryPx: "not-a-number", unrealizedPnl: "5", leverage: { value: 5 }, liquidationPx: null } },
+          { position: { coin: "ETH", szi: "1.0", entryPx: "3500", unrealizedPnl: "10", leverage: { value: 3 }, liquidationPx: "2800" } },
         ],
       });
 
@@ -279,7 +279,7 @@ describe("HyperliquidClient input validation", () => {
       const sdk = createMockSdk();
       (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
         assetPositions: [
-          { position: { coin: "BTC", szi: undefined, entryPx: "95000", unrealizedPnl: "5", leverage: 5 } },
+          { position: { coin: "BTC", szi: undefined, entryPx: "95000", unrealizedPnl: "5", leverage: 5, liquidationPx: null } },
         ],
       });
 
@@ -293,7 +293,7 @@ describe("HyperliquidClient input validation", () => {
       const sdk = createMockSdk();
       (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
         assetPositions: [
-          { position: { coin: "BTC", szi: "0.01", entryPx: "95000", unrealizedPnl: "Infinity", leverage: 5 } },
+          { position: { coin: "BTC", szi: "0.01", entryPx: "95000", unrealizedPnl: "Infinity", leverage: 5, liquidationPx: null } },
         ],
       });
 
@@ -307,7 +307,7 @@ describe("HyperliquidClient input validation", () => {
       const sdk = createMockSdk();
       (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
         assetPositions: [
-          { position: { coin: "BTC", szi: "0.01", entryPx: "95000", unrealizedPnl: "5", leverage: "invalid" } },
+          { position: { coin: "BTC", szi: "0.01", entryPx: "95000", unrealizedPnl: "5", leverage: "invalid", liquidationPx: null } },
         ],
       });
 
@@ -322,7 +322,7 @@ describe("HyperliquidClient input validation", () => {
       const sdk = createMockSdk();
       (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
         assetPositions: [
-          { position: { coin: "BTC", szi: "-0.5", entryPx: "95000", unrealizedPnl: "-100", leverage: { value: 10 } } },
+          { position: { coin: "BTC", szi: "-0.5", entryPx: "95000", unrealizedPnl: "-100", leverage: { value: 10 }, liquidationPx: "100000" } },
         ],
       });
 
@@ -337,6 +337,7 @@ describe("HyperliquidClient input validation", () => {
         entryPrice: 95000,
         unrealizedPnl: -100,
         leverage: 10,
+        liquidationPx: 100000,
       });
     });
   });

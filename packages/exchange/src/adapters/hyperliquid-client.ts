@@ -233,6 +233,9 @@ export class HyperliquidClient implements HlClient {
         continue;
       }
 
+      const rawLiqPx = Number((p.position as Record<string, unknown>).liquidationPx);
+      const liquidationPx = Number.isFinite(rawLiqPx) && rawLiqPx > 0 ? rawLiqPx : null;
+
       positions.push({
         coin: this.fromSymbol(p.position.coin),
         direction: szi > 0 ? "long" : "short",
@@ -240,6 +243,7 @@ export class HyperliquidClient implements HlClient {
         entryPrice,
         unrealizedPnl,
         leverage: finiteOr(rawLeverage, 1),
+        liquidationPx,
       });
     }
     log.debug({ action: "getPositions", count: positions.length, latencyMs: Math.round(performance.now() - t0) }, "Fetched positions");

@@ -12,6 +12,8 @@ export interface LivePosition {
   entryPrice: number;
   size: number;
   stopLoss: number;
+  takeProfits: { price: number; pctOfPosition: number }[];
+  liquidationPx: number | null;
   currentPrice: number;
   unrealizedPnl: number;
   openedAt: string;

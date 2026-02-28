@@ -5,6 +5,7 @@ export interface LivePosition {
   size: number;
   stopLoss: number;
   takeProfits: { price: number; pctOfPosition: number }[];
+  liquidationPx: number | null;
   currentPrice: number;
   unrealizedPnl: number;
   openedAt: string;
@@ -30,6 +31,12 @@ export class PositionBook {
     if (!pos) return null;
     this.positions.delete(coin);
     return pos;
+  }
+
+  updateLiquidationPx(coin: string, liqPx: number | null): void {
+    const pos = this.positions.get(coin);
+    if (!pos) return;
+    pos.liquidationPx = liqPx;
   }
 
   updatePrice(coin: string, price: number): void {

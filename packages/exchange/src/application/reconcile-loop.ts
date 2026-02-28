@@ -63,6 +63,7 @@ export class ReconcileLoop {
           size: hlPos.size,
           stopLoss: 0,
           takeProfits: [],
+          liquidationPx: hlPos.liquidationPx,
           openedAt: new Date().toISOString(),
           signalId: -1,
         });
@@ -80,10 +81,14 @@ export class ReconcileLoop {
       }
     }
 
-    // 2c. Update prices for all positions that exist on both sides
+    // 2c. Update prices and liquidation for all positions that exist on both sides
     for (const [coin, hlPos] of hlMap) {
+      if (!positionBook.get(coin)) continue;
+
+      positionBook.updateLiquidationPx(coin, hlPos.liquidationPx);
+
       if (
-        positionBook.get(coin) && hlPos.size > 0
+        hlPos.size > 0
         && Number.isFinite(hlPos.unrealizedPnl) && Number.isFinite(hlPos.entryPrice)
         && hlPos.unrealizedPnl !== 0
       ) {

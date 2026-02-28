@@ -76,9 +76,12 @@ async function syncPositionsAndBroadcast(deps: {
         size: hlPos.size,
         stopLoss: 0,
         takeProfits: [],
+        liquidationPx: hlPos.liquidationPx,
         openedAt: new Date().toISOString(),
         signalId: -1,
       });
+    } else {
+      positionBook.updateLiquidationPx(hlPos.coin, hlPos.liquidationPx);
     }
   }
 

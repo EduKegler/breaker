@@ -134,6 +134,7 @@ describe("handleSignal", () => {
       size: 1,
       stopLoss: 3400,
       takeProfits: [],
+      liquidationPx: null,
       openedAt: new Date().toISOString(),
       signalId: 0,
     });
@@ -484,6 +485,7 @@ describe("handleSignal", () => {
           size: 0.01,
           stopLoss: 0,         // reconcile hydrates with stopLoss=0
           takeProfits: [],      // reconcile has no TP info
+          liquidationPx: null,
           openedAt: new Date().toISOString(),
           signalId: 0,          // reconcile has no signalId
         });

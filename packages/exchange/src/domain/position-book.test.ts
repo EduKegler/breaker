@@ -8,6 +8,7 @@ const basePos = {
   size: 0.01,
   stopLoss: 94000,
   takeProfits: [{ price: 97000, pctOfPosition: 0.5 }],
+  liquidationPx: null as number | null,
   openedAt: "2024-01-01T00:00:00Z",
   signalId: 1,
 };
@@ -136,5 +137,23 @@ describe("PositionBook", () => {
 
     const pos = book.get("BTC")!;
     expect(pos.currentPrice).toBe(96000); // unchanged
+  });
+
+  it("updates liquidation price", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+
+    expect(book.get("BTC")!.liquidationPx).toBeNull();
+
+    book.updateLiquidationPx("BTC", 85000);
+    expect(book.get("BTC")!.liquidationPx).toBe(85000);
+
+    book.updateLiquidationPx("BTC", null);
+    expect(book.get("BTC")!.liquidationPx).toBeNull();
+  });
+
+  it("ignores updateLiquidationPx for non-existent coin", () => {
+    const book = new PositionBook();
+    book.updateLiquidationPx("ETH", 2000); // should not throw
   });
 });
