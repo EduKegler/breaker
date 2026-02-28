@@ -301,11 +301,14 @@ export class HyperliquidClient implements HlClient {
       this.sdk.info.spot.getSpotClearinghouseState(walletAddress).catch(() => null),
     ]);
     const perpEquity = finiteOr(Number(perpState?.marginSummary?.accountValue), 0);
-    const spotUsdc = spotState?.balances
+    // Spot USDC `hold` is already counted in perps accountValue (collateral).
+    // Only add the free portion (total - hold) to avoid double-counting.
+    const freeSpotUsdc = spotState?.balances
       ?.filter((b: { coin: string; total: string }) => b.coin === "USDC" || b.coin === "USDC-SPOT")
-      .reduce((sum: number, b: { total: string }) => sum + finiteOr(Number(b.total), 0), 0) ?? 0;
-    const equity = perpEquity + spotUsdc;
-    log.debug({ action: "getAccountEquity", perpEquity, spotUsdc, equity, latencyMs: Math.round(performance.now() - t0) }, "Fetched account equity");
+      .reduce((sum: number, b: { total: string; hold: string }) =>
+        sum + Math.max(0, finiteOr(Number(b.total), 0) - finiteOr(Number(b.hold), 0)), 0) ?? 0;
+    const equity = perpEquity + freeSpotUsdc;
+    log.debug({ action: "getAccountEquity", perpEquity, freeSpotUsdc, equity, latencyMs: Math.round(performance.now() - t0) }, "Fetched account equity");
     return equity;
   }
 
@@ -343,16 +346,18 @@ export class HyperliquidClient implements HlClient {
       }
     }
 
-    // Perps and spot are separate clearinghouses on HL — add spot USDC to totals.
+    // Spot USDC `hold` is already counted in perps accountValue (collateral).
+    // Only add the free portion (total - hold) to avoid double-counting.
     const perpEquity = finiteOr(Number(ms?.accountValue), 0);
-    const spotUsdc = spotBalances.find((b) => b.coin === "USDC" || b.coin === "USDC-SPOT")?.total ?? 0;
+    const spotUsdcEntry = spotBalances.find((b) => b.coin === "USDC" || b.coin === "USDC-SPOT");
+    const freeSpotUsdc = Math.max(0, (spotUsdcEntry?.total ?? 0) - (spotUsdcEntry?.hold ?? 0));
 
     const result: HlAccountState = {
-      accountValue: perpEquity + spotUsdc,
+      accountValue: perpEquity + freeSpotUsdc,
       totalMarginUsed: finiteOr(Number(ms?.totalMarginUsed), 0),
       totalNtlPos: finiteOr(Number(ms?.totalNtlPos), 0),
       totalRawUsd: finiteOr(Number(ms?.totalRawUsd), 0),
-      withdrawable: finiteOr(Number(perpState?.withdrawable), 0) + spotUsdc,
+      withdrawable: finiteOr(Number(perpState?.withdrawable), 0) + freeSpotUsdc,
       spotBalances,
     };
     log.debug({ action: "getAccountState", ...result, latencyMs: Math.round(performance.now() - t0) }, "Fetched account state");

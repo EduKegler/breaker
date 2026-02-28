@@ -407,7 +407,7 @@ describe("HyperliquidClient input validation", () => {
       expect(equity).toBe(1234.56);
     });
 
-    it("includes spot USDC in equity (separate clearinghouse on HL)", async () => {
+    it("includes free spot USDC in equity (hold=0 means not in perps)", async () => {
       const sdk = createMockSdk();
       (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
         marginSummary: { accountValue: "100" },
@@ -420,6 +420,24 @@ describe("HyperliquidClient input validation", () => {
       const equity = await client.getAccountEquity("0xtest");
 
       expect(equity).toBe(115);
+    });
+
+    it("does not double-count spot USDC held as perps collateral", async () => {
+      const sdk = createMockSdk();
+      // Perps accountValue=16 already includes the USDC used as collateral
+      (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        marginSummary: { accountValue: "16" },
+      });
+      // Spot shows total=16, hold=16 (all held as perps collateral)
+      (sdk.info.spot.getSpotClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        balances: [{ coin: "USDC", total: "16", hold: "16" }],
+      });
+
+      const client = new HyperliquidClient(sdk);
+      const equity = await client.getAccountEquity("0xtest");
+
+      // Should be 16, not 32 — hold is already in perps accountValue
+      expect(equity).toBe(16);
     });
   });
 });
