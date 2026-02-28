@@ -407,7 +407,7 @@ describe("HyperliquidClient input validation", () => {
       expect(equity).toBe(1234.56);
     });
 
-    it("includes spot USDC in equity", async () => {
+    it("includes spot USDC in equity (separate clearinghouse on HL)", async () => {
       const sdk = createMockSdk();
       (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
         marginSummary: { accountValue: "100" },

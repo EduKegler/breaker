@@ -343,7 +343,7 @@ export class HyperliquidClient implements HlClient {
       }
     }
 
-    // Total equity = perps accountValue + spot USDC total
+    // Perps and spot are separate clearinghouses on HL — add spot USDC to totals.
     const perpEquity = finiteOr(Number(ms?.accountValue), 0);
     const spotUsdc = spotBalances.find((b) => b.coin === "USDC" || b.coin === "USDC-SPOT")?.total ?? 0;
 
