@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { AccountResponse } from "../types/api.js";
+import type { AccountResponse, LivePosition } from "../types/api.js";
 
 function truncateAddress(addr: string): string {
   if (addr.length <= 12) return addr;
@@ -7,9 +7,14 @@ function truncateAddress(addr: string): string {
 }
 
 function formatUsd(value: number): string {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 10_000) return `$${(value / 1_000).toFixed(1)}k`;
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(value) >= 10_000) return `$${(value / 1_000).toFixed(1)}k`;
   return `$${value.toFixed(2)}`;
+}
+
+function formatPnl(value: number): string {
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${formatUsd(value)}`;
 }
 
 function marginPct(used: number, total: number): number {
@@ -19,9 +24,10 @@ function marginPct(used: number, total: number): number {
 
 interface AccountPanelProps {
   account: AccountResponse | null;
+  positions: LivePosition[];
 }
 
-export function AccountPanel({ account }: AccountPanelProps) {
+export function AccountPanel({ account, positions }: AccountPanelProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
@@ -34,7 +40,7 @@ export function AccountPanel({ account }: AccountPanelProps) {
 
   if (!account) {
     return (
-      <section className="bg-terminal-surface border border-terminal-border rounded-sm px-5 py-3">
+      <section className="account-bar bg-terminal-surface border border-terminal-border rounded-sm px-5 py-2.5">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full border-2 border-txt-secondary/30 border-t-txt-secondary animate-spin" />
           <span className="text-xs text-txt-secondary font-mono">Loading account…</span>
@@ -43,128 +49,128 @@ export function AccountPanel({ account }: AccountPanelProps) {
     );
   }
 
+  const unrealizedPnl = positions.reduce((sum, p) => sum + p.unrealizedPnl, 0);
+  const pnlColor = unrealizedPnl >= 0 ? "text-profit" : "text-loss";
+  const pnlGlow = unrealizedPnl >= 0 ? "shadow-[0_0_8px_rgba(0,255,136,0.15)]" : "shadow-[0_0_8px_rgba(255,51,102,0.15)]";
+
   const pct = marginPct(account.totalMarginUsed, account.accountValue);
   const meterColor = pct > 80 ? "bg-loss" : pct > 50 ? "bg-amber" : "bg-profit";
-  const spotUsdc = account.spotBalances.find((b: { coin: string; total: number }) => b.coin === "USDC" || b.coin === "USDC-SPOT")?.total ?? 0;
-  const perpEquity = account.accountValue - spotUsdc;
+  const meterGlow = pct > 80 ? "shadow-[0_0_4px_rgba(255,51,102,0.4)]" : pct > 50 ? "shadow-[0_0_4px_rgba(255,170,0,0.3)]" : "shadow-[0_0_4px_rgba(0,255,136,0.2)]";
 
   return (
-    <section className="bg-terminal-surface border border-terminal-border rounded-sm px-5 py-3">
-      <div className="flex items-center gap-5 flex-wrap">
+    <section className="account-bar bg-terminal-surface border border-terminal-border rounded-sm px-5 py-2.5">
+      <div className="flex items-center gap-4 flex-wrap">
+
         {/* Wallet address */}
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[10px] uppercase tracking-wider text-txt-secondary font-semibold shrink-0">
-            Wallet
-          </span>
-          <button
-            type="button"
-            onClick={handleCopy}
-            title={account.walletAddress}
-            className="flex items-center gap-1.5 font-mono text-xs text-txt-primary/80 hover:text-profit transition-colors cursor-pointer group"
+        <button
+          type="button"
+          onClick={handleCopy}
+          title={account.walletAddress}
+          className="flex items-center gap-1.5 font-mono text-xs text-txt-secondary hover:text-profit transition-colors cursor-pointer group shrink-0"
+        >
+          <svg
+            className="w-3.5 h-3.5 text-txt-secondary/40 group-hover:text-profit/60 transition-colors"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={1.5}
           >
-            <span>{truncateAddress(account.walletAddress)}</span>
-            <svg
-              className={`w-3 h-3 transition-all ${copied ? "text-profit scale-110" : "text-txt-secondary/50 group-hover:text-profit/70"}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              {copied ? (
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              ) : (
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              )}
-            </svg>
-          </button>
-        </div>
-
-        <div className="w-px h-8 bg-terminal-border" />
-
-        {/* Total Equity — hero metric */}
-        <div className="flex flex-col items-start">
-          <span className="text-[10px] uppercase tracking-wider text-txt-secondary font-semibold">
-            Total Equity
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 013 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 013 6v3" />
+          </svg>
+          <span className="text-txt-primary/70 group-hover:text-profit transition-colors">
+            {truncateAddress(account.walletAddress)}
           </span>
-          <span className="font-mono text-lg font-medium text-txt-primary leading-tight">
+          {copied && (
+            <span className="text-[9px] text-profit font-semibold uppercase tracking-wider animate-pulse">
+              copied
+            </span>
+          )}
+        </button>
+
+        <div className="w-px h-7 bg-terminal-border" />
+
+        {/* ── Hero: Total Equity ── */}
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10px] uppercase tracking-wider text-txt-secondary font-semibold">
+            Equity
+          </span>
+          <span className="font-mono text-base font-semibold text-txt-primary leading-none">
             {formatUsd(account.accountValue)}
           </span>
         </div>
 
-        <div className="w-px h-8 bg-terminal-border" />
+        <div className="w-px h-7 bg-terminal-border" />
 
-        {/* Spot balance */}
-        <div className="flex flex-col items-start">
+        {/* ── Unrealized PnL ── */}
+        <div className="flex items-baseline gap-2">
           <span className="text-[10px] uppercase tracking-wider text-txt-secondary font-semibold">
-            Spot
+            uPnL
           </span>
-          <span className="font-mono text-sm text-profit leading-tight">
-            {formatUsd(spotUsdc)}
+          <span className={`font-mono text-sm font-medium leading-none rounded-sm px-1.5 py-0.5 ${pnlColor} ${pnlGlow} ${
+            unrealizedPnl >= 0 ? "bg-profit/[0.06]" : "bg-loss/[0.06]"
+          }`}>
+            {formatPnl(unrealizedPnl)}
           </span>
         </div>
 
-        {/* Perps equity */}
-        <div className="flex flex-col items-start">
-          <span className="text-[10px] uppercase tracking-wider text-txt-secondary font-semibold">
-            Perps
-          </span>
-          <span className="font-mono text-sm text-txt-primary/80 leading-tight">
-            {formatUsd(perpEquity)}
-          </span>
-        </div>
+        <div className="w-px h-7 bg-terminal-border hidden sm:block" />
 
-        <div className="w-px h-8 bg-terminal-border hidden sm:block" />
-
-        {/* Available */}
-        <div className="flex flex-col items-start">
+        {/* ── Available ── */}
+        <div className="flex items-baseline gap-2 hidden sm:flex">
           <span className="text-[10px] uppercase tracking-wider text-txt-secondary font-semibold">
-            Available
+            Free
           </span>
-          <span className="font-mono text-sm text-profit/80 leading-tight">
+          <span className="font-mono text-sm text-profit/80 leading-none">
             {formatUsd(account.withdrawable)}
           </span>
         </div>
 
-        <div className="w-px h-8 bg-terminal-border hidden sm:block" />
+        <div className="w-px h-7 bg-terminal-border hidden md:block" />
 
-        {/* Margin Used with visual meter */}
-        <div className="flex flex-col items-start gap-1">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-txt-secondary font-semibold">
-              Margin Used
-            </span>
-            {account.accountValue > 0 && (
-              <span className="font-mono text-[10px] text-txt-secondary/70">
-                {pct.toFixed(1)}%
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-amber leading-tight">
-              {formatUsd(account.totalMarginUsed)}
-            </span>
-            {account.accountValue > 0 && (
-              <div className="w-16 h-1.5 bg-terminal-border rounded-full overflow-hidden">
+        {/* ── Margin meter ── */}
+        <div className="flex items-center gap-2.5 hidden md:flex">
+          <span className="text-[10px] uppercase tracking-wider text-txt-secondary font-semibold">
+            Margin
+          </span>
+          <span className="font-mono text-sm text-amber leading-none">
+            {formatUsd(account.totalMarginUsed)}
+          </span>
+          {account.accountValue > 0 && (
+            <div className="flex items-center gap-1.5">
+              <div className={`w-20 h-1.5 bg-terminal-border rounded-full overflow-hidden ${meterGlow}`}>
                 <div
-                  className={`h-full rounded-full transition-all duration-700 ${meterColor}`}
+                  className={`h-full rounded-full transition-all duration-700 ease-out ${meterColor}`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
-            )}
-          </div>
+              <span className="font-mono text-[10px] text-txt-secondary/60 leading-none w-8 text-right">
+                {pct.toFixed(0)}%
+              </span>
+            </div>
+          )}
         </div>
 
-        <div className="w-px h-8 bg-terminal-border hidden md:block" />
+        <div className="w-px h-7 bg-terminal-border hidden lg:block" />
 
-        {/* Notional */}
-        <div className="flex flex-col items-start">
+        {/* ── Notional ── */}
+        <div className="flex items-baseline gap-2 hidden lg:flex">
           <span className="text-[10px] uppercase tracking-wider text-txt-secondary font-semibold">
-            Notional
+            Ntl
           </span>
-          <span className="font-mono text-sm text-txt-primary/70 leading-tight">
+          <span className="font-mono text-sm text-txt-primary/60 leading-none">
             {formatUsd(account.totalNtlPos)}
           </span>
         </div>
+
+        {/* ── Positions count (right side) ── */}
+        {positions.length > 0 && (
+          <div className="ml-auto flex items-center gap-1.5 shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
+            <span className="font-mono text-[10px] text-amber/80">
+              {positions.length} open
+            </span>
+          </div>
+        )}
       </div>
     </section>
   );

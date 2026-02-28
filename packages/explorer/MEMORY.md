@@ -4,7 +4,7 @@
 - "Tactical Terminal" redesign: single-page dashboard, dark terminal aesthetic.
 - Fonts: Outfit (display) + JetBrains Mono (data) via Google Fonts in index.html.
 - Paleta: terminal-bg (#0a0a0f), terminal-surface (#12121a), profit (#00ff88), loss (#ff3366).
-- Layout: header bar + candlestick chart (full-width) + grid [equity 60% | positions 40%] + open orders + order log.
+- Layout: header bar + account info bar + candlestick chart (full-width) + grid [equity 60% | positions 40%] + open orders + order log.
 - Noise texture via SVG data URI overlay (2.5% opacity).
 - No pages/ directory — all content in app.tsx with component composition.
 - Hybrid HTTP+WS model: initial HTTP fetch + WebSocket push updates (no more usePoll).
@@ -18,7 +18,6 @@
 
 ## Pending items
 - Add config page showing exchange configuration.
-- Add real-time PnL summary / stats panel.
 - Consider adding TP price lines from open orders (currently only entry+SL shown).
 - Add error boundaries and loading skeletons.
 - usePoll still exists in lib/use-poll.ts but is no longer imported (can be deleted).
@@ -36,5 +35,6 @@
 - Order table has sticky header with max-h-[400px] scrollable body.
 - `glow-header` class uses box-shadow with green rgba for header glow effect.
 - API interfaces live in `src/types/api.ts`; `src/lib/api.ts` only exports the `api` object.
+- AccountPanel fetches via HTTP polling (30s) since daemon has no WS event for account state. Unrealized PnL derived from positions array (real-time via WS).
 - `ToastProvider` component in `lib/toast-provider.tsx`; `useToasts` hook in `lib/use-toasts.ts`.
 - `orderTypeLabel` helper extracted to `components/order-type-label.ts` (shared by open-orders-table + position-card).

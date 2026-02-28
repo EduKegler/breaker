@@ -81,3 +81,7 @@ body::after {
 .glow-header {
   box-shadow: 0 1px 24px var(--glow-green), inset 0 -1px 0 var(--border);
 }
+
+.account-bar {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
