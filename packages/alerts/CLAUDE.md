@@ -33,6 +33,11 @@ Lightweight REST service that sends and receives WhatsApp messages via the Evolu
 ## Run
 - Start: `pnpm start` (node dist/server.js)
 
+## Known pitfalls
+- Evolution API instance name defaults to "sexta-feira" (hardcoded in env schema)
+- `sendWhatsApp()` has retry disabled (`retry: { limit: 0 }`) — callers are responsible for retry logic
+- No tests yet (supertest is a devDependency but no test files exist)
+
 ## Integration points
 - **Evolution API**: sends messages via configured instance (`EVOLUTION_API_URL`)
 - **Consumers**: webhook service and hl-broker call POST /send to deliver WhatsApp messages

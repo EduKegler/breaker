@@ -64,6 +64,11 @@ src/
 - `resolveOrderStatus()` centralizes HL→internal status mapping
 - One export per file: file name matches primary export in kebab-case
 
+## Known pitfalls
+- Must build `@breaker/backtest` before running exchange tests (workspace dependency)
+- PositionBook is in-memory — ReconcileLoop auto-corrects via hydration/auto-close/order sync
+- Signal handler has SL failure rollback (compensating transaction)
+
 ## Build and test
 - `pnpm build` — compile TypeScript
 - `pnpm test` — 295 tests across 20 files

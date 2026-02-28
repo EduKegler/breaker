@@ -29,12 +29,15 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 
 ## Stack
 - Vite 6 + React 19 + TypeScript
-- Tailwind CSS 3 for styling
-- recharts for equity curve
+- Tailwind CSS 3 for styling (custom colors: terminal-*, profit, loss, amber)
+- recharts for equity curve, lightweight-charts v5.1 for candlestick chart
+- Fonts: Outfit (display) + JetBrains Mono (data) via Google Fonts
 
 ## Data flow
-- Vite dev proxy: `/api/*` → `http://localhost:3200/*`
-- Exchange endpoints: /health, /positions, /orders, /equity, /config
+- Hybrid HTTP+WS model: initial HTTP fetch + WebSocket push updates
+- Vite dev proxy: `/api/*` → `http://localhost:3200/*`, `/ws` with `ws: true`
+- Exchange endpoints: /health, /positions, /orders, /equity, /config, /open-orders
+- WS events: "candle" appends new candle, "signals" replaces signals array
 
 ## Build and test
 - `pnpm dev` — Vite dev server on port 5173
@@ -42,6 +45,9 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 - `pnpm test` — vitest (passWithNoTests, frontend is manually tested)
 
 ## Key patterns
-- usePoll hook: auto-refresh with configurable interval, error/loading state
+- useWebSocket hook with auto-reconnect (3s), WS status indicator in header
+- "Tactical Terminal" dark aesthetic: terminal-bg (#0a0a0f), noise overlay via SVG feTurbulence
+- Entry markers: blue (auto) / yellow (manual), "L"/"S" text, size 1
+- API interfaces in `src/types/api.ts`; `src/lib/api.ts` exports the `api` object
+- `ToastProvider` in `lib/toast-provider.tsx`; `useToasts` hook in `lib/use-toasts.ts`
 - No backend server needed — Vite proxy handles API routing in dev
-- Dark theme (gray-950 bg, gray-100 text) — consistent with terminal aesthetic

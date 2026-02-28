@@ -47,6 +47,11 @@ TradingView alert receiver that validates payloads, deduplicates signals (Redis 
 - Logger instance and middleware exported from `src/lib/logger.ts`.
 - Log levels: `debug`, `info`, `warn`, `error`.
 
+## Known pitfalls
+- Rate limiters cast `as unknown as express.RequestHandler` to bridge @types/express-serve-static-core v4/v5 mismatch with express-rate-limit v8
+- `dailyLimit` is private to `server.ts`; tests access it via `app.locals.dailyLimit`
+- `env.ts` loads dotenv from `infra/.env` at import time — file must exist or env vars must be set before import
+
 ## Integration points
 - **TradingView**: receives alert webhooks (POST with secret auth)
 - **alerts**: forwards formatted messages via `GATEWAY_URL` (POST /send)

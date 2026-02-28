@@ -84,12 +84,14 @@ If `$ARGUMENTS` contains a message, use it as the base for the commit message.
 
 ### 7. Knowledge Base drift check
 
-After pushing, do a quick cross-check of `docs/knowledge-base.md` against the actual codebase:
+**MANDATORY**: you MUST actually read `docs/knowledge-base.md` using the Read tool. Do NOT skip this step or assume the file doesn't exist without checking.
 
-- **Strategy descriptions**: do indicators, entry rules, exit rules, and free variables described in the KB match the actual `.pine` files in `assets/`?
-- **BREAKER Results tables**: are PF, WR, DD, Trades, PnL values current or stale?
-- **Config values**: do criteria, profiles, and guardrails described in the KB match `breaker-config.json`?
-- **Operational limits**: do daily limits, consecutive loss rules, session descriptions match the Pine code?
-- **Iron rules / glossary**: any values that contradict what the code actually does?
+1. Read `docs/knowledge-base.md` (if the file doesn't exist, say so and skip the rest of this step).
+2. Cross-check the KB content against the actual codebase:
+   - **Strategy descriptions**: do indicators, entry rules, exit rules, and free variables described in the KB match the actual `.pine` files in `assets/`?
+   - **BREAKER Results tables**: are PF, WR, DD, Trades, PnL values current or stale?
+   - **Config values**: do criteria, profiles, and guardrails described in the KB match `breaker-config.json`?
+   - **Operational limits**: do daily limits, consecutive loss rules, session descriptions match the Pine code?
+   - **Iron rules / glossary**: any values that contradict what the code actually does?
 
 **DO NOT update** `knowledge-base.md` — only **list the discrepancies** found (if any) so the user can decide what to fix. If everything matches, say so.

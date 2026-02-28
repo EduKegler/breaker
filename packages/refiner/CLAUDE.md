@@ -40,6 +40,10 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - JSON parsing: `safeJsonParse()` from `src/lib/safe-json.ts` — `jsonrepair` for LLM output, Zod schemas for validation
 - State management: xstate v5 machine in `src/loop/state-machine.ts` advises phase/counter state; for-loop still drives iteration flow
 
+## Known pitfalls
+- Can't run breaker inside Claude Code session (nested session protection); use `unset CLAUDECODE`
+- `run-engine-child.ts` child-process path not yet E2E tested (only in-process path validated)
+
 ## Build and test (breaker-specific)
 - Coverage: `pnpm vitest run --coverage`
 - Tests: `pnpm test` (352 tests across 27 files)
