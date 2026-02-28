@@ -8,6 +8,7 @@ import type {
   SignalRow,
   ReplaySignal,
   ConfigResponse,
+  AccountResponse,
 } from "../types/api.js";
 
 const BASE = "/api";
@@ -58,6 +59,7 @@ interface QuickSignalResponse {
 
 export const api = {
   health: () => fetchJson<HealthResponse>("/health"),
+  account: () => fetchJson<AccountResponse>("/account"),
   positions: () => fetchJson<{ positions: LivePosition[] }>("/positions"),
   orders: () => fetchJson<{ orders: OrderRow[] }>("/orders"),
   equity: () => fetchJson<{ snapshots: EquitySnapshot[] }>("/equity"),

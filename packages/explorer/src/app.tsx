@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "./lib/api.js";
-import type { HealthResponse, LivePosition, OrderRow, EquitySnapshot, ConfigResponse, OpenOrder, CandleData, SignalRow, ReplaySignal } from "./types/api.js";
+import type { HealthResponse, LivePosition, OrderRow, EquitySnapshot, ConfigResponse, OpenOrder, CandleData, SignalRow, ReplaySignal, AccountResponse } from "./types/api.js";
 import { useWebSocket, type WsMessage, type WsStatus } from "./lib/use-websocket.js";
 import { useToasts } from "./lib/use-toasts.js";
 import { EquityChart } from "./components/equity-chart.js";
@@ -10,6 +10,7 @@ import { OrderTable } from "./components/order-table.js";
 import { OpenOrdersTable } from "./components/open-orders-table.js";
 import { SignalPopover } from "./components/signal-popover.js";
 import { ToastContainer } from "./components/toast-container.js";
+import { AccountPanel } from "./components/account-panel.js";
 
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -49,6 +50,7 @@ export function App() {
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [signals, setSignals] = useState<SignalRow[]>([]);
   const [replaySignals, setReplaySignals] = useState<ReplaySignal[]>([]);
+  const [account, setAccount] = useState<AccountResponse | null>(null);
   const [httpError, setHttpError] = useState(false);
   const [showSignalPopover, setShowSignalPopover] = useState(false);
   const { addToast } = useToasts();
@@ -105,7 +107,16 @@ export function App() {
       api.candles().then((r) => setCandles(r.candles)).catch(() => {}),
       api.signals().then((r) => setSignals(r.signals)).catch(() => {}),
       api.strategySignals().then((r) => setReplaySignals(r.signals)).catch(() => {}),
+      api.account().then(setAccount).catch(() => {}),
     ]);
+  }, []);
+
+  // Periodic account refresh (no WS event for account state)
+  useEffect(() => {
+    const id = setInterval(() => {
+      api.account().then(setAccount).catch(() => {});
+    }, 30_000);
+    return () => clearInterval(id);
   }, []);
 
   // WebSocket handler
@@ -278,6 +289,9 @@ export function App() {
 
       {/* ── Main grid ─────────────────────── */}
       <main className="p-4 space-y-4">
+        {/* Account info bar */}
+        <AccountPanel account={account} positions={positions} />
+
         {/* Candlestick chart (full width) */}
         <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
