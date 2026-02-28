@@ -23,6 +23,7 @@ describe("SqliteStore", () => {
       take_profits: JSON.stringify([{ price: 97000, pctOfPosition: 0.5 }]),
       risk_check_passed: 1,
       risk_check_reason: null,
+      strategy_name: null,
     };
 
     it("inserts and checks signal existence", () => {
@@ -59,6 +60,7 @@ describe("SqliteStore", () => {
         take_profits: "[]",
         risk_check_passed: 1,
         risk_check_reason: null,
+        strategy_name: null,
       });
 
       const orderId = store.insertOrder({
@@ -93,6 +95,7 @@ describe("SqliteStore", () => {
         take_profits: "[]",
         risk_check_passed: 1,
         risk_check_reason: null,
+        strategy_name: null,
       });
 
       store.insertOrder({
@@ -131,6 +134,7 @@ describe("SqliteStore", () => {
         take_profits: "[]",
         risk_check_passed: 1,
         risk_check_reason: null,
+        strategy_name: null,
       });
 
       // Insert mix of orders
@@ -167,6 +171,7 @@ describe("SqliteStore", () => {
         alert_id: "sig-oid", source: "strategy-runner", asset: "BTC",
         side: "LONG", entry_price: 95000, stop_loss: 94000,
         take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+        strategy_name: null,
       });
       store.insertOrder({
         signal_id: 1, hl_order_id: "555", coin: "BTC", side: "sell",
@@ -197,6 +202,7 @@ describe("SqliteStore", () => {
         take_profits: "[]",
         risk_check_passed: 1,
         risk_check_reason: null,
+        strategy_name: null,
       });
 
       store.insertOrder({

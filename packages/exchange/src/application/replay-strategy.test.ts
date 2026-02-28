@@ -50,6 +50,7 @@ describe("replayStrategy", () => {
     expect(signals[0].direction).toBe("long");
     expect(signals[0].entryPrice).toBe(candles[10].c);
     expect(signals[0].stopLoss).toBe(candles[10].l);
+    expect(signals[0].strategyName).toBe("");
     expect(signals[1].t).toBe(candles[30].t);
   });
 
@@ -155,6 +156,19 @@ describe("replayStrategy", () => {
     expect(signals).toHaveLength(1);
     expect(signals[0].direction).toBe("short");
     expect(signals[0].entryPrice).toBe(candles[5].c); // null → close
+  });
+
+  it("propagates strategyName to output signals", () => {
+    const candles = makeCandles(20);
+    const signals = replayStrategy({
+      strategyFactory: () => makeStrategy([5]),
+      candles,
+      interval: "15m" as CandleInterval,
+      strategyName: "donchian-adx",
+    });
+
+    expect(signals).toHaveLength(1);
+    expect(signals[0].strategyName).toBe("donchian-adx");
   });
 
   it("uses strategy factory for fresh instance", () => {

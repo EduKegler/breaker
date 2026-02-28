@@ -340,6 +340,7 @@ describe("Exchange server", () => {
       take_profits: JSON.stringify([{ price: 97000, pctOfPosition: 0.5 }]),
       risk_check_passed: 1,
       risk_check_reason: null,
+      strategy_name: "donchian-adx",
     });
 
     const app = createApp(deps);

@@ -79,6 +79,7 @@ export interface SignalRow {
   stop_loss: number;
   take_profits: string;
   risk_check_passed: number;
+  strategy_name: string | null;
   created_at: string;
 }
 
@@ -88,6 +89,7 @@ export interface ReplaySignal {
   entryPrice: number;
   stopLoss: number;
   comment: string;
+  strategyName: string;
 }
 
 export interface AccountResponse {

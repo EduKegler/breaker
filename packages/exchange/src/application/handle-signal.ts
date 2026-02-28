@@ -32,6 +32,7 @@ export interface HandleSignalInput {
   coin: string;
   leverage: number;
   autoTradingEnabled: boolean;
+  strategyName?: string;
 }
 
 interface HandleSignalResult {
@@ -113,6 +114,7 @@ async function handleSignalInner(
       take_profits: JSON.stringify(intent.takeProfits),
       risk_check_passed: 0,
       risk_check_reason: "Size is zero",
+      strategy_name: input.strategyName ?? null,
     });
     return { success: false, signalId, reason: "Size is zero" };
   }
@@ -139,6 +141,7 @@ async function handleSignalInner(
     take_profits: JSON.stringify(intent.takeProfits),
     risk_check_passed: riskResult.passed ? 1 : 0,
     risk_check_reason: riskResult.reason,
+    strategy_name: input.strategyName ?? null,
   });
 
   await eventLog.append({

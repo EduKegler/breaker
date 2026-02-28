@@ -190,6 +190,7 @@ export function createApp(deps: ServerDeps): express.Express {
         strategyFactory: () => deps.strategyFactory(stratCfg.name),
         candles,
         interval,
+        strategyName: stratCfg.name,
       });
       replayCache.set(cacheKey, { cachedAt: now, signals });
       res.json({ signals });
@@ -292,6 +293,7 @@ export function createApp(deps: ServerDeps): express.Express {
           coin,
           leverage: coinCfg.leverage,
           autoTradingEnabled: true, // API signals always allowed
+          strategyName: "manual",
         },
         deps.signalHandlerDeps,
       );
@@ -449,6 +451,7 @@ export function createApp(deps: ServerDeps): express.Express {
           coin,
           leverage: coinCfg.leverage,
           autoTradingEnabled: true, // Manual signals always allowed
+          strategyName: "manual",
         },
         deps.signalHandlerDeps,
       );

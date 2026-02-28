@@ -90,6 +90,7 @@ function createDeps(strategy: Strategy, streamer: ReturnType<typeof createMockSt
     warmupBars: 5,
     autoTradingEnabled: true,
     strategy,
+    strategyConfigName: "donchian-adx",
     streamer: streamer as unknown as StrategyRunnerDeps["streamer"],
     positionBook,
     eventLog: { append: vi.fn() },
@@ -523,6 +524,7 @@ describe("StrategyRunner", () => {
       alert_id: "warm-001", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: "donchian-adx",
     });
     deps.signalHandlerDeps.store.insertOrder({
       signal_id: 1, hl_order_id: "200", coin: "BTC", side: "sell",

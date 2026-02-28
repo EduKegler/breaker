@@ -7,12 +7,14 @@ export interface ReplaySignal {
   entryPrice: number;
   stopLoss: number;
   comment: string;
+  strategyName: string;
 }
 
 export interface ReplayParams {
   strategyFactory: () => Strategy;
   candles: Candle[];
   interval: CandleInterval;
+  strategyName?: string;
 }
 
 export function replayStrategy(params: ReplayParams): ReplaySignal[] {
@@ -54,6 +56,7 @@ export function replayStrategy(params: ReplayParams): ReplaySignal[] {
         entryPrice: signal.entryPrice ?? candles[i].c,
         stopLoss: signal.stopLoss,
         comment: signal.comment,
+        strategyName: params.strategyName ?? "",
       });
     }
   }

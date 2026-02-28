@@ -320,6 +320,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-001", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "123", coin: "BTC", side: "sell",
@@ -349,6 +350,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-002", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "456", coin: "BTC", side: "sell",
@@ -377,6 +379,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-003", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "789", coin: "BTC", side: "sell",
@@ -406,6 +409,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-004", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: null, coin: "BTC", side: "buy",
@@ -430,6 +434,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-005", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "999", coin: "BTC", side: "sell",
@@ -477,6 +482,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-nan", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "unknown", coin: "BTC", side: "sell",
@@ -616,6 +622,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-orphan", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "77777", coin: "BTC", side: "sell",
@@ -642,6 +649,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-active", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "88888", coin: "BTC", side: "sell",
@@ -672,6 +680,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-err", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "555", coin: "BTC", side: "sell",
@@ -813,6 +822,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-006", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "888", coin: "BTC", side: "sell",

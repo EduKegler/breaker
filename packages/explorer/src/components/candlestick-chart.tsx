@@ -21,6 +21,19 @@ function parseUtc(dt: string): Date {
   return new Date(dt.endsWith("Z") ? dt : dt + "Z");
 }
 
+const STRATEGY_ABBREVIATIONS: Record<string, string> = {
+  "donchian-adx": "B",
+  "keltner-rsi2": "MR",
+  "manual": "M",
+};
+
+function strategyLabel(direction: "long" | "short", strategyName: string | null | undefined): string {
+  const dir = direction === "long" ? "L" : "S";
+  if (!strategyName) return dir;
+  const abbr = STRATEGY_ABBREVIATIONS[strategyName] ?? strategyName.slice(0, 2).toUpperCase();
+  return `${dir}(${abbr})`;
+}
+
 interface CandlestickChartProps {
   candles: CandleData[];
   signals: SignalRow[];
@@ -214,7 +227,7 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
         position: isLong ? "belowBar" : "aboveBar",
         color: "#3b82f6",
         shape: isLong ? "arrowUp" : "arrowDown",
-        text: isLong ? "L" : "S",
+        text: strategyLabel(rs.direction, rs.strategyName),
         size: 1,
       });
     }
@@ -238,12 +251,13 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
 
       const isLong = s.side === "LONG";
       const isAuto = s.source === "strategy-runner";
+      const direction: "long" | "short" = isLong ? "long" : "short";
       markers.push({
         time: toChartTime(closestT),
         position: isLong ? "belowBar" : "aboveBar",
         color: isAuto ? "#3b82f6" : "#eab308",
         shape: isLong ? "arrowUp" : "arrowDown",
-        text: isLong ? "L" : "S",
+        text: strategyLabel(direction, s.strategy_name),
         size: 1,
       });
     }

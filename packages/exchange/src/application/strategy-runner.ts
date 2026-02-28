@@ -24,6 +24,7 @@ export interface StrategyRunnerDeps {
   warmupBars: number;
   autoTradingEnabled: boolean;
   strategy: Strategy;
+  strategyConfigName: string;
   streamer: CandleStreamer;
   positionBook: PositionBook;
   signalHandlerDeps: SignalHandlerDeps;
@@ -372,6 +373,7 @@ export class StrategyRunner {
         coin: this.deps.coin,
         leverage: this.deps.leverage,
         autoTradingEnabled: this.deps.autoTradingEnabled,
+        strategyName: this.deps.strategyConfigName,
       },
       this.deps.signalHandlerDeps,
     );

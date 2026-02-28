@@ -245,6 +245,7 @@ async function main() {
         warmupBars: strat.warmupBars,
         autoTradingEnabled: strat.autoTradingEnabled,
         strategy,
+        strategyConfigName: strat.name,
         streamer,
         positionBook,
         signalHandlerDeps,

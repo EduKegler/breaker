@@ -11,6 +11,7 @@ interface SignalRow {
   take_profits: string;
   risk_check_passed: number;
   risk_check_reason: string | null;
+  strategy_name: string | null;
   created_at?: string;
 }
 
@@ -107,12 +108,19 @@ export class SqliteStore {
         open_positions INTEGER NOT NULL
       );
     `);
+
+    // Additive migration: strategy_name column (idempotent)
+    try {
+      this.db.exec("ALTER TABLE signals ADD COLUMN strategy_name TEXT");
+    } catch {
+      // Column already exists — ignore
+    }
   }
 
   insertSignal(row: Omit<SignalRow, "id" | "created_at">): number {
     const stmt = this.db.prepare(`
-      INSERT INTO signals (alert_id, source, asset, side, entry_price, stop_loss, take_profits, risk_check_passed, risk_check_reason)
-      VALUES (@alert_id, @source, @asset, @side, @entry_price, @stop_loss, @take_profits, @risk_check_passed, @risk_check_reason)
+      INSERT INTO signals (alert_id, source, asset, side, entry_price, stop_loss, take_profits, risk_check_passed, risk_check_reason, strategy_name)
+      VALUES (@alert_id, @source, @asset, @side, @entry_price, @stop_loss, @take_profits, @risk_check_passed, @risk_check_reason, @strategy_name)
     `);
     const result = stmt.run(row);
     return result.lastInsertRowid as number;
