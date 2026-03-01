@@ -3,6 +3,7 @@ import { LineStyle, type ISeriesApi, type SeriesType, type Time } from "lightwei
 import type { RefObject } from "react";
 import type { LivePosition } from "../types/api.js";
 import { parseUtc } from "./parse-utc.js";
+import { toChartTime } from "./to-chart-time.js";
 import { PartialPriceLinesPrimitive, type PartialLine } from "./primitives/partial-price-lines.js";
 
 export interface UseChartPriceLinesOptions {
@@ -38,7 +39,7 @@ export function useChartPriceLines(opts: UseChartPriceLinesOptions): void {
     }
 
     const pos = opts.positions[0];
-    const openedAt = (parseUtc(pos.openedAt).getTime() / 1000) as Time;
+    const openedAt = toChartTime(parseUtc(pos.openedAt).getTime());
 
     // P&L calculation for entry line title
     const pnl = pos.unrealizedPnl;

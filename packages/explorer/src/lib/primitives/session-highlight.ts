@@ -8,6 +8,7 @@ import type {
   IChartApiBase,
 } from "lightweight-charts";
 import type { CanvasTarget, BitmapCoordinatesRenderingScope } from "./canvas-types.js";
+import { chartTimeToUtcSec } from "../to-chart-time.js";
 
 interface SessionDef {
   name: string;
@@ -101,7 +102,8 @@ export class SessionHighlightPrimitive implements ISeriesPrimitive<Time> {
       let blockEnd: number | null = null;
 
       for (const t of this._candleTimes) {
-        const date = new Date(t * 1000);
+        const utcSec = chartTimeToUtcSec(t);
+        const date = new Date(utcSec * 1000);
         const hour = date.getUTCHours();
         const inSession = session.startHour < session.endHour
           ? hour >= session.startHour && hour < session.endHour

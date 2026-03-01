@@ -129,8 +129,8 @@ export function RangeSelector({ candles, onRangeChange, onSetUpdate }: RangeSele
       if (draggingRef.current) return; // Suppress sync during drag
       const c = candlesRef.current;
       if (c.length === 0) return;
-      const firstTime = c[0].t / 1000;
-      const lastTime = c[c.length - 1].t / 1000;
+      const firstTime = toChartTime(c[0].t) as number;
+      const lastTime = toChartTime(c[c.length - 1].t) as number;
       const totalRange = lastTime - firstTime;
       if (totalRange <= 0) return;
       const newLeft = Math.max(0, Math.min(100, ((from as number) - firstTime) / totalRange * 100));
@@ -146,8 +146,8 @@ export function RangeSelector({ candles, onRangeChange, onSetUpdate }: RangeSele
   const emitRange = useCallback((lPct: number, rPct: number) => {
     const c = candlesRef.current;
     if (c.length === 0) return;
-    const firstTime = c[0].t / 1000;
-    const lastTime = c[c.length - 1].t / 1000;
+    const firstTime = toChartTime(c[0].t) as number;
+    const lastTime = toChartTime(c[c.length - 1].t) as number;
     const totalRange = lastTime - firstTime;
     const from = (firstTime + (lPct / 100) * totalRange) as Time;
     const to = (firstTime + (rPct / 100) * totalRange) as Time;

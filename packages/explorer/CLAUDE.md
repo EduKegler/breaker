@@ -78,7 +78,8 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 - lw-charts v5.1 subscribe/unsubscribe: `subscribeVisibleLogicalRangeChange(handler)` returns void — use separate `unsubscribeVisibleLogicalRangeChange(handler)` for cleanup
 - RangeSelector ↔ CandlestickChart sync uses imperative refs (not React state) to avoid App re-renders on every scroll frame
 - Session/VPVR primitives only recalculate when `candles.length` changes (not on every in-progress tick update)
-- Shared helpers: `toChartTime()`, `toOhlcData()`, `toOhlcvData()` in `lib/to-chart-time.ts`; `INTERVAL_MS` in `lib/interval-ms.ts`
+- Shared helpers: `toChartTime()`, `toOhlcData()`, `toOhlcvData()`, `chartTimeToUtcSec()` in `lib/to-chart-time.ts`; `INTERVAL_MS` in `lib/interval-ms.ts`
+- **Timezone**: lw-charts has no native TZ support — `toChartTime()` subtracts `TZ_OFFSET_SEC` (computed once from `getTimezoneOffset()`) so the X-axis shows local time. Use `chartTimeToUtcSec()` to reverse when real UTC is needed (e.g., session-highlight hour detection)
 - Timeframe switcher: `selectedInterval: string | null` (null = streaming interval); alt candles fetched via `api.candles({ interval })`
 - API interfaces in `src/types/api.ts`; `src/lib/api.ts` exports the `api` object
 - `ToastProvider` in `lib/toast-provider.tsx`; `useToasts` hook in `lib/use-toasts.ts`

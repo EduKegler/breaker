@@ -6,7 +6,7 @@ import { useChartCandles } from "../lib/use-chart-candles.js";
 import { useChartMarkers } from "../lib/use-chart-markers.js";
 import { useChartPriceLines } from "../lib/use-chart-price-lines.js";
 import { useKeyboardShortcuts } from "../lib/use-keyboard-shortcuts.js";
-import { toOhlcvData } from "../lib/to-chart-time.js";
+import { toChartTime, toOhlcvData } from "../lib/to-chart-time.js";
 import { SessionHighlightPrimitive } from "../lib/primitives/session-highlight.js";
 import { VolumeProfilePrimitive } from "../lib/primitives/volume-profile.js";
 
@@ -130,7 +130,7 @@ export function CandlestickChart({
       const prim = new SessionHighlightPrimitive();
       seriesRef.current.attachPrimitive(prim);
       sessionPrimRef.current = prim;
-      const times = candles.map((c) => c.t / 1000);
+      const times = candles.map((c) => toChartTime(c.t) as number);
       sessionCandlesLenRef.current = candles.length;
       prim.setCandleTimes(times);
       return () => {
@@ -146,7 +146,7 @@ export function CandlestickChart({
   useEffect(() => {
     if (sessionPrimRef.current && candles.length > 0 && candles.length !== sessionCandlesLenRef.current) {
       sessionCandlesLenRef.current = candles.length;
-      sessionPrimRef.current.setCandleTimes(candles.map((c) => c.t / 1000));
+      sessionPrimRef.current.setCandleTimes(candles.map((c) => toChartTime(c.t) as number));
     }
   }, [candles, showSessions]);
 
