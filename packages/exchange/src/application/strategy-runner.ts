@@ -6,7 +6,7 @@ import {
   intervalToMs,
   computeMinWarmupBars,
 } from "@breaker/backtest";
-import type { Strategy, Candle, CandleInterval, StrategyContext } from "@breaker/backtest";
+import type { Strategy, Signal, Candle, CandleInterval, StrategyContext } from "@breaker/backtest";
 import type { CandleStreamer } from "../adapters/candle-streamer.js";
 import type { ExchangeConfig } from "../types/config.js";
 import type { PositionBook } from "../domain/position-book.js";
@@ -51,6 +51,35 @@ export class StrategyRunner {
 
   constructor(deps: StrategyRunnerDeps) {
     this.deps = deps;
+  }
+
+  /**
+   * Generate a signal from the strategy using the current candle state.
+   * Used by /quick-signal to delegate SL/TP computation to the strategy
+   * artifact — keeps the endpoint strategy-agnostic.
+   */
+  generateSignal(): Signal | null {
+    const candles = this.deps.streamer.getCandles();
+    if (candles.length === 0) return null;
+
+    const index = candles.length - 1;
+    const higherTimeframes = this.buildHigherTimeframes(candles);
+
+    // Re-init indicator caches so they cover all current candles
+    this.deps.strategy.init?.(candles, higherTimeframes);
+
+    const ctx = buildContext({
+      candles,
+      index,
+      position: null,
+      higherTimeframes,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+      consecutiveLosses: 0,
+    });
+
+    return this.deps.strategy.onCandle(ctx);
   }
 
   async warmup(): Promise<void> {
@@ -517,7 +546,7 @@ export class StrategyRunner {
   }
 
   getStrategyName(): string {
-    return this.deps.strategy.name;
+    return this.deps.strategyConfigName;
   }
 
   setAutoTradingEnabled(enabled: boolean): void {

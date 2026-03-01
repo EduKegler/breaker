@@ -964,4 +964,79 @@ describe("StrategyRunner", () => {
       expect(initCount).toBeGreaterThan(initCountBefore);
     });
   });
+
+  describe("generateSignal", () => {
+    it("returns strategy signal when conditions are met", async () => {
+      const candles = Array.from({ length: 10 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      // Signal on last bar (index 9)
+      const strategy = createTestStrategy(9);
+      const deps = createDeps(strategy, streamer);
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      const signal = runner.generateSignal();
+      expect(signal).not.toBeNull();
+      expect(signal!.direction).toBe("long");
+      expect(signal!.stopLoss).toBeDefined();
+      expect(signal!.takeProfits).toHaveLength(1);
+    });
+
+    it("returns null when strategy has no signal", async () => {
+      const candles = Array.from({ length: 10 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      // No signal on any bar
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      const signal = runner.generateSignal();
+      expect(signal).toBeNull();
+    });
+
+    it("returns null when no candles available", () => {
+      const streamer = createMockStreamer([]);
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+
+      const runner = new StrategyRunner(deps);
+      const signal = runner.generateSignal();
+      expect(signal).toBeNull();
+    });
+
+    it("calls init before onCandle to refresh indicator caches", async () => {
+      const candles = Array.from({ length: 10 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy(9);
+      const deps = createDeps(strategy, streamer);
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      const initBefore = (strategy.init as ReturnType<typeof vi.fn>).mock.calls.length;
+      runner.generateSignal();
+      const initAfter = (strategy.init as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(initAfter).toBeGreaterThan(initBefore);
+    });
+  });
+
+  describe("getStrategyName", () => {
+    it("returns the config name, not the strategy display name", () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy: Strategy = {
+        name: "BTC 15m Breakout — Donchian ADX",
+        params: {},
+        onCandle: () => null,
+      };
+      const deps = createDeps(strategy, streamer);
+      deps.strategyConfigName = "donchian-adx";
+
+      const runner = new StrategyRunner(deps);
+      expect(runner.getStrategyName()).toBe("donchian-adx");
+    });
+  });
 });

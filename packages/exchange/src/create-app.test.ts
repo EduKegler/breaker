@@ -816,7 +816,7 @@ describe("Exchange server", () => {
       expect(res.body.error).toContain("Unknown coin");
     });
 
-    it("uses atrLen from strategy params when available", async () => {
+    it("uses atrLen from strategy params when available (ATR fallback)", async () => {
       const candles = makeCandles(30);
       btcStreamer.getCandles.mockReturnValue(candles);
 
@@ -833,6 +833,105 @@ describe("Exchange server", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.status).toBe("executed");
+    });
+
+    it("uses strategy signal when runner generates matching direction", async () => {
+      const candles = makeCandles(30);
+      btcStreamer.getCandles.mockReturnValue(candles);
+
+      const mockRunner = {
+        getCoin: () => "BTC",
+        getStrategyName: () => "donchian-adx",
+        generateSignal: () => ({
+          direction: "long" as const,
+          entryPrice: 95000,
+          stopLoss: 93500,
+          takeProfits: [{ price: 97000, pctOfPosition: 0.5 }],
+          comment: "Strategy signal",
+        }),
+      };
+      deps.runners = [mockRunner] as any;
+
+      const app = createApp(deps);
+      const res = await request(app)
+        .post("/quick-signal")
+        .send({ coin: "BTC", direction: "long" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("executed");
+      // SL comes from the strategy signal (93500), not ATR
+      expect(res.body.stopLoss).toBe(93500);
+    });
+
+    it("falls back to ATR when runner signal has opposite direction", async () => {
+      const candles = makeCandles(30);
+      btcStreamer.getCandles.mockReturnValue(candles);
+
+      const mockRunner = {
+        getCoin: () => "BTC",
+        getStrategyName: () => "donchian-adx",
+        generateSignal: () => ({
+          direction: "short" as const,
+          entryPrice: 95000,
+          stopLoss: 96500,
+          takeProfits: [{ price: 93000, pctOfPosition: 0.5 }],
+          comment: "Strategy signal",
+        }),
+      };
+      deps.runners = [mockRunner] as any;
+
+      const app = createApp(deps);
+      const res = await request(app)
+        .post("/quick-signal")
+        .send({ coin: "BTC", direction: "long" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("executed");
+      // SL comes from ATR fallback — below price for a long
+      expect(res.body.stopLoss).toBeLessThan(candles[candles.length - 1].c);
+    });
+
+    it("falls back to ATR when runner returns null signal", async () => {
+      const candles = makeCandles(30);
+      btcStreamer.getCandles.mockReturnValue(candles);
+
+      const mockRunner = {
+        getCoin: () => "BTC",
+        getStrategyName: () => "donchian-adx",
+        generateSignal: () => null,
+      };
+      deps.runners = [mockRunner] as any;
+
+      const app = createApp(deps);
+      const res = await request(app)
+        .post("/quick-signal")
+        .send({ coin: "BTC", direction: "long" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("executed");
+      expect(res.body.stopLoss).toBeLessThan(candles[candles.length - 1].c);
+    });
+
+    it("falls back to ATR when no runner matches coin+strategy", async () => {
+      const candles = makeCandles(30);
+      btcStreamer.getCandles.mockReturnValue(candles);
+
+      const mockRunner = {
+        getCoin: () => "ETH",
+        getStrategyName: () => "donchian-adx",
+        generateSignal: () => null,
+      };
+      deps.runners = [mockRunner] as any;
+
+      const app = createApp(deps);
+      const res = await request(app)
+        .post("/quick-signal")
+        .send({ coin: "BTC", direction: "long" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe("executed");
+      // No runner for BTC → ATR fallback
+      expect(res.body.stopLoss).toBeLessThan(candles[candles.length - 1].c);
     });
   });
 });

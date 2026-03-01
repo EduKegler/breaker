@@ -8,7 +8,7 @@ import { handleSignal, type SignalHandlerDeps } from "./application/handle-signa
 import { replayStrategy } from "./application/replay-strategy.js";
 import type { CandleStreamer } from "./adapters/candle-streamer.js";
 import type { StrategyRunner } from "./application/strategy-runner.js";
-import { intervalToMs, CandleInterval, atr, keltner, computeMinWarmupBars, type Strategy, type CandleCache } from "@breaker/backtest";
+import { intervalToMs, CandleInterval, atr, computeMinWarmupBars, type Strategy, type CandleCache } from "@breaker/backtest";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
@@ -470,50 +470,48 @@ export function createApp(deps: ServerDeps): express.Express {
 
     const candles = streamer.getCandles();
     if (candles.length < 20) {
-      res.status(422).json({ status: "rejected", reason: "Not enough candles for ATR" });
+      res.status(422).json({ status: "rejected", reason: "Not enough candles" });
       return;
     }
 
     const lastCandle = candles[candles.length - 1];
     const price = lastCandle.c;
 
-    // Compute SL from ATR using strategy params (same logic as the strategy)
     const stratName = strategyParam ?? coinCfg.strategies[0]?.name ?? "donchian-adx";
-    const strategy = deps.strategyFactory(stratName);
-    const atrLen = strategy.params.atrLen?.value ?? 14;
-    const atrMult = strategy.params.atrStopMult?.value ?? 2.0;
-    const atrValues = atr(candles, atrLen);
-    const lastAtr = atrValues[atrValues.length - 1];
 
-    if (!lastAtr || isNaN(lastAtr)) {
-      res.status(422).json({ status: "rejected", reason: "ATR not available" });
-      return;
-    }
+    // Delegate signal generation to the strategy artifact via its runner.
+    // The strategy is the single source of truth for SL/TP computation —
+    // this keeps the endpoint agnostic to specific indicators.
+    const runner = deps.runners.find((r) => r.getCoin() === coin && r.getStrategyName() === stratName);
+    const strategySignal = runner?.generateSignal() ?? null;
 
-    const stopDist = atrMult * lastAtr;
-    const stopLoss = direction === "long" ? price - stopDist : price + stopDist;
+    let signal: { direction: "long" | "short"; entryPrice: number | null; stopLoss: number; takeProfits: { price: number; pctOfPosition: number }[]; comment: string };
 
-    // Compute TPs from strategy indicators when available
-    const takeProfits: { price: number; pctOfPosition: number }[] = [];
-    if (strategy.params.kcMultiplier) {
-      const kcMult = strategy.params.kcMultiplier.value;
-      const kcResult = keltner(candles, 20, 20, kcMult);
-      const kcMid = kcResult.mid[candles.length - 1];
-      if (!isNaN(kcMid)) {
-        takeProfits.push({
-          price: kcMid,
-          pctOfPosition: direction === "long" ? 1.0 : 0.6,
-        });
+    if (strategySignal && strategySignal.direction === direction) {
+      // Strategy agrees with the user's direction — use its SL and TPs
+      signal = { ...strategySignal, entryPrice: null, comment: "Manual from dashboard" };
+    } else {
+      // Strategy disagrees or returned null — ATR fallback for SL, no TPs
+      const strategy = deps.strategyFactory(stratName);
+      const atrLen = strategy.params.atrLen?.value ?? 14;
+      const atrMult = strategy.params.atrStopMult?.value ?? 2.0;
+      const atrValues = atr(candles, atrLen);
+      const lastAtr = atrValues[atrValues.length - 1];
+
+      if (!lastAtr || isNaN(lastAtr)) {
+        res.status(422).json({ status: "rejected", reason: "ATR not available" });
+        return;
       }
-    }
 
-    const signal = {
-      direction,
-      entryPrice: null as number | null,
-      stopLoss,
-      takeProfits,
-      comment: "Manual from dashboard",
-    };
+      const stopDist = atrMult * lastAtr;
+      signal = {
+        direction,
+        entryPrice: null,
+        stopLoss: direction === "long" ? price - stopDist : price + stopDist,
+        takeProfits: [],
+        comment: "Manual from dashboard (ATR fallback)",
+      };
+    }
 
     const alertId = `manual-${randomUUID()}`;
 
@@ -533,7 +531,7 @@ export function createApp(deps: ServerDeps): express.Express {
       );
 
       if (result.success) {
-        res.json({ status: "executed", signalId: result.signalId, stopLoss: Math.round(stopLoss * 100) / 100 });
+        res.json({ status: "executed", signalId: result.signalId, stopLoss: Math.round(signal.stopLoss * 100) / 100 });
       } else {
         res.status(422).json({ status: "rejected", signalId: result.signalId, reason: result.reason });
       }
