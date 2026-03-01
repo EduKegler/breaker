@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, memo } from "react";
 import type { Time } from "lightweight-charts";
 import type { CandleData, SignalRow, LivePosition, ReplaySignal } from "../types/api.js";
 import { useChartInstance } from "../lib/use-chart-instance.js";
@@ -28,7 +28,7 @@ interface CandlestickChartProps {
   onSetVisibleRange?: (ref: ((from: Time, to: Time) => void) | null) => void;
 }
 
-export function CandlestickChart({
+export const CandlestickChart = memo(function CandlestickChart({
   coin,
   candles,
   signals,
@@ -240,4 +240,4 @@ export function CandlestickChart({
       )}
     </div>
   );
-}
+});

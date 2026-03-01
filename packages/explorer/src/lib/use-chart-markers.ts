@@ -46,7 +46,6 @@ export function useChartMarkers(opts: UseChartMarkersOptions): void {
 
   useEffect(() => {
     if (!opts.markersRef.current || opts.candles.length === 0) return;
-
     const candleTimesSet = new Set(opts.candles.map((c) => c.t));
     const candleTimesSorted = opts.candles.map((c) => c.t); // already sorted
     const markers: SeriesMarker<Time>[] = [];

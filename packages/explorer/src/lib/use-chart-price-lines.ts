@@ -28,7 +28,6 @@ export function useChartPriceLines(opts: UseChartPriceLinesOptions): void {
 
   useEffect(() => {
     if (!opts.seriesRef.current) return;
-
     for (const line of opts.seriesRef.current.priceLines()) {
       opts.seriesRef.current.removePriceLine(line);
     }

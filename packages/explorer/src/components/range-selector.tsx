@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, memo } from "react";
 import {
   createChart,
   AreaSeries,
@@ -17,7 +17,7 @@ interface RangeSelectorProps {
   onSetUpdate?: (ref: ((from: Time, to: Time) => void) | null) => void;
 }
 
-export function RangeSelector({ candles, onRangeChange, onSetUpdate }: RangeSelectorProps) {
+export const RangeSelector = memo(function RangeSelector({ candles, onRangeChange, onSetUpdate }: RangeSelectorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
@@ -104,21 +104,28 @@ export function RangeSelector({ candles, onRangeChange, onSetUpdate }: RangeSele
     };
   }, []);
 
-  // Update data — use length check to avoid full setData on every WS tick
+  // Update data — use length + firstT check to detect coin switch vs WS tick
   const prevCandlesLenRef = useRef(0);
+  const prevFirstTRef = useRef(0);
   useEffect(() => {
     if (!seriesRef.current || candles.length === 0) return;
-    if (candles.length === prevCandlesLenRef.current) {
+    const firstT = candles[0].t;
+    if (candles.length === prevCandlesLenRef.current && firstT === prevFirstTRef.current) {
       // In-progress tick: update last point only
       const last = candles[candles.length - 1];
       seriesRef.current.update({ time: toChartTime(last.t), value: last.c });
     } else {
-      // New candle or full dataset change
+      // New candle, coin switch, or full dataset change — defer to not block main thread
       prevCandlesLenRef.current = candles.length;
-      seriesRef.current.setData(
-        candles.map((c) => ({ time: toChartTime(c.t), value: c.c })),
-      );
-      chartRef.current?.timeScale().fitContent();
+      prevFirstTRef.current = firstT;
+      const series = seriesRef.current;
+      const chart = chartRef.current;
+      requestAnimationFrame(() => {
+        series?.setData(
+          candles.map((c) => ({ time: toChartTime(c.t), value: c.c })),
+        );
+        chart?.timeScale().fitContent();
+      });
     }
   }, [candles]);
 
@@ -250,4 +257,4 @@ export function RangeSelector({ candles, onRangeChange, onSetUpdate }: RangeSele
       </div>
     </div>
   );
-}
+});

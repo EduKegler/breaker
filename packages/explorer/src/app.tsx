@@ -45,6 +45,11 @@ function errorMsg(err: unknown): string {
   return e?.data?.error ?? e?.message ?? "unknown error";
 }
 
+// Stable empty arrays — prevent `?? []` from creating new references on each render
+const EMPTY_CANDLES: CandleData[] = [];
+const EMPTY_REPLAY: ReplaySignal[] = [];
+const EMPTY_STRINGS: string[] = [];
+
 /** Merge incoming replay signals into existing per-coin record, deduping by t:strategyName. */
 function mergeReplaySignals(
   prev: Record<string, ReplaySignal[]>,
@@ -76,7 +81,7 @@ export function App() {
   const [showSessions, setShowSessions] = useState(false);
   const [showVpvr, setShowVpvr] = useState(false);
   const [selectedInterval, setSelectedInterval] = useState<string | null>(null);
-  const [altCandles, setAltCandles] = useState<CandleData[]>([]);
+  const [altCandles, setAltCandles] = useState<CandleData[]>(EMPTY_CANDLES);
   const setVisibleRangeRef = useRef<((from: Time, to: Time) => void) | null>(null);
   const rangeSelectorUpdateRef = useRef<((from: Time, to: Time) => void) | null>(null);
 
@@ -101,6 +106,11 @@ export function App() {
     return cc ? cc.strategies.map((s) => s.name) : [];
   }, [config?.coins, selectedCoin]);
 
+  // ── Per-coin data access (stable refs when unrelated coins update) ──
+  const selectedCoinCandles = coinCandles[selectedCoin];
+  const selectedCoinReplaySignals = coinReplaySignals[selectedCoin];
+  const selectedCoinEnabled = enabledStrategies[selectedCoin];
+
   // ── Derived data for chart ──────────────────
   const selectedCoinInterval = useMemo(() => {
     if (!config?.coins || !selectedCoin) return null;
@@ -108,20 +118,17 @@ export function App() {
     return cc?.strategies[0]?.interval ?? null;
   }, [config?.coins, selectedCoin]);
 
-  const streamingCandles = useMemo(() => coinCandles[selectedCoin] ?? [], [coinCandles, selectedCoin]);
+  const streamingCandles = selectedCoinCandles ?? EMPTY_CANDLES;
   const isLiveInterval = selectedInterval === null;
   const candles = isLiveInterval ? streamingCandles : altCandles;
   const selectedPrices = coinPrices[selectedCoin] ?? null;
-  const currentEnabledStrategies = useMemo(
-    () => enabledStrategies[selectedCoin] ?? [],
-    [enabledStrategies, selectedCoin],
-  );
+  const currentEnabledStrategies = selectedCoinEnabled ?? EMPTY_STRINGS;
 
   const filteredReplaySignals = useMemo(() => {
-    const rs = coinReplaySignals[selectedCoin] ?? [];
+    const rs = selectedCoinReplaySignals ?? EMPTY_REPLAY;
     if (currentEnabledStrategies.length === 0) return rs;
     return rs.filter((s) => currentEnabledStrategies.includes(s.strategyName));
-  }, [coinReplaySignals, selectedCoin, currentEnabledStrategies]);
+  }, [selectedCoinReplaySignals, currentEnabledStrategies]);
 
   const filteredSignals = useMemo(() => {
     if (!selectedCoin) return signals;
@@ -136,6 +143,11 @@ export function App() {
   const coinPositions = useMemo(
     () => selectedCoin ? positions.filter((p) => p.coin === selectedCoin) : positions,
     [positions, selectedCoin],
+  );
+
+  const watermark = useMemo(
+    () => selectedCoin ? { asset: selectedCoin } : undefined,
+    [selectedCoin],
   );
 
   const handleClosePosition = useCallback(async (coin: string) => {
@@ -259,18 +271,13 @@ export function App() {
   // Fetch alt candles when interval changes
   useEffect(() => {
     if (!selectedCoin || selectedInterval === null) {
-      setAltCandles([]);
+      setAltCandles(EMPTY_CANDLES);
       return;
     }
     api.candles({ coin: selectedCoin, interval: selectedInterval, limit: 500 })
       .then((r) => setAltCandles(r.candles))
-      .catch(() => setAltCandles([]));
+      .catch(() => setAltCandles(EMPTY_CANDLES));
   }, [selectedCoin, selectedInterval]);
-
-  // Reset interval when coin changes
-  useEffect(() => {
-    setSelectedInterval(null);
-  }, [selectedCoin]);
 
   // Sync autoTrading with config (true if any strategy has it enabled)
   useEffect(() => {
@@ -331,8 +338,9 @@ export function App() {
   const handleSelectCoin = useCallback((coin: string) => {
     startTransition(() => {
       setSelectedCoin(coin);
+      setSelectedInterval(null);
+      setPriceFlash(null);
     });
-    setPriceFlash(null);
   }, []);
 
   const handleToggleStrategy = useCallback((strategy: string) => {
@@ -637,7 +645,7 @@ export function App() {
             )}
             </div>
           </div>
-          <CandlestickChart coin={selectedCoin} candles={candles} signals={filteredSignals} replaySignals={filteredReplaySignals} positions={coinPositions} loading={candlesLoading} isLive={isLiveInterval} onLoadMore={handleLoadMoreCandles} watermark={selectedCoin ? { asset: selectedCoin } : undefined} coinList={coinList} onSelectCoin={handleSelectCoin} showSessions={showSessions} showVpvr={showVpvr} onVisibleRangeChange={handleVisibleRangeChange} onSetVisibleRange={handleSetVisibleRangeRef} />
+          <CandlestickChart coin={selectedCoin} candles={candles} signals={filteredSignals} replaySignals={filteredReplaySignals} positions={coinPositions} loading={candlesLoading} isLive={isLiveInterval} onLoadMore={handleLoadMoreCandles} watermark={watermark} coinList={coinList} onSelectCoin={handleSelectCoin} showSessions={showSessions} showVpvr={showVpvr} onVisibleRangeChange={handleVisibleRangeChange} onSetVisibleRange={handleSetVisibleRangeRef} />
           <RangeSelector candles={candles} onRangeChange={handleRangeSelectorChange} onSetUpdate={handleSetRangeSelectorUpdate} />
         </section>
 
