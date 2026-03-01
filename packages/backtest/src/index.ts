@@ -70,3 +70,4 @@ export { CandleCache } from "./data/candle-cache.js";
 // Strategies
 export { createDonchianAdx } from "./strategies/donchian-adx.js";
 export { createKeltnerRsi2 } from "./strategies/keltner-rsi2.js";
+export { createEmaPullback } from "./strategies/ema-pullback.js";

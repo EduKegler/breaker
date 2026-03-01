@@ -12,6 +12,24 @@
           "interval": "15m",
           "warmupBars": 200,
           "autoTradingEnabled": false
+        },
+        {
+          "name": "keltner-rsi2",
+          "interval": "15m",
+          "warmupBars": 200,
+          "autoTradingEnabled": false
+        }
+      ]
+    },
+    {
+      "coin": "SOL",
+      "leverage": 5,
+      "strategies": [
+        {
+          "name": "ema-pullback",
+          "interval": "15m",
+          "warmupBars": 200,
+          "autoTradingEnabled": false
         }
       ]
     }

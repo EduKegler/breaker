@@ -309,7 +309,6 @@ export function App() {
               {showSignalPopover && config?.coins && (
                 <SignalPopover
                   coins={config.coins}
-                  availableStrategies={config.availableStrategies}
                   onClose={() => setShowSignalPopover(false)}
                   onSuccess={() => setShowSignalPopover(false)}
                 />

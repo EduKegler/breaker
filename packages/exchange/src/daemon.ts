@@ -3,7 +3,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hyperliquid } from "hyperliquid";
 import { isMainModule } from "@breaker/kit";
-import { createDonchianAdx, createKeltnerRsi2 } from "@breaker/backtest";
+import { createDonchianAdx, createKeltnerRsi2, createEmaPullback } from "@breaker/backtest";
 import type { CandleInterval } from "@breaker/backtest";
 import { ExchangeConfigSchema, type ExchangeConfig } from "./types/config.js";
 import { loadEnv } from "./lib/load-env.js";
@@ -44,6 +44,8 @@ function createStrategy(name: string) {
       return createDonchianAdx();
     case "keltner-rsi2":
       return createKeltnerRsi2();
+    case "ema-pullback":
+      return createEmaPullback();
     default:
       throw new Error(`Unknown strategy: ${name}`);
   }
