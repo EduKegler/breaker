@@ -1,7 +1,20 @@
-import { useState, useEffect, useCallback, useRef, useMemo, startTransition } from "react";
-import { api } from "./lib/api.js";
-import type { HealthResponse, LivePosition, OrderRow, EquitySnapshot, ConfigResponse, OpenOrder, CandleData, SignalRow, ReplaySignal, AccountResponse, PricesEvent } from "./types/api.js";
-import { useWebSocket, type WsMessage, type WsStatus } from "./lib/use-websocket.js";
+import { useEffect, useRef, useCallback } from "react";
+import { useStore } from "./store/use-store.js";
+import { connectWebSocket } from "./store/websocket.js";
+import {
+  selectCoinList,
+  selectSelectedCoinStrategies,
+  selectSelectedCoinInterval,
+  selectCandles,
+  selectIsLiveInterval,
+  selectFilteredReplaySignals,
+  selectFilteredSignals,
+  selectCoinPositions,
+  selectSelectedPrices,
+  selectWatermark,
+  selectCurrentEnabledStrategies,
+} from "./store/selectors.js";
+import type { WsStatus } from "./store/types.js";
 import { useToasts } from "./lib/use-toasts.js";
 import { EquityChart } from "./components/equity-chart.js";
 import { CandlestickChart } from "./components/candlestick-chart.js";
@@ -24,9 +37,9 @@ function formatUptime(seconds: number): string {
 }
 
 const wsStatusLabel: Record<WsStatus, string> = {
-  connecting: "WS…",
+  connecting: "WS\u2026",
   connected: "WS",
-  disconnected: "WS ✕",
+  disconnected: "WS \u2715",
 };
 
 const wsStatusColor: Record<WsStatus, string> = {
@@ -40,284 +53,103 @@ function wsUrl(): string {
   return `${proto}://${window.location.host}/ws`;
 }
 
-function errorMsg(err: unknown): string {
-  const e = err as { data?: { error?: string }; message?: string };
-  return e?.data?.error ?? e?.message ?? "unknown error";
-}
-
-// Stable empty arrays — prevent `?? []` from creating new references on each render
-const EMPTY_CANDLES: CandleData[] = [];
-const EMPTY_REPLAY: ReplaySignal[] = [];
-const EMPTY_STRINGS: string[] = [];
-
-/** Merge incoming replay signals into existing per-coin record, deduping by t:strategyName. */
-function mergeReplaySignals(
-  prev: Record<string, ReplaySignal[]>,
-  coin: string,
-  incoming: ReplaySignal[],
-): Record<string, ReplaySignal[]> {
-  const existing = prev[coin] ?? [];
-  const keys = new Set(existing.map((s) => `${s.t}:${s.strategyName}`));
-  const fresh = incoming.filter((s) => !keys.has(`${s.t}:${s.strategyName}`));
-  if (fresh.length === 0) return prev;
-  return { ...prev, [coin]: [...existing, ...fresh].sort((a, b) => a.t - b.t) };
-}
-
 export function App() {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [config, setConfig] = useState<ConfigResponse | null>(null);
-  const [positions, setPositions] = useState<LivePosition[]>([]);
-  const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
-  const [equity, setEquity] = useState<EquitySnapshot[]>([]);
-  const [signals, setSignals] = useState<SignalRow[]>([]);
-  const [account, setAccount] = useState<AccountResponse | null>(null);
-  const [candlesLoading, setCandlesLoading] = useState(true);
-  const [httpError, setHttpError] = useState(false);
-  const [showSignalPopover, setShowSignalPopover] = useState(false);
-  const [autoTrading, setAutoTrading] = useState(false);
   const { addToast } = useToasts();
-  const [priceFlash, setPriceFlash] = useState<"up" | "down" | null>(null);
-  const [showSessions, setShowSessions] = useState(false);
-  const [showVpvr, setShowVpvr] = useState(false);
-  const [selectedInterval, setSelectedInterval] = useState<string | null>(null);
-  const [altCandles, setAltCandles] = useState<CandleData[]>(EMPTY_CANDLES);
   const setVisibleRangeRef = useRef<((from: Time, to: Time) => void) | null>(null);
   const rangeSelectorUpdateRef = useRef<((from: Time, to: Time) => void) | null>(null);
 
-  // ── Per-coin state ──────────────────────────
-  const [selectedCoin, setSelectedCoin] = useState<string>("");
-  const [enabledStrategies, setEnabledStrategies] = useState<Record<string, string[]>>({});
-  const [coinCandles, setCoinCandles] = useState<Record<string, CandleData[]>>({});
-  const [coinReplaySignals, setCoinReplaySignals] = useState<Record<string, ReplaySignal[]>>({});
-  const [coinPrices, setCoinPrices] = useState<Record<string, PricesEvent>>({});
+  // ── Store selectors ─────────────────────────
+  const health = useStore((s) => s.health);
+  const config = useStore((s) => s.config);
+  const positions = useStore((s) => s.positions);
+  const openOrders = useStore((s) => s.openOrders);
+  const equity = useStore((s) => s.equity);
+  const orders = useStore((s) => s.orders);
+  const account = useStore((s) => s.account);
+  const httpError = useStore((s) => s.httpError);
+  const selectedCoin = useStore((s) => s.selectedCoin);
+  const selectedInterval = useStore((s) => s.selectedInterval);
+  const showSignalPopover = useStore((s) => s.showSignalPopover);
+  const showSessions = useStore((s) => s.showSessions);
+  const showVpvr = useStore((s) => s.showVpvr);
+  const priceFlash = useStore((s) => s.priceFlash);
+  const wsStatus = useStore((s) => s.wsStatus);
+  const autoTrading = useStore((s) => s.autoTrading);
+  const candlesLoading = useStore((s) => s.candlesLoading);
 
-  // Ref for WS handlers to read selectedCoin without stale closure
-  const selectedCoinRef = useRef(selectedCoin);
-  useEffect(() => { selectedCoinRef.current = selectedCoin; }, [selectedCoin]);
+  // Derived selectors
+  const coinList = useStore(selectCoinList);
+  const selectedCoinStrategies = useStore(selectSelectedCoinStrategies);
+  const selectedCoinInterval = useStore(selectSelectedCoinInterval);
+  const candles = useStore(selectCandles);
+  const isLiveInterval = useStore(selectIsLiveInterval);
+  const filteredReplaySignals = useStore(selectFilteredReplaySignals);
+  const filteredSignals = useStore(selectFilteredSignals);
+  const coinPositions = useStore(selectCoinPositions);
+  const selectedPrices = useStore(selectSelectedPrices);
+  const watermark = useStore(selectWatermark);
+  const currentEnabledStrategies = useStore(selectCurrentEnabledStrategies);
 
-  // Coin list from config
-  const coinList = useMemo(() => config?.coins?.map((c) => c.coin) ?? [], [config?.coins]);
+  // ── Actions (stable refs from store) ────────
+  const fetchInitialData = useStore((s) => s.fetchInitialData);
+  const initCoinData = useStore((s) => s.initCoinData);
+  const fetchAltCandles = useStore((s) => s.fetchAltCandles);
+  const loadMoreCandles = useStore((s) => s.loadMoreCandles);
+  const closePosition = useStore((s) => s.closePosition);
+  const cancelOrder = useStore((s) => s.cancelOrder);
+  const toggleAutoTrading = useStore((s) => s.toggleAutoTrading);
+  const selectCoin = useStore((s) => s.selectCoin);
+  const setSelectedInterval = useStore((s) => s.setSelectedInterval);
+  const toggleStrategy = useStore((s) => s.toggleStrategy);
+  const setShowSignalPopover = useStore((s) => s.setShowSignalPopover);
+  const setShowSessions = useStore((s) => s.setShowSessions);
+  const setShowVpvr = useStore((s) => s.setShowVpvr);
+  const clearPriceFlash = useStore((s) => s.clearPriceFlash);
+  const setToastFn = useStore((s) => s.setToastFn);
+  const refreshAccount = useStore((s) => s.refreshAccount);
 
-  // Strategies for selected coin
-  const selectedCoinStrategies = useMemo(() => {
-    if (!config?.coins || !selectedCoin) return [];
-    const cc = config.coins.find((c) => c.coin === selectedCoin);
-    return cc ? cc.strategies.map((s) => s.name) : [];
-  }, [config?.coins, selectedCoin]);
+  // ── Toast bridge ────────────────────────────
+  useEffect(() => {
+    setToastFn(addToast);
+    return () => setToastFn(null);
+  }, [addToast, setToastFn]);
 
-  // ── Per-coin data access (stable refs when unrelated coins update) ──
-  const selectedCoinCandles = coinCandles[selectedCoin];
-  const selectedCoinReplaySignals = coinReplaySignals[selectedCoin];
-  const selectedCoinEnabled = enabledStrategies[selectedCoin];
-
-  // ── Derived data for chart ──────────────────
-  const selectedCoinInterval = useMemo(() => {
-    if (!config?.coins || !selectedCoin) return null;
-    const cc = config.coins.find((c) => c.coin === selectedCoin);
-    return cc?.strategies[0]?.interval ?? null;
-  }, [config?.coins, selectedCoin]);
-
-  const streamingCandles = selectedCoinCandles ?? EMPTY_CANDLES;
-  const isLiveInterval = selectedInterval === null;
-  const candles = isLiveInterval ? streamingCandles : altCandles;
-  const selectedPrices = coinPrices[selectedCoin] ?? null;
-  const currentEnabledStrategies = selectedCoinEnabled ?? EMPTY_STRINGS;
-
-  const filteredReplaySignals = useMemo(() => {
-    const rs = selectedCoinReplaySignals ?? EMPTY_REPLAY;
-    if (currentEnabledStrategies.length === 0) return rs;
-    return rs.filter((s) => currentEnabledStrategies.includes(s.strategyName));
-  }, [selectedCoinReplaySignals, currentEnabledStrategies]);
-
-  const filteredSignals = useMemo(() => {
-    if (!selectedCoin) return signals;
-    return signals.filter((s) => {
-      if (s.asset !== selectedCoin) return false;
-      // Manual signals (no strategy_name) are always visible
-      if (!s.strategy_name) return true;
-      return currentEnabledStrategies.includes(s.strategy_name);
-    });
-  }, [signals, selectedCoin, currentEnabledStrategies]);
-
-  const coinPositions = useMemo(
-    () => selectedCoin ? positions.filter((p) => p.coin === selectedCoin) : positions,
-    [positions, selectedCoin],
-  );
-
-  const watermark = useMemo(
-    () => selectedCoin ? { asset: selectedCoin } : undefined,
-    [selectedCoin],
-  );
-
-  const handleClosePosition = useCallback(async (coin: string) => {
-    try {
-      await api.closePosition(coin);
-      addToast(`${coin} position closed`, "success");
-    } catch (err) {
-      addToast(`Close ${coin}: ${errorMsg(err)}`, "error");
-    }
-  }, [addToast]);
-
-  const handleCancelOrder = useCallback(async (_coin: string, oid: number) => {
-    try {
-      await api.cancelOrder(oid);
-      addToast(`Order ${oid} cancelled`, "success");
-    } catch (err) {
-      addToast(`Cancel #${oid}: ${errorMsg(err)}`, "error");
-    }
-  }, [addToast]);
-
-  const handleLoadMoreCandles = useCallback((before: number) => {
-    const coin = selectedCoinRef.current;
-    if (!coin) return;
-    api.candles({ coin, before, limit: 500 }).then((r) => {
-      if (r.candles.length === 0) return;
-      setCoinCandles((prev) => {
-        const existing = prev[coin] ?? [];
-        const existingTimes = new Set(existing.map((c) => c.t));
-        const newCandles = r.candles.filter((c) => !existingTimes.has(c.t));
-        if (newCandles.length === 0) return prev;
-        return { ...prev, [coin]: [...newCandles, ...existing].sort((a, b) => a.t - b.t) };
-      });
-    }).catch(() => {});
-    // Also fetch replay signals for the new range
-    api.strategySignals({ coin, before }).then((r) => {
-      if (r.signals.length === 0) return;
-      setCoinReplaySignals((prev) => mergeReplaySignals(prev, coin, r.signals));
-    }).catch(() => {});
+  // ── WebSocket ───────────────────────────────
+  useEffect(() => {
+    return connectWebSocket(wsUrl(), useStore);
   }, []);
 
-  // ── Initial HTTP fetch (non-coin-dependent) ─
+  // ── Initial HTTP fetch ──────────────────────
   useEffect(() => {
-    Promise.all([
-      api.health().then(setHealth).catch(() => setHttpError(true)),
-      api.config().then(setConfig).catch(() => {}),
-      api.positions().then((r) => setPositions(r.positions)).catch(() => {}),
-      api.orders().then((r) => setOrders(r.orders)).catch(() => {}),
-      api.openOrders().then((r) => setOpenOrders(r.orders)).catch(() => {}),
-      api.equity().then((r) => setEquity(r.snapshots)).catch(() => {}),
-      api.signals().then((r) => setSignals(r.signals)).catch(() => {}),
-      api.account().then(setAccount).catch(() => {}),
-    ]);
-  }, []);
+    fetchInitialData();
+  }, [fetchInitialData]);
 
-  // ── Init selectedCoin + enabledStrategies + fetch per-coin data ─
+  // ── Init coin data when config arrives ──────
   useEffect(() => {
-    if (!config?.coins?.length) return;
-    const coins = config.coins;
-    const firstCoin = coins[0].coin;
-
-    // Set selectedCoin if not yet set
-    setSelectedCoin((prev) => prev || firstCoin);
-
-    // Initialize enabledStrategies for each coin (all enabled)
-    setEnabledStrategies((prev) => {
-      const next = { ...prev };
-      for (const cc of coins) {
-        if (!next[cc.coin]) {
-          next[cc.coin] = cc.strategies.map((s) => s.name);
-        }
-      }
-      return next;
-    });
-
-    // Fetch candles + replay signals per coin in parallel
-    const fetchPromises: Promise<void>[] = [];
-    const oldestByCoins: Record<string, number> = {};
-    for (const cc of coins) {
-      const coin = cc.coin;
-      // Candles
-      fetchPromises.push(
-        api.candles({ coin }).then((r) => {
-          setCoinCandles((prev) => ({ ...prev, [coin]: r.candles }));
-          if (r.candles.length > 0) oldestByCoins[coin] = r.candles[0].t;
-        }).catch(() => {}),
-      );
-      // Replay signals per strategy (merge by t:strategyName)
-      for (const strat of cc.strategies) {
-        fetchPromises.push(
-          api.strategySignals({ coin, strategy: strat.name }).then((r) => {
-            if (r.signals.length === 0) return;
-            setCoinReplaySignals((prev) => mergeReplaySignals(prev, coin, r.signals));
-          }).catch(() => {}),
-        );
-      }
+    if (config?.coins?.length) {
+      initCoinData(config);
     }
-    // Phase 1: show chart with warmup data ASAP
-    // Phase 2: pre-fetch historical candles + signals for all coins in background
-    const PREFETCH_BARS = 1500;
-    Promise.all(fetchPromises).finally(() => {
-      setCandlesLoading(false);
-      for (const [coin, oldest] of Object.entries(oldestByCoins)) {
-        api.candles({ coin, before: oldest, limit: PREFETCH_BARS }).then((hist) => {
-          if (hist.candles.length === 0) return;
-          setCoinCandles((prev) => {
-            const existing = prev[coin] ?? [];
-            const existingTimes = new Set(existing.map((c) => c.t));
-            const fresh = hist.candles.filter((c) => !existingTimes.has(c.t));
-            if (fresh.length === 0) return prev;
-            return { ...prev, [coin]: [...fresh, ...existing].sort((a, b) => a.t - b.t) };
-          });
-        }).catch(() => {});
-        api.strategySignals({ coin, before: oldest }).then((r) => {
-          if (r.signals.length === 0) return;
-          setCoinReplaySignals((prev) => mergeReplaySignals(prev, coin, r.signals));
-        }).catch(() => {});
-      }
-    });
-  }, [config?.coins]);
+  }, [config, initCoinData]);
 
-  // Fetch alt candles when interval changes
+  // ── Fetch alt candles when interval changes ─
   useEffect(() => {
-    if (!selectedCoin || selectedInterval === null) {
-      setAltCandles(EMPTY_CANDLES);
-      return;
-    }
-    api.candles({ coin: selectedCoin, interval: selectedInterval, limit: 500 })
-      .then((r) => setAltCandles(r.candles))
-      .catch(() => setAltCandles(EMPTY_CANDLES));
-  }, [selectedCoin, selectedInterval]);
+    fetchAltCandles(selectedCoin, selectedInterval);
+  }, [selectedCoin, selectedInterval, fetchAltCandles]);
 
-  // Sync autoTrading with config (true if any strategy has it enabled)
-  useEffect(() => {
-    if (!config?.coins) return;
-    const anyEnabled = config.coins.some((c) => c.strategies.some((s) => s.autoTradingEnabled));
-    setAutoTrading(anyEnabled);
-  }, [config?.coins]);
-
-  const handleToggleAutoTrading = useCallback(async () => {
-    const coins = config?.coins;
-    if (!coins?.length) return;
-    const newValue = !autoTrading;
-    setAutoTrading(newValue);
-    try {
-      await Promise.all(coins.map((c) => api.setAutoTrading(c.coin, newValue)));
-      addToast(`Auto trading ${newValue ? "enabled" : "disabled"}`, "success");
-    } catch (err) {
-      setAutoTrading(!newValue);
-      addToast(`Auto trading toggle: ${errorMsg(err)}`, "error");
-    }
-  }, [autoTrading, config?.coins, addToast]);
-
-  // Clear price flash after animation
+  // ── Clear price flash after animation ───────
   useEffect(() => {
     if (!priceFlash) return;
-    const id = setTimeout(() => setPriceFlash(null), 700);
+    const id = setTimeout(clearPriceFlash, 700);
     return () => clearTimeout(id);
-  }, [priceFlash]);
+  }, [priceFlash, clearPriceFlash]);
 
-  // Periodic account refresh (no WS event for account state)
+  // ── Periodic account refresh (30s) ──────────
   useEffect(() => {
-    const id = setInterval(() => {
-      api.account().then(setAccount).catch(() => {});
-    }, 30_000);
+    const id = setInterval(refreshAccount, 30_000);
     return () => clearInterval(id);
-  }, []);
+  }, [refreshAccount]);
 
-  // ── Range selector handlers ─────────────────
-  // Direct ref-based communication: chart → rangeSelectorUpdateRef → RangeSelector
-  // No React state re-renders on every scroll frame.
+  // ── Range selector handlers (imperative refs) ─
   const handleVisibleRangeChange = useCallback((from: Time, to: Time) => {
     rangeSelectorUpdateRef.current?.(from, to);
   }, []);
@@ -334,140 +166,25 @@ export function App() {
     setVisibleRangeRef.current?.(from, to);
   }, []);
 
-  // ── Coin selection handlers ─────────────────
-  const handleSelectCoin = useCallback((coin: string) => {
-    startTransition(() => {
-      setSelectedCoin(coin);
-      setSelectedInterval(null);
-      setPriceFlash(null);
-    });
-  }, []);
-
-  const handleToggleStrategy = useCallback((strategy: string) => {
-    setEnabledStrategies((prev) => {
-      const coin = selectedCoinRef.current;
-      if (!coin) return prev;
-      const current = prev[coin] ?? [];
-      // Prevent disabling the last strategy
-      if (current.includes(strategy) && current.length <= 1) return prev;
-      const next = current.includes(strategy)
-        ? current.filter((s) => s !== strategy)
-        : [...current, strategy];
-      return { ...prev, [coin]: next };
-    });
-  }, []);
-
-  // ── WebSocket handler ───────────────────────
-  const handleWsMessage = useCallback((msg: WsMessage) => {
-    switch (msg.type) {
-      case "snapshot": {
-        const d = msg.data as {
-          positions: LivePosition[];
-          orders: OrderRow[];
-          openOrders: OpenOrder[];
-          equity: { snapshots: EquitySnapshot[] } | EquitySnapshot[];
-          health: HealthResponse;
-          signals?: SignalRow[];
-        };
-        setPositions(d.positions);
-        setOrders(d.orders);
-        setOpenOrders(d.openOrders);
-        setEquity(Array.isArray(d.equity) ? d.equity : d.equity.snapshots);
-        setHealth(d.health);
-        // Ignore d.candles — per-coin fetch replaces snapshot candles
-        if (d.signals) setSignals(d.signals);
-        break;
-      }
-      case "positions":
-        setPositions(msg.data as LivePosition[]);
-        break;
-      case "orders":
-        setOrders(msg.data as OrderRow[]);
-        break;
-      case "open-orders":
-        setOpenOrders(msg.data as OpenOrder[]);
-        break;
-      case "equity":
-        setEquity(msg.data as EquitySnapshot[]);
-        break;
-      case "health":
-        setHealth(msg.data as HealthResponse);
-        break;
-      case "candle": {
-        const newCandle = msg.data as CandleData & { coin?: string };
-        const coin = newCandle.coin;
-        if (!coin) break;
-        setCoinCandles((prev) => {
-          const arr = prev[coin] ?? [];
-          const last = arr.length - 1;
-          // Fast path: in-progress candle update (almost always the last element)
-          if (last >= 0 && arr[last].t === newCandle.t) {
-            const updated = [...arr];
-            updated[last] = newCandle;
-            return { ...prev, [coin]: updated };
-          }
-          // Slow path: search for matching timestamp
-          const idx = arr.findIndex((c) => c.t === newCandle.t);
-          if (idx >= 0) {
-            const updated = [...arr];
-            updated[idx] = newCandle;
-            return { ...prev, [coin]: updated };
-          }
-          return { ...prev, [coin]: [...arr, newCandle] };
-        });
-        break;
-      }
-      case "signals":
-        setSignals(msg.data as SignalRow[]);
-        break;
-      case "prices": {
-        const p = msg.data as PricesEvent;
-        const coin = p.coin;
-        if (!coin) break;
-        setCoinPrices((prev) => {
-          const old = prev[coin];
-          // Price flash only for selected coin
-          if (coin === selectedCoinRef.current) {
-            const refPrice = p.hlMidPrice ?? p.dataSourcePrice;
-            const prevRefPrice = old?.hlMidPrice ?? old?.dataSourcePrice;
-            if (refPrice != null && prevRefPrice != null && refPrice !== prevRefPrice) {
-              setPriceFlash(refPrice > prevRefPrice ? "up" : "down");
-            }
-          }
-          return { ...prev, [coin]: p };
-        });
-        break;
-      }
-    }
-  }, []);
-
-  const { status: wsStatus } = useWebSocket({
-    url: wsUrl(),
-    onMessage: handleWsMessage,
-  });
-
+  // ── Derived header values ───────────────────
   const h = health;
   const c = config;
   const isOnline = !!h;
-  const mode = c?.mode ?? h?.mode ?? "—";
+  const mode = c?.mode ?? h?.mode ?? "\u2014";
   const isTestnet = mode === "testnet";
-
-  // Header context: show coin list + strategies summary
-  const headerCoinsLabel = coinList.length > 0 ? coinList.join(" · ") : h?.asset ?? "";
+  const headerCoinsLabel = coinList.length > 0 ? coinList.join(" \u00b7 ") : h?.asset ?? "";
 
   return (
     <div className="min-h-screen bg-terminal-bg font-display">
       {/* ── Header bar ────────────────────── */}
       <header className="glow-header bg-terminal-surface border-b border-terminal-border px-5 py-3">
         <div className="flex items-center gap-5">
-          {/* Logo */}
           <span className="text-profit font-bold text-lg tracking-wider">
             BREAKER
           </span>
 
           <div className="w-px h-5 bg-terminal-border" />
 
-          {/* Status dot */}
           {isOnline ? (
             <span className="flex items-center gap-2 text-sm">
               <span className="w-2 h-2 rounded-full bg-profit animate-pulse-green" />
@@ -484,7 +201,6 @@ export function App() {
 
           <div className="w-px h-5 bg-terminal-border" />
 
-          {/* Context info */}
           {isOnline && (
             <>
               <span className="font-mono text-sm font-medium text-txt-primary">
@@ -498,13 +214,11 @@ export function App() {
             </>
           )}
 
-          {/* Right side */}
           <div className="ml-auto flex items-center gap-3">
-            {/* ── Actionable buttons ── */}
             <button
               type="button"
               disabled={!isOnline}
-              onClick={handleToggleAutoTrading}
+              onClick={toggleAutoTrading}
               className={`px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded border transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer ${
                 autoTrading
                   ? "bg-profit/15 text-profit border-profit/40 hover:bg-profit/30 hover:border-profit/60"
@@ -517,7 +231,7 @@ export function App() {
               <button
                 type="button"
                 disabled={!isOnline}
-                onClick={() => setShowSignalPopover((v) => !v)}
+                onClick={() => setShowSignalPopover(!showSignalPopover)}
                 className="px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded bg-amber/15 text-amber border border-amber/40 hover:bg-amber/30 hover:border-amber/60 active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
               >
                 Signal
@@ -533,7 +247,6 @@ export function App() {
 
             <div className="w-px h-4 bg-terminal-border" />
 
-            {/* ── Status badges (no border, flat pills) ── */}
             <div className="flex items-center gap-2">
               <span className={`flex items-center gap-1.5 text-[10px] font-mono font-medium ${wsStatusColor[wsStatus]}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${
@@ -564,10 +277,8 @@ export function App() {
 
       {/* ── Main grid ─────────────────────── */}
       <main className="p-4 space-y-4">
-        {/* Account info bar */}
         <AccountPanel account={account} positions={positions} />
 
-        {/* Candlestick chart (full width) */}
         <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-4">
@@ -590,17 +301,17 @@ export function App() {
                 <CoinChartToolbar
                   coins={coinList}
                   selectedCoin={selectedCoin}
-                  onSelectCoin={handleSelectCoin}
+                  onSelectCoin={selectCoin}
                   strategies={selectedCoinStrategies}
                   enabledStrategies={currentEnabledStrategies}
-                  onToggleStrategy={handleToggleStrategy}
+                  onToggleStrategy={toggleStrategy}
                 />
               )}
             </div>
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => setShowSessions((v) => !v)}
+                onClick={() => setShowSessions(!showSessions)}
                 className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all cursor-pointer ${
                   showSessions
                     ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
@@ -612,7 +323,7 @@ export function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setShowVpvr((v) => !v)}
+                onClick={() => setShowVpvr(!showVpvr)}
                 className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all cursor-pointer ${
                   showVpvr
                     ? "bg-amber/15 text-amber border border-amber/30"
@@ -633,7 +344,7 @@ export function App() {
                   </span>
                 )}
                 {selectedPrices.hlMidPrice != null && selectedPrices.dataSourcePrice != null && (
-                  <span className="text-txt-secondary/30 text-xs">·</span>
+                  <span className="text-txt-secondary/30 text-xs">{"\u00b7"}</span>
                 )}
                 {selectedPrices.dataSourcePrice != null && (
                   <span className="flex items-center gap-1.5">
@@ -645,12 +356,11 @@ export function App() {
             )}
             </div>
           </div>
-          <CandlestickChart coin={selectedCoin} candles={candles} signals={filteredSignals} replaySignals={filteredReplaySignals} positions={coinPositions} loading={candlesLoading} isLive={isLiveInterval} onLoadMore={handleLoadMoreCandles} watermark={watermark} coinList={coinList} onSelectCoin={handleSelectCoin} showSessions={showSessions} showVpvr={showVpvr} onVisibleRangeChange={handleVisibleRangeChange} onSetVisibleRange={handleSetVisibleRangeRef} />
+          <CandlestickChart coin={selectedCoin} candles={candles} signals={filteredSignals} replaySignals={filteredReplaySignals} positions={coinPositions} loading={candlesLoading} isLive={isLiveInterval} onLoadMore={loadMoreCandles} watermark={watermark} coinList={coinList} onSelectCoin={selectCoin} showSessions={showSessions} showVpvr={showVpvr} onVisibleRangeChange={handleVisibleRangeChange} onSetVisibleRange={handleSetVisibleRangeRef} />
           <RangeSelector candles={candles} onRangeChange={handleRangeSelectorChange} onSetUpdate={handleSetRangeSelectorUpdate} />
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
-          {/* Equity chart */}
           <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
               Equity Curve
@@ -658,7 +368,6 @@ export function App() {
             <EquityChart snapshots={equity} />
           </section>
 
-          {/* Positions */}
           <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
               Positions
@@ -666,7 +375,7 @@ export function App() {
             {positions.length ? (
               <div className="space-y-3">
                 {positions.map((p) => (
-                  <PositionCard key={p.coin} position={p} openOrders={openOrders} onClose={handleClosePosition} />
+                  <PositionCard key={p.coin} position={p} openOrders={openOrders} onClose={closePosition} />
                 ))}
               </div>
             ) : (
@@ -677,7 +386,6 @@ export function App() {
           </section>
         </div>
 
-        {/* Open Orders */}
         <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
           <div className="flex items-center gap-3 mb-3">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary">
@@ -689,10 +397,9 @@ export function App() {
               </span>
             )}
           </div>
-          <OpenOrdersTable orders={openOrders} onCancel={handleCancelOrder} />
+          <OpenOrdersTable orders={openOrders} onCancel={cancelOrder} />
         </section>
 
-        {/* Order log */}
         <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
             Order Log

@@ -7,7 +7,16 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 ```
 ├── src/
 │   ├── main.tsx            # React root
-│   ├── app.tsx             # App shell: per-coin state, WS routing, chart filtering
+│   ├── app.tsx             # App shell: side effects, layout, refs for range sync
+│   ├── store/
+│   │   ├── types.ts            # StoreState = ServerSlice & MarketDataSlice & UiSlice & Actions
+│   │   ├── use-store.ts        # create<StoreState>()(...) — Zustand store
+│   │   ├── server-slice.ts     # health, config, positions, orders, openOrders, equity, signals, account
+│   │   ├── market-data-slice.ts # coinCandles, coinReplaySignals, coinPrices, altCandles, candlesLoading
+│   │   ├── ui-slice.ts         # selectedCoin, selectedInterval, enabledStrategies, show*, priceFlash, wsStatus
+│   │   ├── actions.ts          # fetchInitialData, initCoinData, fetchAltCandles, loadMoreCandles, closePosition, etc.
+│   │   ├── selectors.ts        # selectCandles, selectFilteredSignals, selectCoinPositions, etc.
+│   │   └── websocket.ts        # connectWebSocket(url, store) → cleanup fn (standalone, no React)
 │   ├── components/
 │   │   ├── candlestick-chart.tsx   # Chart orchestrator (~250 lines), delegates to hooks
 │   │   ├── coin-chart-toolbar.tsx  # Coin tabs + strategy toggles above chart
@@ -47,19 +56,27 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 ```
 
 ## Stack
-- Vite 6 + React 19 + TypeScript
+- Vite 6 + React 19 + TypeScript + **Zustand** for state management
 - Tailwind CSS 3 for styling (custom colors: terminal-*, profit, loss, amber)
 - recharts for equity curve, lightweight-charts v5.1 for candlestick chart
 - Fonts: Outfit (display) + JetBrains Mono (data) via Google Fonts
 
+## State management (Zustand)
+- **Single store with slices**: `ServerSlice` (HTTP data), `MarketDataSlice` (candles/prices), `UiSlice` (selections/toggles)
+- **Selectors** in `store/selectors.ts`: derived data (e.g., `selectCandles`, `selectFilteredSignals`); use stable empty arrays to avoid new refs
+- **WebSocket standalone**: `connectWebSocket()` writes directly via `getState()`/`setState()` — no React involvement in WS message handling
+- **Toast bridge**: store holds `_toastFn` set once in App via `setToastFn(addToast)`. Actions call `get()._toastFn?.()` to notify
+- **Components** read from store via `useStore(selector)` for granular subscriptions
+- **Actions** are async functions in `store/actions.ts` with access to `set`/`get`
+- **No React.memo** needed — Zustand selectors provide render isolation
+
 ## Data flow
-- Hybrid HTTP+WS model: initial HTTP fetch + WebSocket push updates
+- Hybrid HTTP+WS model: initial HTTP fetch (`fetchInitialData`) + WebSocket push updates (`connectWebSocket`)
 - Vite dev proxy: `/api/*` → `http://localhost:3200/*`, `/ws` with `ws: true`
 - Exchange endpoints: /health, /positions, /orders, /equity, /config, /open-orders, /candles, /signals, /strategy-signals
 - WS events: "candle" (routed by `coin`), "prices" (routed by `coin`), "signals" replaces signals array
-- **Per-coin state**: `coinCandles`, `coinReplaySignals`, `coinPrices` keyed by coin name
-- `selectedCoinRef` (useRef) prevents stale closures in WS handlers
-- Derived data (`filteredSignals`, `filteredReplaySignals`, `coinPositions`) computed via `useMemo`
+- **Per-coin state**: `coinCandles`, `coinReplaySignals`, `coinPrices` keyed by coin name in store
+- Derived data (`selectFilteredSignals`, `selectFilteredReplaySignals`, `selectCoinPositions`) computed in selectors
 
 ## Build and test
 - `pnpm dev` — Vite dev server on port 5173
@@ -67,7 +84,6 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 - `pnpm test` — vitest (passWithNoTests, frontend is manually tested)
 
 ## Key patterns
-- useWebSocket hook with auto-reconnect (3s), WS status indicator in header
 - "Tactical Terminal" dark aesthetic: terminal-bg (#0a0a0f), noise overlay via SVG feTurbulence
 - Entry markers: blue (auto) / yellow (manual), "L"/"S" text, size 1
 - Strategy abbreviations: `[B]` donchian-adx, `[MR]` keltner-rsi2, `[PB]` ema-pullback, `[M]` manual — centralized in `strategy-abbreviations.ts`
@@ -80,7 +96,7 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 - Session/VPVR primitives only recalculate when `candles.length` changes (not on every in-progress tick update)
 - Shared helpers: `toChartTime()`, `toOhlcData()`, `toOhlcvData()`, `chartTimeToUtcSec()` in `lib/to-chart-time.ts`; `INTERVAL_MS` in `lib/interval-ms.ts`
 - **Timezone**: lw-charts has no native TZ support — `toChartTime()` subtracts `TZ_OFFSET_SEC` (computed once from `getTimezoneOffset()`) so the X-axis shows local time. Use `chartTimeToUtcSec()` to reverse when real UTC is needed (e.g., session-highlight hour detection)
-- Timeframe switcher: `selectedInterval: string | null` (null = streaming interval); alt candles fetched via `api.candles({ interval })`
+- Timeframe switcher: `selectedInterval: string | null` (null = streaming interval); alt candles fetched via `fetchAltCandles` action
 - API interfaces in `src/types/api.ts`; `src/lib/api.ts` exports the `api` object
 - `ToastProvider` in `lib/toast-provider.tsx`; `useToasts` hook in `lib/use-toasts.ts`
 - No backend server needed — Vite proxy handles API routing in dev

@@ -16,7 +16,8 @@
     "lightweight-charts": "^5.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "recharts": "^2.15.0"
+    "recharts": "^2.15.0",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
