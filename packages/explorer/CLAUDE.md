@@ -55,7 +55,7 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 - Entry markers: blue (auto) / yellow (manual), "L"/"S" text, size 1
 - Strategy abbreviations: `[B]` donchian-adx, `[MR]` keltner-rsi2, `[PB]` ema-pullback, `[M]` manual — centralized in `strategy-abbreviations.ts`
 - CandlestickChart uses `update()` for incremental WS ticks (O(1)) and `setData()` only for full dataset (init, coin switch, load more) — smart delta detection via refs
-- `key={selectedCoin}` on CandlestickChart forces re-mount on coin switch (avoids stale canvas)
+- Coin switch reuses same chart instance (no `key` remount) — `setData()` + `scrollToRealTime()` handles the transition; markers and price lines effects have proper dependency arrays for cleanup
 - API interfaces in `src/types/api.ts`; `src/lib/api.ts` exports the `api` object
 - `ToastProvider` in `lib/toast-provider.tsx`; `useToasts` hook in `lib/use-toasts.ts`
 - No backend server needed — Vite proxy handles API routing in dev

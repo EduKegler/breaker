@@ -201,12 +201,14 @@ export function App() {
 
     // Fetch candles + replay signals per coin in parallel
     const fetchPromises: Promise<void>[] = [];
+    const oldestByCoins: Record<string, number> = {};
     for (const cc of coins) {
       const coin = cc.coin;
       // Candles
       fetchPromises.push(
         api.candles({ coin }).then((r) => {
           setCoinCandles((prev) => ({ ...prev, [coin]: r.candles }));
+          if (r.candles.length > 0) oldestByCoins[coin] = r.candles[0].t;
         }).catch(() => {}),
       );
       // Replay signals per strategy (merge by t:strategyName)
@@ -219,7 +221,28 @@ export function App() {
         );
       }
     }
-    Promise.all(fetchPromises).finally(() => setCandlesLoading(false));
+    // Phase 1: show chart with warmup data ASAP
+    // Phase 2: pre-fetch historical candles + signals for all coins in background
+    const PREFETCH_BARS = 1500;
+    Promise.all(fetchPromises).finally(() => {
+      setCandlesLoading(false);
+      for (const [coin, oldest] of Object.entries(oldestByCoins)) {
+        api.candles({ coin, before: oldest, limit: PREFETCH_BARS }).then((hist) => {
+          if (hist.candles.length === 0) return;
+          setCoinCandles((prev) => {
+            const existing = prev[coin] ?? [];
+            const existingTimes = new Set(existing.map((c) => c.t));
+            const fresh = hist.candles.filter((c) => !existingTimes.has(c.t));
+            if (fresh.length === 0) return prev;
+            return { ...prev, [coin]: [...fresh, ...existing].sort((a, b) => a.t - b.t) };
+          });
+        }).catch(() => {});
+        api.strategySignals({ coin, before: oldest }).then((r) => {
+          if (r.signals.length === 0) return;
+          setCoinReplaySignals((prev) => mergeReplaySignals(prev, coin, r.signals));
+        }).catch(() => {});
+      }
+    });
   }, [config?.coins]);
 
   // Sync autoTrading with config (true if any strategy has it enabled)
@@ -534,7 +557,7 @@ export function App() {
             )}
             </div>
           </div>
-          <CandlestickChart key={selectedCoin} candles={candles} signals={filteredSignals} replaySignals={filteredReplaySignals} positions={coinPositions} loading={candlesLoading} onLoadMore={handleLoadMoreCandles} watermark={selectedCoin ? { asset: selectedCoin } : undefined} />
+          <CandlestickChart coin={selectedCoin} candles={candles} signals={filteredSignals} replaySignals={filteredReplaySignals} positions={coinPositions} loading={candlesLoading} onLoadMore={handleLoadMoreCandles} watermark={selectedCoin ? { asset: selectedCoin } : undefined} />
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">

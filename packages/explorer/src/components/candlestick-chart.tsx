@@ -25,6 +25,7 @@ function strategyLabel(direction: "long" | "short", strategyName: string | null 
 }
 
 interface CandlestickChartProps {
+  coin: string;
   candles: CandleData[];
   signals: SignalRow[];
   replaySignals: ReplaySignal[];
@@ -42,7 +43,7 @@ function formatOhlcv(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function CandlestickChart({ candles, signals, replaySignals, positions, loading, onLoadMore, watermark }: CandlestickChartProps) {
+export function CandlestickChart({ coin, candles, signals, replaySignals, positions, loading, onLoadMore, watermark }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
@@ -173,16 +174,21 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
   // Smart delta detection: use update() for WS ticks, setData() for full loads
   const prevCandlesLenRef = useRef(0);
   const prevFirstTRef = useRef(0);
+  const prevCoinRef = useRef(coin);
 
   useEffect(() => {
     if (!seriesRef.current || candles.length === 0) return;
 
+    const coinChanged = prevCoinRef.current !== coin;
+
     const isIncremental =
+      !coinChanged &&
       prevCandlesLenRef.current > 0 &&
       candles.length >= prevCandlesLenRef.current &&
       candles.length <= prevCandlesLenRef.current + 1 &&
       candles[0]?.t === prevFirstTRef.current;
 
+    prevCoinRef.current = coin;
     prevCandlesLenRef.current = candles.length;
     prevFirstTRef.current = candles[0]?.t ?? 0;
 
@@ -207,8 +213,10 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
           close: c.c,
         })),
       );
+      chartRef.current?.timeScale().scrollToRealTime();
+      if (legendRef.current) legendRef.current.textContent = "";
     }
-  }, [candles]);
+  }, [coin, candles]);
 
   // Update markers when signals or replay signals change
   useEffect(() => {
