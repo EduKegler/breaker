@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { memo, useEffect, useRef, useState, useCallback } from "react";
 import {
   createChart,
   AreaSeries,
@@ -8,16 +8,17 @@ import {
   type SeriesType,
   type Time,
 } from "lightweight-charts";
-import type { CandleData } from "../types/api.js";
+import { useStore } from "../store/use-store.js";
+import { selectCandles } from "../store/selectors.js";
 import { toChartTime } from "../lib/to-chart-time.js";
 
 interface RangeSelectorProps {
-  candles: CandleData[];
   onRangeChange: (from: Time, to: Time) => void;
   onSetUpdate?: (ref: ((from: Time, to: Time) => void) | null) => void;
 }
 
-export function RangeSelector({ candles, onRangeChange, onSetUpdate }: RangeSelectorProps) {
+export const RangeSelector = memo(function RangeSelector({ onRangeChange, onSetUpdate }: RangeSelectorProps) {
+  const candles = useStore(selectCandles);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<SeriesType> | null>(null);
@@ -257,4 +258,4 @@ export function RangeSelector({ candles, onRangeChange, onSetUpdate }: RangeSele
       </div>
     </div>
   );
-}
+});

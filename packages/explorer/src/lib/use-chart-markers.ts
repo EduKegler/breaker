@@ -32,6 +32,19 @@ export interface UseChartMarkersOptions {
 export function useChartMarkers(opts: UseChartMarkersOptions): void {
   const primitiveRef = useRef<SignalVerticalLinesPrimitive | null>(null);
 
+  // Track candle times in a ref — only rebuild when candles.length changes.
+  // In-progress WS ticks update OHLC of the last candle but don't add/remove
+  // candle timestamps, so markers don't need recomputation.
+  const candleTimesRef = useRef<{ set: Set<number>; sorted: number[] }>({ set: new Set(), sorted: [] });
+  const prevCandlesLenRef = useRef(0);
+
+  const candlesLen = opts.candles.length;
+  if (candlesLen !== prevCandlesLenRef.current) {
+    prevCandlesLenRef.current = candlesLen;
+    const times = opts.candles.map((c) => c.t);
+    candleTimesRef.current = { set: new Set(times), sorted: times };
+  }
+
   // Attach/detach primitive
   useEffect(() => {
     if (!opts.seriesRef.current) return;
@@ -45,9 +58,8 @@ export function useChartMarkers(opts: UseChartMarkersOptions): void {
   }, [opts.seriesRef]);
 
   useEffect(() => {
-    if (!opts.markersRef.current || opts.candles.length === 0) return;
-    const candleTimesSet = new Set(opts.candles.map((c) => c.t));
-    const candleTimesSorted = opts.candles.map((c) => c.t); // already sorted
+    if (!opts.markersRef.current || candlesLen === 0) return;
+    const { set: candleTimesSet, sorted: candleTimesSorted } = candleTimesRef.current;
     const markers: SeriesMarker<Time>[] = [];
     const signalLines: SignalLine[] = [];
 
@@ -105,5 +117,5 @@ export function useChartMarkers(opts: UseChartMarkersOptions): void {
 
     // Update signal vertical lines
     primitiveRef.current?.setLines(signalLines);
-  }, [opts.signals, opts.replaySignals, opts.candles]);
+  }, [opts.signals, opts.replaySignals, candlesLen]);
 }

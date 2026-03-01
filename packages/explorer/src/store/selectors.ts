@@ -57,10 +57,8 @@ export const selectSelectedCoinInterval = createSelector(
 
 // ── Candles (streaming or alt) ────────────────
 // Returns store references directly — stable when underlying data is stable.
-export const selectCandles = (s: StoreState): CandleData[] => {
-  if (s.selectedInterval === null) return s.coinCandles[s.selectedCoin] ?? EMPTY_CANDLES;
-  return s.altCandles;
-};
+export const selectCandles = (s: StoreState): CandleData[] =>
+  s.selectedInterval === null ? s.coinCandles[s.selectedCoin] ?? EMPTY_CANDLES : s.altCandles;
 
 export const selectIsLiveInterval = (s: StoreState): boolean =>
   s.selectedInterval === null;

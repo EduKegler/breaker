@@ -77,7 +77,6 @@ export const createActions: StateCreator<StoreState, [], [], Actions & { _toastF
   initCoinData: async (config: ConfigResponse) => {
     const coins = config.coins;
     if (!coins?.length) return;
-
     const { selectedCoin, enabledStrategies } = get();
 
     // Set selectedCoin if not yet set
@@ -108,7 +107,7 @@ export const createActions: StateCreator<StoreState, [], [], Actions & { _toastF
         api.candles({ coin }).then((r) => {
           set((s) => ({ coinCandles: { ...s.coinCandles, [coin]: r.candles } }));
           if (r.candles.length > 0) oldestByCoins[coin] = r.candles[0].t;
-        }).catch(() => {}),
+        }).catch((err) => { console.error(`[initCoinData] candle fetch error for ${coin}:`, err); }),
       );
       for (const strat of cc.strategies) {
         fetchPromises.push(

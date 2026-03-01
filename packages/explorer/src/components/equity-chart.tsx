@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import {
   AreaChart,
   Area,
@@ -14,8 +15,23 @@ function parseUtc(dt: string): Date {
   return new Date(dt.endsWith("Z") ? dt : dt + "Z");
 }
 
-export function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
-  if (snapshots.length === 0) {
+export const EquityChart = memo(function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
+  const data = useMemo(
+    () =>
+      snapshots.length === 0
+        ? []
+        : [...snapshots].reverse().map((s) => ({
+            time: parseUtc(s.timestamp).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            equity: s.equity,
+            unrealized: s.unrealized_pnl,
+          })),
+    [snapshots],
+  );
+
+  if (data.length === 0) {
     return (
       <div className="h-80 flex items-center justify-center">
         <p className="text-txt-secondary text-sm font-mono">
@@ -24,15 +40,6 @@ export function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
       </div>
     );
   }
-
-  const data = [...snapshots].reverse().map((s) => ({
-    time: parseUtc(s.timestamp).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-    equity: s.equity,
-    unrealized: s.unrealized_pnl,
-  }));
 
   return (
     <ResponsiveContainer width="100%" height={320}>
@@ -89,4 +96,4 @@ export function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
       </AreaChart>
     </ResponsiveContainer>
   );
-}
+});

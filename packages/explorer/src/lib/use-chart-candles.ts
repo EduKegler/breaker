@@ -11,6 +11,7 @@ export interface UseChartCandlesOptions {
   seriesRef: RefObject<ISeriesApi<SeriesType> | null>;
   volumeSeriesRef: RefObject<ISeriesApi<SeriesType> | null>;
   legendRef: RefObject<HTMLDivElement | null>;
+  loadingRef: RefObject<boolean>;
   isLive: boolean;
 }
 
@@ -54,7 +55,10 @@ export function useChartCandles(opts: UseChartCandlesOptions): void {
         } as Parameters<typeof opts.volumeSeriesRef.current.update>[0]);
       }
     } else {
-      // Full dataset: init, coin switch, load more
+      // Full dataset: init, coin switch, load more.
+      // Block lazy-load during setData → scrollToRealTime to prevent the
+      // range-change event from firing loadMoreCandles before scroll.
+      opts.loadingRef.current = true;
       opts.seriesRef.current.setData(opts.candles.map(toOhlcData));
       // Set full volume data
       if (opts.volumeSeriesRef.current) {
@@ -70,6 +74,7 @@ export function useChartCandles(opts: UseChartCandlesOptions): void {
         opts.chartRef.current?.timeScale().scrollToRealTime();
       }
       if (opts.legendRef.current) opts.legendRef.current.textContent = "";
+      setTimeout(() => { opts.loadingRef.current = false; }, 500);
     }
   }, [opts.coin, opts.candles, opts.isLive]);
 }

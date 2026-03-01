@@ -68,7 +68,7 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 - **Toast bridge**: store holds `_toastFn` set once in App via `setToastFn(addToast)`. Actions call `get()._toastFn?.()` to notify
 - **Components** read from store via `useStore(selector)` for granular subscriptions
 - **Actions** are async functions in `store/actions.ts` with access to `set`/`get`
-- **No React.memo** needed — Zustand selectors provide render isolation
+- **React.memo** on all components that receive props from App (CandlestickChart, RangeSelector, AccountPanel, PositionCard, EquityChart, OrderTable, OpenOrdersTable) — App re-renders on coin switch and cascades to children without memo. Components that only read from `useStore()` with no props don't need memo.
 
 ## Data flow
 - Hybrid HTTP+WS model: initial HTTP fetch (`fetchInitialData`) + WebSocket push updates (`connectWebSocket`)

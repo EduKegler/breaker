@@ -1,6 +1,15 @@
-import { useRef, useEffect } from "react";
+import { memo, useRef, useEffect } from "react";
 import type { Time } from "lightweight-charts";
-import type { CandleData, SignalRow, LivePosition, ReplaySignal } from "../types/api.js";
+import { useStore } from "../store/use-store.js";
+import {
+  selectCandles,
+  selectIsLiveInterval,
+  selectFilteredSignals,
+  selectFilteredReplaySignals,
+  selectCoinPositions,
+  selectCoinList,
+  selectWatermark,
+} from "../store/selectors.js";
 import { useChartInstance } from "../lib/use-chart-instance.js";
 import { useChartCandles } from "../lib/use-chart-candles.js";
 import { useChartMarkers } from "../lib/use-chart-markers.js";
@@ -11,40 +20,29 @@ import { SessionHighlightPrimitive } from "../lib/primitives/session-highlight.j
 import { VolumeProfilePrimitive } from "../lib/primitives/volume-profile.js";
 
 interface CandlestickChartProps {
-  coin: string;
-  candles: CandleData[];
-  signals: SignalRow[];
-  replaySignals: ReplaySignal[];
-  positions: LivePosition[];
-  loading?: boolean;
-  isLive?: boolean;
-  showSessions?: boolean;
-  showVpvr?: boolean;
-  onLoadMore?: (before: number) => void;
-  watermark?: { asset?: string; strategy?: string };
-  coinList?: string[];
-  onSelectCoin?: (coin: string) => void;
   onVisibleRangeChange?: (from: Time, to: Time) => void;
   onSetVisibleRange?: (ref: ((from: Time, to: Time) => void) | null) => void;
 }
 
-export function CandlestickChart({
-  coin,
-  candles,
-  signals,
-  replaySignals,
-  positions,
-  loading,
-  isLive = true,
-  showSessions = false,
-  showVpvr = false,
-  onLoadMore,
-  watermark,
-  coinList,
-  onSelectCoin,
+export const CandlestickChart = memo(function CandlestickChart({
   onVisibleRangeChange,
   onSetVisibleRange,
 }: CandlestickChartProps) {
+  // ── Store subscriptions (granular selectors) ─
+  const coin = useStore((s) => s.selectedCoin);
+  const candles = useStore(selectCandles);
+  const signals = useStore(selectFilteredSignals);
+  const replaySignals = useStore(selectFilteredReplaySignals);
+  const positions = useStore(selectCoinPositions);
+  const loading = useStore((s) => s.candlesLoading);
+  const isLive = useStore(selectIsLiveInterval);
+  const watermark = useStore(selectWatermark);
+  const coinList = useStore(selectCoinList);
+  const showSessions = useStore((s) => s.showSessions);
+  const showVpvr = useStore((s) => s.showVpvr);
+  const onLoadMore = useStore((s) => s.loadMoreCandles);
+  const onSelectCoin = useStore((s) => s.selectCoin);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
@@ -69,6 +67,7 @@ export function CandlestickChart({
     seriesRef,
     volumeSeriesRef,
     legendRef,
+    loadingRef,
     isLive,
   });
 
@@ -240,4 +239,4 @@ export function CandlestickChart({
       )}
     </div>
   );
-}
+});

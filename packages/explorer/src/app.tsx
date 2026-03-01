@@ -5,13 +5,6 @@ import {
   selectCoinList,
   selectSelectedCoinStrategies,
   selectSelectedCoinInterval,
-  selectCandles,
-  selectIsLiveInterval,
-  selectFilteredReplaySignals,
-  selectFilteredSignals,
-  selectCoinPositions,
-  selectSelectedPrices,
-  selectWatermark,
   selectCurrentEnabledStrategies,
 } from "./store/selectors.js";
 import type { WsStatus } from "./store/types.js";
@@ -28,6 +21,7 @@ import { CoinChartToolbar } from "./components/coin-chart-toolbar.js";
 import { CandleCountdown } from "./components/candle-countdown.js";
 import { TimeframeSwitcher } from "./components/timeframe-switcher.js";
 import { RangeSelector } from "./components/range-selector.js";
+import { PriceDisplay } from "./components/price-display.js";
 import type { Time } from "lightweight-charts";
 
 function formatUptime(seconds: number): string {
@@ -58,7 +52,7 @@ export function App() {
   const setVisibleRangeRef = useRef<((from: Time, to: Time) => void) | null>(null);
   const rangeSelectorUpdateRef = useRef<((from: Time, to: Time) => void) | null>(null);
 
-  // ── Store selectors ─────────────────────────
+  // ── Store selectors (low-frequency only — high-freq moved to leaf components) ─
   const health = useStore((s) => s.health);
   const config = useStore((s) => s.config);
   const positions = useStore((s) => s.positions);
@@ -72,29 +66,19 @@ export function App() {
   const showSignalPopover = useStore((s) => s.showSignalPopover);
   const showSessions = useStore((s) => s.showSessions);
   const showVpvr = useStore((s) => s.showVpvr);
-  const priceFlash = useStore((s) => s.priceFlash);
   const wsStatus = useStore((s) => s.wsStatus);
   const autoTrading = useStore((s) => s.autoTrading);
-  const candlesLoading = useStore((s) => s.candlesLoading);
 
-  // Derived selectors
+  // Derived selectors (low-frequency)
   const coinList = useStore(selectCoinList);
   const selectedCoinStrategies = useStore(selectSelectedCoinStrategies);
   const selectedCoinInterval = useStore(selectSelectedCoinInterval);
-  const candles = useStore(selectCandles);
-  const isLiveInterval = useStore(selectIsLiveInterval);
-  const filteredReplaySignals = useStore(selectFilteredReplaySignals);
-  const filteredSignals = useStore(selectFilteredSignals);
-  const coinPositions = useStore(selectCoinPositions);
-  const selectedPrices = useStore(selectSelectedPrices);
-  const watermark = useStore(selectWatermark);
   const currentEnabledStrategies = useStore(selectCurrentEnabledStrategies);
 
   // ── Actions (stable refs from store) ────────
   const fetchInitialData = useStore((s) => s.fetchInitialData);
   const initCoinData = useStore((s) => s.initCoinData);
   const fetchAltCandles = useStore((s) => s.fetchAltCandles);
-  const loadMoreCandles = useStore((s) => s.loadMoreCandles);
   const closePosition = useStore((s) => s.closePosition);
   const cancelOrder = useStore((s) => s.cancelOrder);
   const toggleAutoTrading = useStore((s) => s.toggleAutoTrading);
@@ -104,7 +88,6 @@ export function App() {
   const setShowSignalPopover = useStore((s) => s.setShowSignalPopover);
   const setShowSessions = useStore((s) => s.setShowSessions);
   const setShowVpvr = useStore((s) => s.setShowVpvr);
-  const clearPriceFlash = useStore((s) => s.clearPriceFlash);
   const setToastFn = useStore((s) => s.setToastFn);
   const refreshAccount = useStore((s) => s.refreshAccount);
 
@@ -135,13 +118,6 @@ export function App() {
   useEffect(() => {
     fetchAltCandles(selectedCoin, selectedInterval);
   }, [selectedCoin, selectedInterval, fetchAltCandles]);
-
-  // ── Clear price flash after animation ───────
-  useEffect(() => {
-    if (!priceFlash) return;
-    const id = setTimeout(clearPriceFlash, 700);
-    return () => clearTimeout(id);
-  }, [priceFlash, clearPriceFlash]);
 
   // ── Periodic account refresh (30s) ──────────
   useEffect(() => {
@@ -335,29 +311,11 @@ export function App() {
               </button>
               <div className="w-px h-4 bg-terminal-border" />
               {selectedCoinInterval && <CandleCountdown interval={selectedCoinInterval} />}
-              {selectedPrices && (selectedPrices.hlMidPrice != null || selectedPrices.dataSourcePrice != null) && (
-              <div className={`relative flex items-center gap-3 ${priceFlash === "up" ? "price-flash-up" : priceFlash === "down" ? "price-flash-down" : ""}`}>
-                {selectedPrices.hlMidPrice != null && (
-                  <span className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-txt-secondary/60">HL</span>
-                    <span className="font-mono text-sm font-medium text-txt-primary">{selectedPrices.hlMidPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </span>
-                )}
-                {selectedPrices.hlMidPrice != null && selectedPrices.dataSourcePrice != null && (
-                  <span className="text-txt-secondary/30 text-xs">{"\u00b7"}</span>
-                )}
-                {selectedPrices.dataSourcePrice != null && (
-                  <span className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-txt-secondary/60">BIN</span>
-                    <span className="font-mono text-sm font-medium text-txt-primary">{selectedPrices.dataSourcePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </span>
-                )}
-              </div>
-            )}
+              <PriceDisplay />
             </div>
           </div>
-          <CandlestickChart coin={selectedCoin} candles={candles} signals={filteredSignals} replaySignals={filteredReplaySignals} positions={coinPositions} loading={candlesLoading} isLive={isLiveInterval} onLoadMore={loadMoreCandles} watermark={watermark} coinList={coinList} onSelectCoin={selectCoin} showSessions={showSessions} showVpvr={showVpvr} onVisibleRangeChange={handleVisibleRangeChange} onSetVisibleRange={handleSetVisibleRangeRef} />
-          <RangeSelector candles={candles} onRangeChange={handleRangeSelectorChange} onSetUpdate={handleSetRangeSelectorUpdate} />
+          <CandlestickChart onVisibleRangeChange={handleVisibleRangeChange} onSetVisibleRange={handleSetVisibleRangeRef} />
+          <RangeSelector onRangeChange={handleRangeSelectorChange} onSetUpdate={handleSetRangeSelectorUpdate} />
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
