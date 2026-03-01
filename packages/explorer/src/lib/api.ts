@@ -67,11 +67,12 @@ export const api = {
   equity: () => fetchJson<{ snapshots: EquitySnapshot[] }>("/equity"),
   openOrders: () => fetchJson<{ orders: OpenOrder[] }>("/open-orders"),
   config: () => fetchJson<ConfigResponse>("/config"),
-  candles: (opts?: { coin?: string; before?: number; limit?: number }) => {
+  candles: (opts?: { coin?: string; before?: number; limit?: number; interval?: string }) => {
     const params = new URLSearchParams();
     if (opts?.coin) params.set("coin", opts.coin);
     if (opts?.before) params.set("before", String(opts.before));
     if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.interval) params.set("interval", opts.interval);
     const qs = params.toString();
     return fetchJson<{ candles: CandleData[] }>(`/candles${qs ? `?${qs}` : ""}`);
   },

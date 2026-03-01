@@ -1,6 +1,6 @@
 // Types
-export type { Candle, CandleInterval } from "./types/candle.js";
-export { CandleSchema, intervalToMs } from "./types/candle.js";
+export type { Candle } from "./types/candle.js";
+export { CandleInterval, CandleSchema, intervalToMs } from "./types/candle.js";
 export type { Strategy, StrategyContext, StrategyParam, Signal } from "./types/strategy.js";
 export type { Order, Position, CompletedTrade, Fill, OrderSide, OrderType } from "./types/order.js";
 export type {

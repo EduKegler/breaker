@@ -8,7 +8,7 @@ import { handleSignal, type SignalHandlerDeps } from "./application/handle-signa
 import { replayStrategy } from "./application/replay-strategy.js";
 import type { CandleStreamer } from "./adapters/candle-streamer.js";
 import type { StrategyRunner } from "./application/strategy-runner.js";
-import { intervalToMs, atr, type Strategy, type CandleInterval, type CandleCache } from "@breaker/backtest";
+import { intervalToMs, CandleInterval, atr, type Strategy, type CandleCache } from "@breaker/backtest";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
@@ -107,11 +107,44 @@ export function createApp(deps: ServerDeps): express.Express {
     }
   });
 
+  // Pre-compute streaming interval per coin from streamer keys ("BTC:15m" → "15m")
+  const coinStreamingInterval = new Map<string, string>();
+  for (const key of deps.streamers.keys()) {
+    const [coin, interval] = key.split(":");
+    if (!coinStreamingInterval.has(coin)) coinStreamingInterval.set(coin, interval);
+  }
+
   app.get("/candles", async (req, res) => {
     try {
       const coin = (req.query.coin as string) || deps.config.coins[0]?.coin;
       if (!coin) {
         res.status(400).json({ error: "coin required" });
+        return;
+      }
+
+      const requestedInterval = req.query.interval as string | undefined;
+      const streamingInterval = coinStreamingInterval.get(coin);
+
+      // Validate interval if provided
+      const validIntervals: readonly string[] = CandleInterval;
+      if (requestedInterval && !validIntervals.includes(requestedInterval)) {
+        res.status(400).json({ error: `Invalid interval: ${requestedInterval}` });
+        return;
+      }
+
+      // If interval differs from streaming interval and CandleCache is available → use cache
+      const useAltInterval = requestedInterval && requestedInterval !== streamingInterval && deps.candleCache;
+
+      if (useAltInterval) {
+        const typedInterval = requestedInterval as CandleInterval;
+        const before = req.query.before ? Number(req.query.before) : Date.now();
+        const limit = req.query.limit ? Number(req.query.limit) : 500;
+        const ivlMs = intervalToMs(typedInterval);
+        const startTime = before - limit * ivlMs;
+
+        await deps.candleCache!.sync(coin, typedInterval, startTime, before, { source: deps.config.dataSource });
+        const candles = deps.candleCache!.getCandles(coin, typedInterval, startTime, before, deps.config.dataSource);
+        res.json({ candles });
         return;
       }
 

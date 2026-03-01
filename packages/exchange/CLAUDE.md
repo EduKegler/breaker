@@ -66,7 +66,7 @@ src/
 - `resolveOrderStatus()` centralizes HL→internal status mapping
 - One export per file: file name matches primary export in kebab-case
 - Candle WS broadcast is registered once per coin in daemon.ts (not per runner) to prevent duplicate events when a coin has multiple strategies
-- `/candles` endpoint returns live in-memory data from CandleStreamer (consistent with WS); `/strategy-signals` uses CandleCache for replay
+- `/candles` endpoint: without `?interval=` returns live in-memory data from CandleStreamer; with `?interval=` (validated against CandleInterval) uses CandleCache for alternate timeframes; `/strategy-signals` uses CandleCache for replay
 - `POST /auto-trading` toggle persists to `exchange-config.json` via `persistConfig()` callback — survives daemon restarts
 - When `autoTradingEnabled: false` blocks a strategy-runner signal, an `auto_trading_blocked` event is appended to the NDJSON event log for diagnostics
 

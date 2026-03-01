@@ -12,3 +12,9 @@ export function strategyAbbr(strategyName: string): string {
 export function strategyDisplayName(strategyName: string): string {
   return `[${strategyAbbr(strategyName)}] ${strategyName}`;
 }
+
+export function strategyLabel(direction: "long" | "short", strategyName: string | null | undefined): string {
+  const dir = direction === "long" ? "L" : "S";
+  if (!strategyName) return dir;
+  return `${dir}(${strategyAbbr(strategyName)})`;
+}
