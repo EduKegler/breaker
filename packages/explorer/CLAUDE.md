@@ -7,7 +7,7 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 ```
 ├── src/
 │   ├── main.tsx            # React root
-│   ├── app.tsx             # App shell: side effects, layout, refs for range sync
+│   ├── app.tsx             # App shell: side effects, layout
 │   ├── store/
 │   │   ├── types.ts            # StoreState = ServerSlice & MarketDataSlice & UiSlice & Actions
 │   │   ├── use-store.ts        # create<StoreState>()(...) — Zustand store
@@ -18,14 +18,13 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 │   │   ├── selectors.ts        # selectCandles, selectFilteredSignals, selectCoinPositions, etc.
 │   │   └── websocket.ts        # connectWebSocket(url, store) → cleanup fn (standalone, no React)
 │   ├── components/
-│   │   ├── candlestick-chart.tsx   # Chart orchestrator (~250 lines), delegates to hooks
+│   │   ├── candlestick-chart.tsx   # Chart orchestrator (~160 lines), delegates to hooks
 │   │   ├── coin-chart-toolbar.tsx  # Coin tabs + strategy toggles above chart
 │   │   ├── position-card.tsx       # Position card with PnL
 │   │   ├── order-table.tsx         # Sortable order table
 │   │   ├── signal-popover.tsx      # Quick signal popover (multi-coin)
 │   │   ├── candle-countdown.tsx    # Countdown timer to next candle close
 │   │   ├── timeframe-switcher.tsx  # Interval pill buttons (1m..1d) with LIVE badge
-│   │   ├── range-selector.tsx      # Brushable mini-chart for visible range control
 │   │   └── ...
 │   ├── lib/
 │   │   ├── api.ts                  # Fetch wrapper for exchange APIs
@@ -87,13 +86,12 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 - "Tactical Terminal" dark aesthetic: terminal-bg (#0a0a0f), noise overlay via SVG feTurbulence
 - Entry markers: blue (auto) / yellow (manual), "L"/"S" text, size 1
 - Strategy abbreviations: `[B]` donchian-adx, `[MR]` keltner-rsi2, `[PB]` ema-pullback, `[M]` manual — centralized in `strategy-abbreviations.ts`
-- CandlestickChart is an orchestrator (~250 lines) that delegates to 4 specialized hooks: `useChartInstance`, `useChartCandles`, `useChartMarkers`, `useChartPriceLines`
+- CandlestickChart is a memo'd orchestrator (~160 lines) that delegates to 4 specialized hooks: `useChartInstance`, `useChartCandles`, `useChartMarkers`, `useChartPriceLines`
 - Smart delta detection via refs: `update()` for incremental WS ticks (O(1)), `setData()` only for full dataset (init, coin switch, load more)
 - Coin switch reuses same chart instance (no `key` remount) — `setData()` + `scrollToRealTime()` handles the transition
 - Canvas primitives use `ISeriesPrimitive<Time>` from lightweight-charts v5.1, drawing via `useBitmapCoordinateSpace()`. Local `canvas-types.ts` provides structural types (fancy-canvas types not directly exported)
 - lw-charts v5.1 subscribe/unsubscribe: `subscribeVisibleLogicalRangeChange(handler)` returns void — use separate `unsubscribeVisibleLogicalRangeChange(handler)` for cleanup
-- RangeSelector ↔ CandlestickChart sync uses imperative refs (not React state) to avoid App re-renders on every scroll frame
-- Session/VPVR primitives only recalculate when `candles.length` changes (not on every in-progress tick update)
+- Session/VPVR primitives: single effect each (attach + update), re-run when candles/coin changes (not on every in-progress tick — handled by incremental `update()` path)
 - Shared helpers: `toChartTime()`, `toOhlcData()`, `toOhlcvData()`, `chartTimeToUtcSec()` in `lib/to-chart-time.ts`; `INTERVAL_MS` in `lib/interval-ms.ts`
 - **Timezone**: lw-charts has no native TZ support — `toChartTime()` subtracts `TZ_OFFSET_SEC` (computed once from `getTimezoneOffset()`) so the X-axis shows local time. Use `chartTimeToUtcSec()` to reverse when real UTC is needed (e.g., session-highlight hour detection)
 - Timeframe switcher: `selectedInterval: string | null` (null = streaming interval); alt candles fetched via `fetchAltCandles` action

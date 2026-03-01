@@ -1,4 +1,7 @@
-import { strategyDisplayName, strategyTooltip } from "../lib/strategy-abbreviations.js";
+import {
+  strategyDisplayName,
+  strategyTooltip,
+} from "../lib/strategy-abbreviations.js";
 
 interface CoinChartToolbarProps {
   coins: string[];
@@ -27,9 +30,15 @@ export function CoinChartToolbar({
             type="button"
             className="relative px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] rounded transition-all cursor-pointer"
             style={{
-              background: selectedCoin === coin ? "rgba(255, 170, 0, 0.12)" : "rgba(255,255,255,0.03)",
+              background:
+                selectedCoin === coin
+                  ? "rgba(255, 170, 0, 0.12)"
+                  : "rgba(255,255,255,0.03)",
               color: selectedCoin === coin ? "#ffaa00" : "#6b6b80",
-              border: selectedCoin === coin ? "1px solid rgba(255,170,0,0.3)" : "1px solid rgba(255,255,255,0.05)",
+              border:
+                selectedCoin === coin
+                  ? "1px solid rgba(255,170,0,0.3)"
+                  : "1px solid rgba(255,255,255,0.05)",
             }}
             onClick={() => onSelectCoin(coin)}
           >
@@ -53,9 +62,13 @@ export function CoinChartToolbar({
                     type="button"
                     className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all ${canToggle ? "cursor-pointer" : "cursor-default"}`}
                     style={{
-                      background: isEnabled ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.01)",
+                      background: isEnabled
+                        ? "rgba(255,255,255,0.06)"
+                        : "rgba(255,255,255,0.01)",
                       color: isEnabled ? "#e0e0e8" : "#4a4a5a",
-                      border: isEnabled ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(255,255,255,0.04)",
+                      border: isEnabled
+                        ? "1px solid rgba(255,255,255,0.12)"
+                        : "1px solid rgba(255,255,255,0.04)",
                       textDecoration: isEnabled ? "none" : "line-through",
                     }}
                     onClick={canToggle ? () => onToggleStrategy(s) : undefined}

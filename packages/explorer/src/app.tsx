@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect } from "react";
 import { useStore } from "./store/use-store.js";
 import { connectWebSocket } from "./store/websocket.js";
 import {
@@ -20,9 +20,7 @@ import { AccountPanel } from "./components/account-panel.js";
 import { CoinChartToolbar } from "./components/coin-chart-toolbar.js";
 import { CandleCountdown } from "./components/candle-countdown.js";
 import { TimeframeSwitcher } from "./components/timeframe-switcher.js";
-import { RangeSelector } from "./components/range-selector.js";
 import { PriceDisplay } from "./components/price-display.js";
-import type { Time } from "lightweight-charts";
 
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -49,8 +47,6 @@ function wsUrl(): string {
 
 export function App() {
   const { addToast } = useToasts();
-  const setVisibleRangeRef = useRef<((from: Time, to: Time) => void) | null>(null);
-  const rangeSelectorUpdateRef = useRef<((from: Time, to: Time) => void) | null>(null);
 
   // ── Store selectors (low-frequency only — high-freq moved to leaf components) ─
   const health = useStore((s) => s.health);
@@ -125,30 +121,14 @@ export function App() {
     return () => clearInterval(id);
   }, [refreshAccount]);
 
-  // ── Range selector handlers (imperative refs) ─
-  const handleVisibleRangeChange = useCallback((from: Time, to: Time) => {
-    rangeSelectorUpdateRef.current?.(from, to);
-  }, []);
-
-  const handleSetVisibleRangeRef = useCallback((ref: ((from: Time, to: Time) => void) | null) => {
-    setVisibleRangeRef.current = ref;
-  }, []);
-
-  const handleSetRangeSelectorUpdate = useCallback((ref: ((from: Time, to: Time) => void) | null) => {
-    rangeSelectorUpdateRef.current = ref;
-  }, []);
-
-  const handleRangeSelectorChange = useCallback((from: Time, to: Time) => {
-    setVisibleRangeRef.current?.(from, to);
-  }, []);
-
   // ── Derived header values ───────────────────
   const h = health;
   const c = config;
   const isOnline = !!h;
   const mode = c?.mode ?? h?.mode ?? "\u2014";
   const isTestnet = mode === "testnet";
-  const headerCoinsLabel = coinList.length > 0 ? coinList.join(" \u00b7 ") : h?.asset ?? "";
+  const headerCoinsLabel =
+    coinList.length > 0 ? coinList.join(" \u00b7 ") : (h?.asset ?? "");
 
   return (
     <div className="min-h-screen bg-terminal-bg font-display">
@@ -224,10 +204,18 @@ export function App() {
             <div className="w-px h-4 bg-terminal-border" />
 
             <div className="flex items-center gap-2">
-              <span className={`flex items-center gap-1.5 text-[10px] font-mono font-medium ${wsStatusColor[wsStatus]}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${
-                  wsStatus === "connected" ? "bg-profit" : wsStatus === "connecting" ? "bg-amber animate-pulse" : "bg-loss"
-                }`} />
+              <span
+                className={`flex items-center gap-1.5 text-[10px] font-mono font-medium ${wsStatusColor[wsStatus]}`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    wsStatus === "connected"
+                      ? "bg-profit"
+                      : wsStatus === "connecting"
+                        ? "bg-amber animate-pulse"
+                        : "bg-loss"
+                  }`}
+                />
                 {wsStatusLabel[wsStatus]}
               </span>
 
@@ -310,12 +298,13 @@ export function App() {
                 VPVR
               </button>
               <div className="w-px h-4 bg-terminal-border" />
-              {selectedCoinInterval && <CandleCountdown interval={selectedCoinInterval} />}
+              {selectedCoinInterval && (
+                <CandleCountdown interval={selectedCoinInterval} />
+              )}
               <PriceDisplay />
             </div>
           </div>
-          <CandlestickChart onVisibleRangeChange={handleVisibleRangeChange} onSetVisibleRange={handleSetVisibleRangeRef} />
-          <RangeSelector onRangeChange={handleRangeSelectorChange} onSetUpdate={handleSetRangeSelectorUpdate} />
+          <CandlestickChart />
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
@@ -333,7 +322,12 @@ export function App() {
             {positions.length ? (
               <div className="space-y-3">
                 {positions.map((p) => (
-                  <PositionCard key={p.coin} position={p} openOrders={openOrders} onClose={closePosition} />
+                  <PositionCard
+                    key={p.coin}
+                    position={p}
+                    openOrders={openOrders}
+                    onClose={closePosition}
+                  />
                 ))}
               </div>
             ) : (

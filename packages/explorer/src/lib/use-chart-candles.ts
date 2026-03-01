@@ -74,7 +74,7 @@ export function useChartCandles(opts: UseChartCandlesOptions): void {
         opts.chartRef.current?.timeScale().scrollToRealTime();
       }
       if (opts.legendRef.current) opts.legendRef.current.textContent = "";
-      setTimeout(() => { opts.loadingRef.current = false; }, 500);
+      opts.loadingRef.current = false;
     }
   }, [opts.coin, opts.candles, opts.isLive]);
 }

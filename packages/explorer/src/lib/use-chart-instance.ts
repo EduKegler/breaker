@@ -137,7 +137,8 @@ export function useChartInstance(opts: UseChartInstanceOptions): ChartRefs {
         const oldestTs = currentCandles[0].t;
         opts.loadingRef.current = true;
         opts.onLoadMoreRef.current?.(oldestTs);
-        setTimeout(() => { opts.loadingRef.current = false; }, 1000);
+        // Safety fallback: unlock after 5s if data never arrives
+        setTimeout(() => { opts.loadingRef.current = false; }, 5000);
       }
     });
 
