@@ -149,8 +149,9 @@ export class CandleCache {
         totalFetched += backfillCandles.length;
       }
 
-      // Forward fill: fetch newer data after last cached timestamp
-      const forwardStart = lastTs + ivlMs;
+      // Forward fill: re-fetch from lastTs so INSERT OR REPLACE overwrites
+      // any in-progress candle with its final OHLCV values.
+      const forwardStart = lastTs;
       if (forwardStart < endTime) {
         const forwardCandles = await fetchCandles(coin, interval, forwardStart, endTime, clientOptions);
         this.insertCandles(coin, interval, forwardCandles, source);

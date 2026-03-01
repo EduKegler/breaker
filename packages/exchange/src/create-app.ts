@@ -109,14 +109,28 @@ export function createApp(deps: ServerDeps): express.Express {
   app.get("/candles", async (req, res) => {
     try {
       const coin = (req.query.coin as string) || deps.config.coins[0]?.coin;
-      const interval = (req.query.interval as string) || deps.config.coins[0]?.strategies[0]?.interval;
-      if (!coin || !interval) {
-        res.status(400).json({ error: "coin and interval required" });
+      if (!coin) {
+        res.status(400).json({ error: "coin required" });
         return;
       }
 
-      const candles = await fetchCandlesForReplay(coin, interval as CandleInterval, Date.now(), REPLAY_WARMUP);
-      res.json({ candles });
+      const streamer = findStreamerForCoin(coin);
+      if (!streamer) {
+        res.status(400).json({ error: `No streamer for ${coin}` });
+        return;
+      }
+
+      const before = req.query.before ? Number(req.query.before) : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+
+      if (before && limit) {
+        // Lazy loading: fetch historical candles from exchange
+        const candles = await streamer.fetchHistorical(before, limit);
+        res.json({ candles });
+      } else {
+        // Default: return live in-memory candles (consistent with WS)
+        res.json({ candles: streamer.getCandles() });
+      }
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

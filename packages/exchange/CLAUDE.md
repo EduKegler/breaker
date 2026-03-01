@@ -65,6 +65,8 @@ src/
 - `logger.createChild(module)` for per-module log levels (set via `logger.setLogConfig()`)
 - `resolveOrderStatus()` centralizes HL→internal status mapping
 - One export per file: file name matches primary export in kebab-case
+- Candle WS broadcast is registered once per coin in daemon.ts (not per runner) to prevent duplicate events when a coin has multiple strategies
+- `/candles` endpoint returns live in-memory data from CandleStreamer (consistent with WS); `/strategy-signals` uses CandleCache for replay
 
 ## Known pitfalls
 - Must build `@breaker/backtest` before running exchange tests (workspace dependency)
@@ -77,7 +79,7 @@ src/
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 344 tests across 22 files
+- `pnpm test` — 348 tests across 22 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

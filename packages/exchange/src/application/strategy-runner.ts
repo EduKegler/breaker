@@ -122,7 +122,6 @@ export class StrategyRunner {
     if (candles.length === 0) return;
     const latest = candles[candles.length - 1];
     if (latest.t <= this.lastCandleAt) return;
-    this.deps.onNewCandle?.(latest);
     await this.processClosedCandle(latest);
   }
 
@@ -432,7 +431,6 @@ export class StrategyRunner {
       if (!this.running) return;
       const tickPos = this.deps.positionBook.get(this.deps.coin);
       if (tickPos) this.deps.positionBook.updatePrice(this.deps.coin, candle.c);
-      this.deps.onNewCandle?.(candle);
     });
 
     this.deps.streamer.on("stale", (info) => {

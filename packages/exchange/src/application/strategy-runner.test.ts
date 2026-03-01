@@ -209,7 +209,7 @@ describe("StrategyRunner", () => {
     expect(strategy.shouldExit).toHaveBeenCalled();
   });
 
-  it("calls onNewCandle callback when new candle arrives", async () => {
+  it("does not broadcast candle (broadcast moved to daemon level)", async () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);
     const strategy = createTestStrategy();
@@ -224,22 +224,7 @@ describe("StrategyRunner", () => {
     streamer.addCandle(newCandle);
     await runner.tick();
 
-    expect(onNewCandle).toHaveBeenCalledOnce();
-    expect(onNewCandle).toHaveBeenCalledWith(newCandle);
-  });
-
-  it("does not call onNewCandle when no new candle", async () => {
-    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
-    const streamer = createMockStreamer(candles);
-    const strategy = createTestStrategy();
-    const onNewCandle = vi.fn();
-    const deps = createDeps(strategy, streamer);
-    deps.onNewCandle = onNewCandle;
-
-    const runner = new StrategyRunner(deps);
-    await runner.warmup();
-    await runner.tick(); // no new candle
-
+    // onNewCandle should NOT be called from tick() — broadcast is handled at daemon level
     expect(onNewCandle).not.toHaveBeenCalled();
   });
 

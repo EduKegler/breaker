@@ -288,47 +288,50 @@ describe("Exchange server", () => {
     expect(res.body.error).toContain("HL down");
   });
 
-  it("GET /candles returns full candle history", async () => {
+  it("GET /candles returns live in-memory candles from streamer", async () => {
     const mockCandles = [
       { t: 1700000000000, o: 95000, h: 95500, l: 94500, c: 95200, v: 1000, n: 50 },
       { t: 1700000900000, o: 95200, h: 95700, l: 95000, c: 95400, v: 800, n: 40 },
     ];
-    btcStreamer.fetchHistorical.mockResolvedValue(mockCandles);
+    btcStreamer.getCandles.mockReturnValue(mockCandles);
 
     const app = createApp(deps);
-    const res = await request(app).get("/candles?coin=BTC&interval=15m");
+    const res = await request(app).get("/candles?coin=BTC");
 
     expect(res.status).toBe(200);
     expect(res.body.candles).toHaveLength(2);
     expect(res.body.candles[0].t).toBe(1700000000000);
+    expect(btcStreamer.getCandles).toHaveBeenCalled();
   });
 
-  it("GET /candles returns empty when no candles", async () => {
+  it("GET /candles returns empty when streamer has no candles", async () => {
     const app = createApp(deps);
-    const res = await request(app).get("/candles?coin=BTC&interval=15m");
+    const res = await request(app).get("/candles?coin=BTC");
 
     expect(res.status).toBe(200);
     expect(res.body.candles).toEqual([]);
   });
 
-  it("GET /candles uses candleCache when available", async () => {
+  it("GET /candles with before+limit uses fetchHistorical for lazy loading", async () => {
     const mockCandles = [
       { t: 1700000000000, o: 95000, h: 95500, l: 94500, c: 95200, v: 1000, n: 50 },
     ];
-    deps.candleCache = {
-      sync: vi.fn().mockResolvedValue({ fetched: 0, cached: 1 }),
-      getCandles: vi.fn().mockReturnValue(mockCandles),
-      close: vi.fn(),
-    } as any;
+    btcStreamer.fetchHistorical.mockResolvedValue(mockCandles);
 
     const app = createApp(deps);
-    const res = await request(app).get("/candles?coin=BTC&interval=15m");
+    const res = await request(app).get("/candles?coin=BTC&before=1700000900000&limit=100");
 
     expect(res.status).toBe(200);
     expect(res.body.candles).toHaveLength(1);
-    expect(deps.candleCache!.sync).toHaveBeenCalled();
-    expect(deps.candleCache!.getCandles).toHaveBeenCalled();
-    expect(btcStreamer.fetchHistorical).not.toHaveBeenCalled();
+    expect(btcStreamer.fetchHistorical).toHaveBeenCalledWith(1700000900000, 100);
+  });
+
+  it("GET /candles returns 400 for unknown coin", async () => {
+    const app = createApp(deps);
+    const res = await request(app).get("/candles?coin=UNKNOWN");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("No streamer");
   });
 
   it("GET /signals returns recent signals from store", async () => {

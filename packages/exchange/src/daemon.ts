@@ -232,6 +232,22 @@ async function main() {
 
   const candleCache = new CandleCache(join(dataDir, "candles.db"));
 
+  // Register candle broadcast: 1 listener per coin on the streamer (not per runner).
+  // This prevents duplicate WS broadcasts when a coin has multiple strategies.
+  const broadcastedStreamers = new Set<string>();
+  for (const coinCfg of config.coins) {
+    for (const strat of coinCfg.strategies) {
+      const key = `${coinCfg.coin}:${strat.interval}`;
+      if (broadcastedStreamers.has(key)) continue;
+      broadcastedStreamers.add(key);
+      const streamer = streamers.get(key);
+      if (!streamer) continue;
+      streamer.on("candle:tick", (candle) => {
+        wsBroker.broadcastEvent("candle", { ...candle, coin: coinCfg.coin });
+      });
+    }
+  }
+
   // StrategyRunner per (coin, strategy)
   const runners: StrategyRunner[] = [];
   for (const coinCfg of config.coins) {
@@ -253,9 +269,6 @@ async function main() {
         positionBook,
         signalHandlerDeps,
         eventLog,
-        onNewCandle: (candle) => {
-          wsBroker.broadcastEvent("candle", { ...candle, coin: coinCfg.coin });
-        },
         onStaleData: ({ lastCandleAt, silentMs }) => {
           const lastAt = lastCandleAt > 0 ? new Date(lastCandleAt).toISOString() : "never";
           const silentMin = Math.round(silentMs / 60_000);

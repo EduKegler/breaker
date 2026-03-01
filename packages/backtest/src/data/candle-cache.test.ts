@@ -130,6 +130,31 @@ describe("CandleCache", () => {
     expect(cache.getCandles("BTC", "15m", 0, 6000, "hyperliquid")).toHaveLength(3);
   });
 
+  it("sync re-fetches last candle to overwrite in-progress data", async () => {
+    // Simulate an in-progress candle saved with partial OHLCV
+    const inProgressCandle: Candle = { t: 5000, o: 100, h: 105, l: 99, c: 102, v: 10, n: 5 };
+    cache.insertCandles("BTC", "15m", [makeCandle(1000), inProgressCandle], "hyperliquid");
+    expect(cache.getLastTimestamp("BTC", "15m", "hyperliquid")).toBe(5000);
+
+    // On next sync, the API returns the finalized candle with updated OHLCV
+    const finalizedCandle = [5000, 100, 112, 95, 108, 50] as [number, number, number, number, number, number];
+    const exchange = makeMockExchange([[finalizedCandle, [6000, 108, 115, 106, 113, 40]]]);
+
+    await cache.sync("BTC", "15m", 1000, 7000, { source: "hyperliquid", _exchange: exchange });
+
+    // The in-progress candle should be overwritten with final values
+    const candles = cache.getCandles("BTC", "15m", 4000, 7000, "hyperliquid");
+    const updated = candles.find((c) => c.t === 5000);
+    expect(updated).toBeDefined();
+    expect(updated!.h).toBe(112);
+    expect(updated!.l).toBe(95);
+    expect(updated!.c).toBe(108);
+    expect(updated!.v).toBe(50);
+
+    // The new candle at 6000 should also be present
+    expect(candles.find((c) => c.t === 6000)).toBeDefined();
+  });
+
   it("isolates data by source", () => {
     cache.insertCandles("BTC", "15m", [{ ...makeCandle(1000), c: 100 }], "binance");
     cache.insertCandles("BTC", "15m", [{ ...makeCandle(1000), c: 200 }], "hyperliquid");

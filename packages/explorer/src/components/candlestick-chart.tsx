@@ -170,19 +170,44 @@ export function CandlestickChart({ candles, signals, replaySignals, positions, l
     return () => wm.detach();
   }, [watermark?.asset, watermark?.strategy]);
 
-  // Update data when candles change
+  // Smart delta detection: use update() for WS ticks, setData() for full loads
+  const prevCandlesLenRef = useRef(0);
+  const prevFirstTRef = useRef(0);
+
   useEffect(() => {
     if (!seriesRef.current || candles.length === 0) return;
 
-    const data = candles.map((c) => ({
-      time: toChartTime(c.t),
-      open: c.o,
-      high: c.h,
-      low: c.l,
-      close: c.c,
-    }));
+    const isIncremental =
+      prevCandlesLenRef.current > 0 &&
+      candles.length >= prevCandlesLenRef.current &&
+      candles.length <= prevCandlesLenRef.current + 1 &&
+      candles[0]?.t === prevFirstTRef.current;
 
-    seriesRef.current.setData(data);
+    prevCandlesLenRef.current = candles.length;
+    prevFirstTRef.current = candles[0]?.t ?? 0;
+
+    if (isIncremental) {
+      // WS tick: update/append only the last candle (O(1) instead of O(n))
+      const last = candles[candles.length - 1];
+      seriesRef.current.update({
+        time: toChartTime(last.t),
+        open: last.o,
+        high: last.h,
+        low: last.l,
+        close: last.c,
+      });
+    } else {
+      // Full dataset: init, coin switch, load more
+      seriesRef.current.setData(
+        candles.map((c) => ({
+          time: toChartTime(c.t),
+          open: c.o,
+          high: c.h,
+          low: c.l,
+          close: c.c,
+        })),
+      );
+    }
   }, [candles]);
 
   // Update markers when signals or replay signals change
