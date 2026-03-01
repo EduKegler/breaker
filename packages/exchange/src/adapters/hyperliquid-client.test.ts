@@ -410,6 +410,88 @@ describe("HyperliquidClient input validation", () => {
     });
   });
 
+  describe("placeStopOrder reduceOnly skips truncateSize", () => {
+    it("sends exact size when reduceOnly=true (no truncation)", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getMeta as ReturnType<typeof vi.fn>).mockResolvedValue({
+        universe: [{ name: "BTC", szDecimals: 4 }],
+      });
+      (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: "ok",
+        response: { type: "order", data: { statuses: [{ resting: { oid: 55 } }] } },
+      });
+      const client = new HyperliquidClient(sdk);
+      await client.loadSzDecimals("BTC");
+
+      // 0.12345 has 5 decimals but szDecimals=4 → truncateSize would floor to 0.1234
+      await client.placeStopOrder("BTC", true, 0.12345, 90000, true);
+
+      const call = (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.sz).toBe(0.12345);
+      expect(call.reduce_only).toBe(true);
+    });
+
+    it("truncates size when reduceOnly=false", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getMeta as ReturnType<typeof vi.fn>).mockResolvedValue({
+        universe: [{ name: "BTC", szDecimals: 4 }],
+      });
+      (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: "ok",
+        response: { type: "order", data: { statuses: [{ resting: { oid: 56 } }] } },
+      });
+      const client = new HyperliquidClient(sdk);
+      await client.loadSzDecimals("BTC");
+
+      await client.placeStopOrder("BTC", true, 0.12345, 90000, false);
+
+      const call = (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.sz).toBe(0.1234);
+      expect(call.reduce_only).toBe(false);
+    });
+  });
+
+  describe("placeLimitOrder reduceOnly skips truncateSize", () => {
+    it("sends exact size when reduceOnly=true (no truncation)", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getMeta as ReturnType<typeof vi.fn>).mockResolvedValue({
+        universe: [{ name: "ETH", szDecimals: 3 }],
+      });
+      (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: "ok",
+        response: { type: "order", data: { statuses: [{ resting: { oid: 57 } }] } },
+      });
+      const client = new HyperliquidClient(sdk);
+      await client.loadSzDecimals("ETH");
+
+      // 1.2345 has 4 decimals but szDecimals=3 → truncateSize would floor to 1.234
+      await client.placeLimitOrder("ETH", false, 1.2345, 3500, true);
+
+      const call = (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.sz).toBe(1.2345);
+      expect(call.reduce_only).toBe(true);
+    });
+
+    it("truncates size when reduceOnly=false", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getMeta as ReturnType<typeof vi.fn>).mockResolvedValue({
+        universe: [{ name: "ETH", szDecimals: 3 }],
+      });
+      (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: "ok",
+        response: { type: "order", data: { statuses: [{ resting: { oid: 58 } }] } },
+      });
+      const client = new HyperliquidClient(sdk);
+      await client.loadSzDecimals("ETH");
+
+      await client.placeLimitOrder("ETH", false, 1.2345, 3500, false);
+
+      const call = (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(call.sz).toBe(1.234);
+      expect(call.reduce_only).toBe(false);
+    });
+  });
+
   describe("getAccountEquity", () => {
     it("returns 0 when accountValue is NaN", async () => {
       const sdk = createMockSdk();

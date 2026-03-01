@@ -158,7 +158,7 @@ export class HyperliquidClient implements HlClient {
     triggerPrice: number,
     reduceOnly: boolean,
   ): Promise<HlOrderResult> {
-    const sz = truncateSize(size, this.getSzDecimals(coin));
+    const sz = reduceOnly ? size : truncateSize(size, this.getSzDecimals(coin));
     if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
     const px = truncatePrice(triggerPrice);
     const t0 = performance.now();
@@ -182,7 +182,7 @@ export class HyperliquidClient implements HlClient {
     price: number,
     reduceOnly: boolean,
   ): Promise<HlOrderResult> {
-    const sz = truncateSize(size, this.getSzDecimals(coin));
+    const sz = reduceOnly ? size : truncateSize(size, this.getSzDecimals(coin));
     if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
     const px = truncatePrice(price);
     const t0 = performance.now();
