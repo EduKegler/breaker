@@ -12,6 +12,7 @@ import { SignalPopover } from "./components/signal-popover.js";
 import { ToastContainer } from "./components/toast-container.js";
 import { AccountPanel } from "./components/account-panel.js";
 import { CoinChartToolbar } from "./components/coin-chart-toolbar.js";
+import { CandleCountdown } from "./components/candle-countdown.js";
 
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -92,6 +93,12 @@ export function App() {
   }, [config?.coins, selectedCoin]);
 
   // ── Derived data for chart ──────────────────
+  const selectedCoinInterval = useMemo(() => {
+    if (!config?.coins || !selectedCoin) return null;
+    const cc = config.coins.find((c) => c.coin === selectedCoin);
+    return cc?.strategies[0]?.interval ?? null;
+  }, [config?.coins, selectedCoin]);
+
   const candles = useMemo(() => coinCandles[selectedCoin] ?? [], [coinCandles, selectedCoin]);
   const selectedPrices = coinPrices[selectedCoin] ?? null;
   const currentEnabledStrategies = useMemo(
@@ -504,7 +511,9 @@ export function App() {
                 />
               )}
             </div>
-            {selectedPrices && (selectedPrices.hlMidPrice != null || selectedPrices.dataSourcePrice != null) && (
+            <div className="flex items-center gap-3">
+              {selectedCoinInterval && <CandleCountdown interval={selectedCoinInterval} />}
+              {selectedPrices && (selectedPrices.hlMidPrice != null || selectedPrices.dataSourcePrice != null) && (
               <div className={`relative flex items-center gap-3 ${priceFlash === "up" ? "price-flash-up" : priceFlash === "down" ? "price-flash-down" : ""}`}>
                 {selectedPrices.hlMidPrice != null && (
                   <span className="flex items-center gap-1.5">
@@ -523,6 +532,7 @@ export function App() {
                 )}
               </div>
             )}
+            </div>
           </div>
           <CandlestickChart key={selectedCoin} candles={candles} signals={filteredSignals} replaySignals={filteredReplaySignals} positions={coinPositions} loading={candlesLoading} onLoadMore={handleLoadMoreCandles} watermark={selectedCoin ? { asset: selectedCoin } : undefined} />
         </section>

@@ -14,6 +14,7 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 │   │   ├── position-card.tsx       # Position card with PnL
 │   │   ├── order-table.tsx         # Sortable order table
 │   │   ├── signal-popover.tsx      # Quick signal popover (multi-coin)
+│   │   ├── candle-countdown.tsx   # Countdown timer to next candle close
 │   │   └── ...
 │   ├── lib/
 │   │   ├── api.ts                  # Fetch wrapper for exchange APIs
