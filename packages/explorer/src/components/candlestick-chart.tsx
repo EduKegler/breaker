@@ -142,13 +142,16 @@ export function CandlestickChart({
     }
   }, [showSessions, seriesRef]);
 
-  // Update session candle times only when candles are added (not in-progress updates)
+  // Update session candle times when candles change (new candle or coin switch)
   useEffect(() => {
-    if (sessionPrimRef.current && candles.length > 0 && candles.length !== sessionCandlesLenRef.current) {
-      sessionCandlesLenRef.current = candles.length;
-      sessionPrimRef.current.setCandleTimes(candles.map((c) => toChartTime(c.t) as number));
-    }
-  }, [candles, showSessions]);
+    if (!sessionPrimRef.current || candles.length === 0) return;
+    if (candles.length === sessionCandlesLenRef.current) return;
+    sessionCandlesLenRef.current = candles.length;
+    const raf = requestAnimationFrame(() => {
+      sessionPrimRef.current?.setCandleTimes(candles.map((c) => toChartTime(c.t) as number));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [candles, showSessions, coin]);
 
   // ── Volume Profile (VPVR) ───────────────────
   const vpvrPrimRef = useRef<VolumeProfilePrimitive | null>(null);
@@ -196,10 +199,13 @@ export function CandlestickChart({
     }
   }, [showVpvr, seriesRef, chartRef]);
 
-  // Update VPVR candles only when candles are added (not in-progress updates)
+  // Update VPVR candles when candles change (new candle or coin switch)
   useEffect(() => {
-    if (vpvrPrimRef.current && candles.length > 0 && candles.length !== vpvrCandlesLenRef.current) {
-      vpvrCandlesLenRef.current = candles.length;
+    if (!vpvrPrimRef.current || candles.length === 0) return;
+    if (candles.length === vpvrCandlesLenRef.current) return;
+    vpvrCandlesLenRef.current = candles.length;
+    const raf = requestAnimationFrame(() => {
+      if (!vpvrPrimRef.current) return;
       vpvrPrimRef.current.setCandles(candles.map(toOhlcvData));
       const chart = chartRef.current;
       if (chart) {
@@ -209,8 +215,9 @@ export function CandlestickChart({
           vpvrPrimRef.current.recalculate(range.from, range.to, width);
         }
       }
-    }
-  }, [candles, showVpvr]);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [candles, showVpvr, coin]);
 
   return (
     <div className="relative h-96 w-full">

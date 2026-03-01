@@ -7,6 +7,20 @@ import { parseUtc } from "./parse-utc.js";
 import { toChartTime } from "./to-chart-time.js";
 import { SignalVerticalLinesPrimitive, type SignalLine } from "./primitives/signal-vertical-lines.js";
 
+/** Binary search for closest timestamp in a sorted array. */
+function findClosestTime(sorted: number[], target: number): number {
+  let lo = 0, hi = sorted.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 && Math.abs(sorted[lo - 1] - target) < Math.abs(sorted[lo] - target)) {
+    return sorted[lo - 1];
+  }
+  return sorted[lo];
+}
+
 export interface UseChartMarkersOptions {
   candles: CandleData[];
   signals: SignalRow[];
@@ -33,7 +47,8 @@ export function useChartMarkers(opts: UseChartMarkersOptions): void {
   useEffect(() => {
     if (!opts.markersRef.current || opts.candles.length === 0) return;
 
-    const candleTimes = new Set(opts.candles.map((c) => c.t));
+    const candleTimesSet = new Set(opts.candles.map((c) => c.t));
+    const candleTimesSorted = opts.candles.map((c) => c.t); // already sorted
     const markers: SeriesMarker<Time>[] = [];
     const signalLines: SignalLine[] = [];
 
@@ -42,18 +57,12 @@ export function useChartMarkers(opts: UseChartMarkersOptions): void {
     for (const s of opts.signals) {
       if (s.risk_check_passed !== 1 || !s.entry_price) continue;
       const signalTs = parseUtc(s.created_at).getTime();
-      let closestT = opts.candles[0].t;
-      let minDiff = Math.abs(signalTs - closestT);
-      for (const c of opts.candles) {
-        const diff = Math.abs(signalTs - c.t);
-        if (diff < minDiff) { minDiff = diff; closestT = c.t; }
-      }
-      executedTimes.add(closestT);
+      executedTimes.add(findClosestTime(candleTimesSorted, signalTs));
     }
 
     // Replay signals — skip if executed at same candle
     for (const rs of opts.replaySignals) {
-      if (!candleTimes.has(rs.t) || executedTimes.has(rs.t)) continue;
+      if (!candleTimesSet.has(rs.t) || executedTimes.has(rs.t)) continue;
       const isLong = rs.direction === "long";
 
       markers.push({
@@ -71,17 +80,9 @@ export function useChartMarkers(opts: UseChartMarkersOptions): void {
       if (s.risk_check_passed !== 1 || !s.entry_price) continue;
 
       const signalTs = parseUtc(s.created_at).getTime();
-      let closestT = opts.candles[0].t;
-      let minDiff = Math.abs(signalTs - closestT);
-      for (const c of opts.candles) {
-        const diff = Math.abs(signalTs - c.t);
-        if (diff < minDiff) {
-          minDiff = diff;
-          closestT = c.t;
-        }
-      }
+      const closestT = findClosestTime(candleTimesSorted, signalTs);
 
-      if (!candleTimes.has(closestT)) continue;
+      if (!candleTimesSet.has(closestT)) continue;
 
       const isLong = s.side === "LONG";
       const isAuto = s.source === "strategy-runner";

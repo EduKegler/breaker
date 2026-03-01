@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, startTransition } from "react";
 import { api } from "./lib/api.js";
 import type { HealthResponse, LivePosition, OrderRow, EquitySnapshot, ConfigResponse, OpenOrder, CandleData, SignalRow, ReplaySignal, AccountResponse, PricesEvent } from "./types/api.js";
 import { useWebSocket, type WsMessage, type WsStatus } from "./lib/use-websocket.js";
@@ -329,7 +329,9 @@ export function App() {
 
   // ── Coin selection handlers ─────────────────
   const handleSelectCoin = useCallback((coin: string) => {
-    setSelectedCoin(coin);
+    startTransition(() => {
+      setSelectedCoin(coin);
+    });
     setPriceFlash(null);
   }, []);
 
