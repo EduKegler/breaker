@@ -159,6 +159,28 @@ export function createDonchianAdx(
       return null;
     },
 
+    computeLevels(ctx: StrategyContext, direction: "long" | "short") {
+      const { currentCandle, higherTimeframes } = ctx;
+
+      const htfCandlesRef = htf1hCandles ?? higherTimeframes["1h"];
+      if (!htfCandlesRef || htfCandlesRef.length < 15) return null;
+      const htfAtr = htfAtrCache ?? atr(htfCandlesRef, 14);
+      let atr1h = NaN;
+      for (let j = htfCandlesRef.length - 1; j >= 0; j--) {
+        if (htfCandlesRef[j].t + MS_1H <= currentCandle.t && !isNaN(htfAtr[j])) {
+          atr1h = htfAtr[j]; break;
+        }
+      }
+      if (isNaN(atr1h)) return null;
+
+      const stopDist = atr1h * params.atrStopMult.value;
+      const close = currentCandle.c;
+      return {
+        stopLoss: direction === "long" ? close - stopDist : close + stopDist,
+        takeProfits: [], // Uses trailing exit
+      };
+    },
+
     getExitLevel(ctx: StrategyContext): number | null {
       const { candles, index, positionDirection } = ctx;
       if (!positionDirection || index < params.dcFast.value + 1) return null;

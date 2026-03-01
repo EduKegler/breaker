@@ -479,19 +479,18 @@ export function createApp(deps: ServerDeps): express.Express {
 
     const stratName = strategyParam ?? coinCfg.strategies[0]?.name ?? "donchian-adx";
 
-    // Delegate signal generation to the strategy artifact via its runner.
-    // The strategy is the single source of truth for SL/TP computation —
-    // this keeps the endpoint agnostic to specific indicators.
+    // Delegate SL/TP computation to the strategy artifact via its runner.
+    // computeLevels() produces levels for the forced direction without checking
+    // entry conditions — the strategy is the single source of truth.
     const runner = deps.runners.find((r) => r.getCoin() === coin && r.getStrategyName() === stratName);
-    const strategySignal = runner?.generateSignal() ?? null;
+    const manualSignal = runner?.generateManualSignal(direction) ?? null;
 
     let signal: { direction: "long" | "short"; entryPrice: number | null; stopLoss: number; takeProfits: { price: number; pctOfPosition: number }[]; comment: string };
 
-    if (strategySignal && strategySignal.direction === direction) {
-      // Strategy agrees with the user's direction — use its SL and TPs
-      signal = { ...strategySignal, entryPrice: null, comment: "Manual from dashboard" };
+    if (manualSignal) {
+      signal = manualSignal;
     } else {
-      // Strategy disagrees or returned null — ATR fallback for SL, no TPs
+      // ATR fallback — strategy doesn't implement computeLevels or no runner
       const strategy = deps.strategyFactory(stratName);
       const atrLen = strategy.params.atrLen?.value ?? 14;
       const atrMult = strategy.params.atrStopMult?.value ?? 2.0;

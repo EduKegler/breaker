@@ -1023,6 +1023,58 @@ describe("StrategyRunner", () => {
     });
   });
 
+  describe("generateManualSignal", () => {
+    it("returns signal with levels from computeLevels", async () => {
+      const candles = Array.from({ length: 10 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy: Strategy = {
+        name: "test-strategy",
+        params: {},
+        init: vi.fn(),
+        onCandle: () => null,
+        computeLevels: (_ctx, direction) => ({
+          stopLoss: direction === "long" ? 93000 : 97000,
+          takeProfits: [{ price: 95500, pctOfPosition: 1.0 }],
+        }),
+      };
+      const deps = createDeps(strategy, streamer);
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      const signal = runner.generateManualSignal("long");
+      expect(signal).not.toBeNull();
+      expect(signal!.direction).toBe("long");
+      expect(signal!.stopLoss).toBe(93000);
+      expect(signal!.takeProfits).toEqual([{ price: 95500, pctOfPosition: 1.0 }]);
+    });
+
+    it("returns null when strategy has no computeLevels", async () => {
+      const candles = Array.from({ length: 10 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      const signal = runner.generateManualSignal("long");
+      expect(signal).toBeNull();
+    });
+
+    it("returns null when no candles available", () => {
+      const streamer = createMockStreamer([]);
+      const strategy: Strategy = {
+        name: "test",
+        params: {},
+        onCandle: () => null,
+        computeLevels: () => ({ stopLoss: 93000, takeProfits: [] }),
+      };
+      const deps = createDeps(strategy, streamer);
+      const runner = new StrategyRunner(deps);
+
+      expect(runner.generateManualSignal("long")).toBeNull();
+    });
+  });
+
   describe("getStrategyName", () => {
     it("returns the config name, not the strategy display name", () => {
       const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));

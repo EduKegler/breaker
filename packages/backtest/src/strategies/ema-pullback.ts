@@ -173,6 +173,28 @@ export function createEmaPullback(
       return null;
     },
 
+    computeLevels(ctx: StrategyContext, direction: "long" | "short") {
+      const { currentCandle, higherTimeframes } = ctx;
+
+      const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
+      if (!htf1hRef || htf1hRef.length < 15) return null;
+      const htfAtr = htfAtrCache ?? atr(htf1hRef, 14);
+      let atr1h = NaN;
+      for (let j = htf1hRef.length - 1; j >= 0; j--) {
+        if (htf1hRef[j].t + MS_1H <= currentCandle.t && !isNaN(htfAtr[j])) {
+          atr1h = htfAtr[j]; break;
+        }
+      }
+      if (isNaN(atr1h)) return null;
+
+      const stopDist = atr1h * params.atrStopMult.value;
+      const close = currentCandle.c;
+      return {
+        stopLoss: direction === "long" ? close - stopDist : close + stopDist,
+        takeProfits: [], // Uses trailing exit
+      };
+    },
+
     getExitLevel(ctx: StrategyContext): number | null {
       const { candles, index, positionDirection } = ctx;
       if (!positionDirection || index < params.emaFast.value + 1) return null;

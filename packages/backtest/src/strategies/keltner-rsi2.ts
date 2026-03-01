@@ -140,6 +140,32 @@ export function createKeltnerRsi2(
       return null;
     },
 
+    computeLevels(ctx: StrategyContext, direction: "long" | "short") {
+      const { candles, index, currentCandle, higherTimeframes } = ctx;
+
+      const kcResult = kcCache ?? keltner(candles.slice(0, index + 1), 20, 20, params.kcMultiplier.value);
+      const kcMid = kcResult.mid[index];
+      if (isNaN(kcMid)) return null;
+
+      const htfCandlesRef = htf1hCandles ?? higherTimeframes["1h"];
+      if (!htfCandlesRef || htfCandlesRef.length < 15) return null;
+      const htfAtr = htfAtrCache ?? atr(htfCandlesRef, 14);
+      let atr1h = NaN;
+      for (let j = htfCandlesRef.length - 1; j >= 0; j--) {
+        if (htfCandlesRef[j].t + MS_1H <= currentCandle.t && !isNaN(htfAtr[j])) {
+          atr1h = htfAtr[j]; break;
+        }
+      }
+      if (isNaN(atr1h)) return null;
+
+      const stopDist = atr1h * params.atrStopMult.value;
+      const close = currentCandle.c;
+      return {
+        stopLoss: direction === "long" ? close - stopDist : close + stopDist,
+        takeProfits: [{ price: kcMid, pctOfPosition: direction === "long" ? 1.0 : 0.6 }],
+      };
+    },
+
     shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
       const { index, positionDirection, positionEntryBarIndex } = ctx;
       if (!positionDirection || positionEntryBarIndex === null) return null;

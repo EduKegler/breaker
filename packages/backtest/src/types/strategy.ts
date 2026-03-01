@@ -38,6 +38,12 @@ export interface Strategy {
   onCandle(ctx: StrategyContext): Signal | null;
   shouldExit?(ctx: StrategyContext): { exit: boolean; comment: string } | null;
   getExitLevel?(ctx: StrategyContext): number | null;
+  /** Compute SL and TPs for a forced direction (manual signals).
+   * Unlike onCandle(), this skips entry conditions — used by /quick-signal. */
+  computeLevels?(ctx: StrategyContext, direction: "long" | "short"): {
+    stopLoss: number;
+    takeProfits: { price: number; pctOfPosition: number }[];
+  } | null;
   requiredTimeframes?: string[];
   /** Minimum candles needed per timeframe before signals can generate.
    * "source" = base interval candles; HTF keys (e.g. "1h", "4h", "1d") = aggregated candles. */

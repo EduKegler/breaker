@@ -63,7 +63,7 @@ src/
 - `/candles` endpoint: without `?interval=` returns live in-memory data from CandleStreamer; with `?interval=` (validated against CandleInterval) uses CandleCache for alternate timeframes; `/strategy-signals` uses CandleCache for replay
 - `POST /auto-trading` toggle persists to `exchange-config.json` via `persistConfig()` callback — survives daemon restarts
 - When `autoTradingEnabled: false` blocks a strategy-runner signal, an `auto_trading_blocked` event is appended to the NDJSON event log for diagnostics
-- `/quick-signal` delegates SL/TP computation to the strategy artifact via `runner.generateSignal()` — endpoint is strategy-agnostic. Falls back to ATR-based SL (no TPs) when strategy disagrees with direction or returns null
+- `/quick-signal` delegates SL/TP computation to `strategy.computeLevels(ctx, direction)` via `runner.generateManualSignal()` — produces levels for any direction without checking entry conditions. Falls back to ATR-based SL (no TPs) when strategy lacks `computeLevels` or no runner found
 - `StrategyRunner.getStrategyName()` returns the config identifier (e.g. "keltner-rsi2"), NOT the strategy's display name (e.g. "BTC 15m Mean Reversion — Keltner RSI2")
 
 ## Known pitfalls

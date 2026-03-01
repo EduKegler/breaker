@@ -302,4 +302,58 @@ describe("createKeltnerRsi2", () => {
     const result = strategy.onCandle(ctx);
     expect(result === null || result.direction === "long" || result.direction === "short").toBe(true);
   });
+
+  describe("computeLevels", () => {
+    it("returns KC midline TP and ATR-based SL for long", () => {
+      const strategy = createKeltnerRsi2();
+      const candles = generate15mCandles(60, 95000, "flat");
+      const htf1h = generate1hCandles(candles);
+      const htf = { "1h": htf1h };
+
+      strategy.init!(candles, htf);
+      const ctx = makeCtx(candles, candles.length - 1, htf);
+      const levels = strategy.computeLevels!(ctx, "long");
+
+      expect(levels).not.toBeNull();
+      expect(levels!.stopLoss).toBeLessThan(candles[candles.length - 1].c);
+      expect(levels!.takeProfits).toHaveLength(1);
+      expect(levels!.takeProfits[0].pctOfPosition).toBe(1.0);
+    });
+
+    it("returns KC midline TP with 0.6 pct for short", () => {
+      const strategy = createKeltnerRsi2();
+      const candles = generate15mCandles(60, 95000, "flat");
+      const htf1h = generate1hCandles(candles);
+      const htf = { "1h": htf1h };
+
+      strategy.init!(candles, htf);
+      const ctx = makeCtx(candles, candles.length - 1, htf);
+      const levels = strategy.computeLevels!(ctx, "short");
+
+      expect(levels).not.toBeNull();
+      expect(levels!.stopLoss).toBeGreaterThan(candles[candles.length - 1].c);
+      expect(levels!.takeProfits).toHaveLength(1);
+      expect(levels!.takeProfits[0].pctOfPosition).toBe(0.6);
+    });
+
+    it("works regardless of entry conditions (RSI, KC band)", () => {
+      const strategy = createKeltnerRsi2();
+      // Flat market — RSI will be around 50, price near KC mid (no entry condition met)
+      const candles = generate15mCandles(60, 95000, "flat");
+      const htf1h = generate1hCandles(candles);
+      const htf = { "1h": htf1h };
+
+      strategy.init!(candles, htf);
+      const ctx = makeCtx(candles, candles.length - 1, htf);
+
+      // onCandle returns null (no entry conditions met)
+      const signal = strategy.onCandle(ctx);
+      expect(signal).toBeNull();
+
+      // computeLevels still returns levels
+      const levels = strategy.computeLevels!(ctx, "long");
+      expect(levels).not.toBeNull();
+      expect(levels!.takeProfits).toHaveLength(1);
+    });
+  });
 });

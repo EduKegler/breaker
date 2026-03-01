@@ -82,6 +82,44 @@ export class StrategyRunner {
     return this.deps.strategy.onCandle(ctx);
   }
 
+  /**
+   * Compute SL/TPs for a manual signal in the given direction.
+   * Uses strategy.computeLevels() — skips entry conditions, keeps endpoint
+   * fully strategy-agnostic.
+   */
+  generateManualSignal(direction: "long" | "short"): Signal | null {
+    if (!this.deps.strategy.computeLevels) return null;
+
+    const candles = this.deps.streamer.getCandles();
+    if (candles.length === 0) return null;
+
+    const index = candles.length - 1;
+    const higherTimeframes = this.buildHigherTimeframes(candles);
+    this.deps.strategy.init?.(candles, higherTimeframes);
+
+    const ctx = buildContext({
+      candles,
+      index,
+      position: null,
+      higherTimeframes,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+      consecutiveLosses: 0,
+    });
+
+    const levels = this.deps.strategy.computeLevels(ctx, direction);
+    if (!levels) return null;
+
+    return {
+      direction,
+      entryPrice: null,
+      stopLoss: levels.stopLoss,
+      takeProfits: levels.takeProfits,
+      comment: "Manual from dashboard",
+    };
+  }
+
   async warmup(): Promise<void> {
     const minRequired = computeMinWarmupBars(this.deps.strategy, this.deps.interval);
     const effectiveWarmup = Math.max(this.deps.warmupBars, minRequired);
