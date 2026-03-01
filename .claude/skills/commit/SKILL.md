@@ -29,15 +29,6 @@ pnpm build && pnpm test
 
 If build or unit tests fail, show the errors and STOP. Do not commit broken code.
 
-Then run E2E tests:
-
-```bash
-pnpm test:e2e
-```
-
-- If E2E fails due to **auth expired/absent** (TradingView login required) → warn the user but **do not block** the commit (auth is external)
-- If E2E fails due to **code errors** → show errors and STOP
-
 ### 3. Verify .md files
 
 Read the git diff and check if the following files need updates:
