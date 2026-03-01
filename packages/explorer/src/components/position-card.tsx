@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { LivePosition, OpenOrder } from "../types/api.js";
 import { orderTypeLabel } from "./order-type-label.js";
 
@@ -21,7 +21,7 @@ function fmtTrigger(o: OpenOrder): string {
     : `$${o.limitPx.toLocaleString()}`;
 }
 
-export const PositionCard = memo(function PositionCard({
+export function PositionCard({
   position,
   openOrders,
   onClose,
@@ -182,4 +182,4 @@ export const PositionCard = memo(function PositionCard({
       )}
     </div>
   );
-});
+}

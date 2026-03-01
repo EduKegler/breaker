@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { useMemo } from "react";
 import {
   AreaChart,
   Area,
@@ -15,7 +15,7 @@ function parseUtc(dt: string): Date {
   return new Date(dt.endsWith("Z") ? dt : dt + "Z");
 }
 
-export const EquityChart = memo(function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
+export function EquityChart({ snapshots }: { snapshots: EquitySnapshot[] }) {
   const data = useMemo(
     () =>
       snapshots.length === 0
@@ -96,4 +96,4 @@ export const EquityChart = memo(function EquityChart({ snapshots }: { snapshots:
       </AreaChart>
     </ResponsiveContainer>
   );
-});
+}

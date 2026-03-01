@@ -1,4 +1,4 @@
-import { memo, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import type { AccountResponse, LivePosition } from "../types/api.js";
 
 function truncateAddress(addr: string): string {
@@ -27,7 +27,7 @@ interface AccountPanelProps {
   positions: LivePosition[];
 }
 
-export const AccountPanel = memo(function AccountPanel({ account, positions }: AccountPanelProps) {
+export function AccountPanel({ account, positions }: AccountPanelProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
@@ -174,4 +174,4 @@ export const AccountPanel = memo(function AccountPanel({ account, positions }: A
       </div>
     </section>
   );
-});
+}

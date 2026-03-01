@@ -1,4 +1,3 @@
-import { memo } from "react";
 import type { OrderRow } from "../types/api.js";
 import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
 import { parseUtc } from "../lib/parse-utc.js";
@@ -17,7 +16,7 @@ const statusText: Record<string, string> = {
   rejected: "text-loss",
 };
 
-export const OrderTable = memo(function OrderTable({ orders }: { orders: OrderRow[] }) {
+export function OrderTable({ orders }: { orders: OrderRow[] }) {
   if (orders.length === 0) {
     return (
       <p className="text-txt-secondary text-sm font-mono">No orders yet</p>
@@ -97,4 +96,4 @@ export const OrderTable = memo(function OrderTable({ orders }: { orders: OrderRo
       </table>
     </div>
   );
-});
+}

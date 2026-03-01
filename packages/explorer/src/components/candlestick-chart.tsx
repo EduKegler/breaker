@@ -1,4 +1,4 @@
-import { memo, useRef, useEffect } from "react";
+import { useRef, useEffect } from "react";
 import type { Time } from "lightweight-charts";
 import { useStore } from "../store/use-store.js";
 import {
@@ -24,7 +24,7 @@ interface CandlestickChartProps {
   onSetVisibleRange?: (ref: ((from: Time, to: Time) => void) | null) => void;
 }
 
-export const CandlestickChart = memo(function CandlestickChart({
+export function CandlestickChart({
   onVisibleRangeChange,
   onSetVisibleRange,
 }: CandlestickChartProps) {
@@ -239,4 +239,4 @@ export const CandlestickChart = memo(function CandlestickChart({
       )}
     </div>
   );
-});
+}

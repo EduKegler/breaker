@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   createChart,
   AreaSeries,
@@ -17,7 +17,7 @@ interface RangeSelectorProps {
   onSetUpdate?: (ref: ((from: Time, to: Time) => void) | null) => void;
 }
 
-export const RangeSelector = memo(function RangeSelector({ onRangeChange, onSetUpdate }: RangeSelectorProps) {
+export function RangeSelector({ onRangeChange, onSetUpdate }: RangeSelectorProps) {
   const candles = useStore(selectCandles);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -258,4 +258,4 @@ export const RangeSelector = memo(function RangeSelector({ onRangeChange, onSetU
       </div>
     </div>
   );
-});
+}

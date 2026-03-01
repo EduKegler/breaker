@@ -1,8 +1,8 @@
-import { memo, useState } from "react";
+import { useState } from "react";
 import type { OpenOrder } from "../types/api.js";
 import { orderTypeLabel } from "./order-type-label.js";
 
-export const OpenOrdersTable = memo(function OpenOrdersTable({
+export function OpenOrdersTable({
   orders,
   onCancel,
 }: {
@@ -108,4 +108,4 @@ export const OpenOrdersTable = memo(function OpenOrdersTable({
       </table>
     </div>
   );
-});
+}
