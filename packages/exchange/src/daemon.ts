@@ -3,7 +3,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hyperliquid } from "hyperliquid";
 import { isMainModule } from "@breaker/kit";
-import { createDonchianAdx, createKeltnerRsi2, createEmaPullback } from "@breaker/backtest";
+import { createDonchianAdx, createKeltnerRsi2, createEmaPullback, computeMinWarmupBars } from "@breaker/backtest";
 import type { CandleInterval } from "@breaker/backtest";
 import { ExchangeConfigSchema, type ExchangeConfig } from "./types/config.js";
 import { loadEnv } from "./lib/load-env.js";
@@ -256,6 +256,14 @@ async function main() {
       const key = `${coinCfg.coin}:${strat.interval}`;
       const streamer = streamers.get(key)!;
       const strategy = createStrategy(strat.name);
+
+      const minRequired = computeMinWarmupBars(strategy, strat.interval as CandleInterval);
+      if (minRequired > strat.warmupBars) {
+        log.warn(
+          { coin: coinCfg.coin, strategy: strat.name, configured: strat.warmupBars, required: minRequired },
+          "Config warmupBars is below strategy minimum — will be auto-corrected at warmup",
+        );
+      }
 
       runners.push(new StrategyRunner({
         config,

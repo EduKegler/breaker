@@ -54,6 +54,7 @@ export function createDonchianAdx(
     name: "BTC 15m Breakout — Donchian ADX",
     params,
     requiredTimeframes: ["1h", "1d"],
+    requiredWarmup: { source: 52, "1h": 15, "1d": 51 },
 
     init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
       dcSlowCache = donchian(candles, params.dcSlow.value);

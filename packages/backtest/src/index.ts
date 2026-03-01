@@ -48,6 +48,7 @@ export { EquityCurve } from "./engine/equity-curve.js";
 export type { EquityPoint } from "./engine/equity-curve.js";
 export { applySlippage } from "./engine/apply-slippage.js";
 export { calculateCommission } from "./engine/calculate-commission.js";
+export { computeMinWarmupBars } from "./engine/compute-min-warmup-bars.js";
 export { DEFAULT_EXECUTION } from "./engine/execution-model.js";
 export type { ExecutionConfig } from "./engine/execution-model.js";
 

@@ -13,7 +13,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - `src/run-backtest.ts` — CLI entrypoint (isMain guard)
 
 ## Key conventions
-- Strategies implement the `Strategy` interface from `types/strategy.ts`
+- Strategies implement the `Strategy` interface from `types/strategy.ts` and must declare `requiredWarmup` (minimum candles per timeframe for valid signals)
 - Metrics types are identical to `@breaker/refiner` parse-results types for compatibility
 - SQLite cache lives in `.cache/candles.db` (gitignored)
 - All indicators are pure functions operating on number arrays
@@ -33,6 +33,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - Strategy uses previous-bar Donchian values ([1] in Pine) to avoid look-ahead
 - Daily EMA and 1H ATR use anti-repaint equivalent (previous completed HTF bar)
 - `fetchCandles` tests inject mock CCXT exchange via `_exchange` option (no module mocking)
+- `computeMinWarmupBars(strategy, sourceInterval)` converts `requiredWarmup` to source bars with 20% margin for HTF bucket alignment; used by exchange StrategyRunner for auto-correction
 
 ## Build and test
 - `pnpm build` — compile TypeScript

@@ -10,7 +10,7 @@
         {
           "name": "donchian-adx",
           "interval": "15m",
-          "warmupBars": 200,
+          "warmupBars": 5500,
           "autoTradingEnabled": true
         },
         {
@@ -28,7 +28,7 @@
         {
           "name": "ema-pullback",
           "interval": "15m",
-          "warmupBars": 200,
+          "warmupBars": 600,
           "autoTradingEnabled": true
         }
       ]

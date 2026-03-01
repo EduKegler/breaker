@@ -8,7 +8,7 @@ import { handleSignal, type SignalHandlerDeps } from "./application/handle-signa
 import { replayStrategy } from "./application/replay-strategy.js";
 import type { CandleStreamer } from "./adapters/candle-streamer.js";
 import type { StrategyRunner } from "./application/strategy-runner.js";
-import { intervalToMs, CandleInterval, atr, type Strategy, type CandleCache } from "@breaker/backtest";
+import { intervalToMs, CandleInterval, atr, computeMinWarmupBars, type Strategy, type CandleCache } from "@breaker/backtest";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
@@ -230,6 +230,15 @@ export function createApp(deps: ServerDeps): express.Express {
       const cached = replayCache.get(cacheKey);
       if (cached && (now - cached.cachedAt) < cacheTtlMs) {
         res.json({ signals: cached.signals });
+        return;
+      }
+
+      const strategy = deps.strategyFactory(stratCfg.name);
+      const minRequired = computeMinWarmupBars(strategy, interval);
+      if (REPLAY_WARMUP < minRequired) {
+        res.status(422).json({
+          error: `REPLAY_WARMUP (${REPLAY_WARMUP}) is below strategy minimum (${minRequired}) for ${stratCfg.name}`,
+        });
         return;
       }
 

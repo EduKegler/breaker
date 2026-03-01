@@ -57,6 +57,7 @@ export function createEmaPullback(
     name: "EMA Pullback Continuation",
     params,
     requiredTimeframes: ["1h", "4h"],
+    requiredWarmup: { source: 22, "1h": 15, "4h": 22 },
 
     init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
       const closes = candles.map((c) => c.c);

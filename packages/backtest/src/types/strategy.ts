@@ -39,4 +39,7 @@ export interface Strategy {
   shouldExit?(ctx: StrategyContext): { exit: boolean; comment: string } | null;
   getExitLevel?(ctx: StrategyContext): number | null;
   requiredTimeframes?: string[];
+  /** Minimum candles needed per timeframe before signals can generate.
+   * "source" = base interval candles; HTF keys (e.g. "1h", "4h", "1d") = aggregated candles. */
+  requiredWarmup?: Record<string, number>;
 }

@@ -708,6 +708,55 @@ describe("StrategyRunner", () => {
     expect(strategy.onCandle).not.toHaveBeenCalled();
   });
 
+  describe("warmup auto-correction via requiredWarmup", () => {
+    it("auto-corrects warmup when strategy requires more bars than configured", async () => {
+      const candles = Array.from({ length: 100 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      // Strategy requires 72 source bars (1h: 15 on 15m = 15*4*1.2 = 72)
+      strategy.requiredWarmup = { "1h": 15 };
+
+      const deps = createDeps(strategy, streamer);
+      deps.warmupBars = 5; // configured too low
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // Streamer should be called with auto-corrected value (72), not configured (5)
+      expect(streamer.warmup).toHaveBeenCalledWith(72);
+    });
+
+    it("keeps configured warmup when it exceeds strategy minimum", async () => {
+      const candles = Array.from({ length: 200 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      strategy.requiredWarmup = { source: 22, "1h": 15 }; // min = 72
+
+      const deps = createDeps(strategy, streamer);
+      deps.warmupBars = 200; // configured is already sufficient
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      expect(streamer.warmup).toHaveBeenCalledWith(200);
+    });
+
+    it("uses configured warmup when no requiredWarmup is set", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      // No requiredWarmup
+
+      const deps = createDeps(strategy, streamer);
+      deps.warmupBars = 5;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      expect(streamer.warmup).toHaveBeenCalledWith(5);
+    });
+  });
+
   describe("staleness and lastCandleAt", () => {
     it("forwards stale events from streamer to onStaleData", async () => {
       const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));

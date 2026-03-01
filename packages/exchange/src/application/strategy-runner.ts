@@ -4,6 +4,7 @@ import {
   createUtcDayFormatter,
   aggregateCandles,
   intervalToMs,
+  computeMinWarmupBars,
 } from "@breaker/backtest";
 import type { Strategy, Candle, CandleInterval, StrategyContext } from "@breaker/backtest";
 import type { CandleStreamer } from "../adapters/candle-streamer.js";
@@ -53,12 +54,21 @@ export class StrategyRunner {
   }
 
   async warmup(): Promise<void> {
-    const candles = await this.deps.streamer.warmup(this.deps.warmupBars);
+    const minRequired = computeMinWarmupBars(this.deps.strategy, this.deps.interval);
+    const effectiveWarmup = Math.max(this.deps.warmupBars, minRequired);
+    if (effectiveWarmup > this.deps.warmupBars) {
+      log.warn(
+        { coin: this.deps.coin, configured: this.deps.warmupBars, required: minRequired, effective: effectiveWarmup },
+        "warmupBars auto-corrected: strategy requires more bars than configured",
+      );
+    }
 
-    const minBars = Math.ceil(this.deps.warmupBars * 0.5);
+    const candles = await this.deps.streamer.warmup(effectiveWarmup);
+
+    const minBars = Math.ceil(effectiveWarmup * 0.5);
     if (candles.length < minBars) {
       throw new Error(
-        `Insufficient warmup data: got ${candles.length}, need ≥${minBars} (${this.deps.warmupBars} requested)`,
+        `Insufficient warmup data: got ${candles.length}, need ≥${minBars} (${effectiveWarmup} requested)`,
       );
     }
 
@@ -364,7 +374,13 @@ export class StrategyRunner {
     });
 
     const signal = this.deps.strategy.onCandle(ctx);
-    if (!signal) return;
+    if (!signal) {
+      log.debug(
+        { action: "noSignal", coin: this.deps.coin, htfLengths: Object.fromEntries(Object.entries(higherTimeframes).map(([k, v]) => [k, v.length])) },
+        "onCandle returned null",
+      );
+      return;
+    }
 
     log.info({ action: "signalGenerated", coin: this.deps.coin, direction: signal.direction, entryPrice: signal.entryPrice, stopLoss: signal.stopLoss }, "Strategy signal generated");
 

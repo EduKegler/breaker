@@ -51,6 +51,7 @@ export function createKeltnerRsi2(
     name: "BTC 15m Mean Reversion — Keltner RSI2",
     params,
     requiredTimeframes: ["1h"],
+    requiredWarmup: { source: 22, "1h": 15 },
 
     init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
       const kcMult = params.kcMultiplier.value;
