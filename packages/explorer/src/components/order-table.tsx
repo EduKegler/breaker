@@ -39,6 +39,7 @@ export function OrderTable({ orders }: { orders: OrderRow[] }) {
             <th className="pb-2 pr-3 font-medium text-right">Size</th>
             <th className="pb-2 pr-3 font-medium text-right">Price</th>
             <th className="pb-2 pr-3 font-medium">Status</th>
+            <th className="pb-2 pr-3 font-medium">Strategy</th>
             <th className="pb-2 font-medium">Mode</th>
           </tr>
         </thead>
@@ -90,6 +91,7 @@ export function OrderTable({ orders }: { orders: OrderRow[] }) {
                   </span>
                 </span>
               </td>
+              <td className="py-1.5 pr-3 text-txt-secondary">{o.strategy_name ?? "—"}</td>
               <td className="py-1.5 text-txt-secondary">{o.mode}</td>
             </tr>
           ))}

@@ -35,6 +35,7 @@ export interface OrderRow {
   mode: string;
   created_at: string;
   filled_at: string | null;
+  strategy_name: string | null;
 }
 
 export interface EquitySnapshot {
@@ -107,14 +108,24 @@ export interface PricesEvent {
   trailingExitLevel: number | null;
 }
 
+export interface CoinStrategyConfig {
+  name: string;
+  interval: string;
+  warmupBars: number;
+  autoTradingEnabled: boolean;
+}
+
+export interface CoinConfig {
+  coin: string;
+  leverage: number;
+  strategies: CoinStrategyConfig[];
+}
+
 export interface ConfigResponse {
   mode: string;
-  asset: string;
-  strategy: string;
-  interval: string;
-  leverage: number;
+  coins: CoinConfig[];
   guardrails: Record<string, number>;
   sizing: Record<string, unknown>;
   dataSource?: string;
-  autoTradingEnabled?: boolean;
+  availableStrategies: string[];
 }

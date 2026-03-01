@@ -1,6 +1,6 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
-import type { ExchangeConfig } from "./types/config.js";
+import { CoinStrategySchema, type ExchangeConfig } from "./types/config.js";
 import type { SqliteStore } from "./adapters/sqlite-store.js";
 import type { PositionBook } from "./domain/position-book.js";
 import type { HlClient } from "./types/hl-client.js";
@@ -213,7 +213,8 @@ export function createApp(deps: ServerDeps): express.Express {
 
   app.get("/config", (_req, res) => {
     const { mode, coins, guardrails, sizing, dataSource } = deps.config;
-    res.json({ mode, coins, guardrails, sizing, dataSource });
+    const availableStrategies = CoinStrategySchema.shape.name.options as unknown as string[];
+    res.json({ mode, coins, guardrails, sizing, dataSource, availableStrategies });
   });
 
   const AutoTradingSchema = z.object({
@@ -384,6 +385,7 @@ export function createApp(deps: ServerDeps): express.Express {
   const QuickSignalSchema = z.object({
     coin: z.string().min(1),
     direction: z.enum(["long", "short"]),
+    strategy: z.string().min(1).optional(),
   });
 
   app.post("/quick-signal", postLimiter, async (req, res) => {
@@ -393,7 +395,7 @@ export function createApp(deps: ServerDeps): express.Express {
       return;
     }
 
-    const { coin, direction } = parsed.data;
+    const { coin, direction, strategy: strategyParam } = parsed.data;
     const coinCfg = findCoinConfig(coin);
     if (!coinCfg) {
       res.status(400).json({ error: `Unknown coin: ${coin}` });
@@ -416,7 +418,7 @@ export function createApp(deps: ServerDeps): express.Express {
     const price = lastCandle.c;
 
     // Compute SL from ATR using strategy params (same logic as the strategy)
-    const stratName = coinCfg.strategies[0]?.name ?? "donchian-adx";
+    const stratName = strategyParam ?? coinCfg.strategies[0]?.name ?? "donchian-adx";
     const strategy = deps.strategyFactory(stratName);
     const atrLen = strategy.params.atrLen?.value ?? strategy.params.atrStopMult ? 14 : 14;
     const atrMult = strategy.params.atrStopMult?.value ?? 2.0;

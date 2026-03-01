@@ -116,25 +116,26 @@ export function App() {
     ]);
   }, []);
 
-  // Sync autoTrading with config
+  // Sync autoTrading with config (true if any strategy has it enabled)
   useEffect(() => {
-    if (config?.autoTradingEnabled != null) {
-      setAutoTrading(config.autoTradingEnabled);
-    }
-  }, [config?.autoTradingEnabled]);
+    if (!config?.coins) return;
+    const anyEnabled = config.coins.some((c) => c.strategies.some((s) => s.autoTradingEnabled));
+    setAutoTrading(anyEnabled);
+  }, [config?.coins]);
 
   const handleToggleAutoTrading = useCallback(async () => {
+    const coins = config?.coins;
+    if (!coins?.length) return;
     const newValue = !autoTrading;
     setAutoTrading(newValue);
     try {
-      const res = await api.setAutoTrading(newValue);
-      setAutoTrading(res.autoTradingEnabled);
-      addToast(`Auto trading ${res.autoTradingEnabled ? "enabled" : "disabled"}`, "success");
+      await Promise.all(coins.map((c) => api.setAutoTrading(c.coin, newValue)));
+      addToast(`Auto trading ${newValue ? "enabled" : "disabled"}`, "success");
     } catch (err) {
       setAutoTrading(!newValue);
       addToast(`Auto trading toggle: ${errorMsg(err)}`, "error");
     }
-  }, [autoTrading, addToast]);
+  }, [autoTrading, config?.coins, addToast]);
 
   // Clear price flash after animation
   useEffect(() => {
@@ -268,13 +269,13 @@ export function App() {
                 {h.asset}
               </span>
               <span className="text-txt-secondary text-sm">{h.strategy}</span>
-              {c && (
+              {c?.coins?.[0] && (
                 <>
                   <span className="font-mono text-xs text-txt-secondary">
-                    {c.interval}
+                    {c.coins[0].strategies[0]?.interval}
                   </span>
                   <span className="font-mono text-xs text-txt-secondary">
-                    {c.leverage}x
+                    {c.coins[0].leverage}x
                   </span>
                 </>
               )}
@@ -305,8 +306,10 @@ export function App() {
               >
                 Signal
               </button>
-              {showSignalPopover && (
+              {showSignalPopover && config?.coins && (
                 <SignalPopover
+                  coins={config.coins}
+                  availableStrategies={config.availableStrategies}
                   onClose={() => setShowSignalPopover(false)}
                   onSuccess={() => setShowSignalPopover(false)}
                 />

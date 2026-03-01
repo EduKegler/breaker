@@ -175,8 +175,10 @@ export class SqliteStore {
     return this.db.prepare("SELECT * FROM orders WHERE status = 'pending'").all() as OrderRow[];
   }
 
-  getRecentOrders(limit: number = 50): OrderRow[] {
-    return this.db.prepare("SELECT * FROM orders ORDER BY id DESC LIMIT ?").all(limit) as OrderRow[];
+  getRecentOrders(limit: number = 50): (OrderRow & { strategy_name: string | null })[] {
+    return this.db.prepare(
+      `SELECT o.*, s.strategy_name FROM orders o LEFT JOIN signals s ON o.signal_id = s.id ORDER BY o.id DESC LIMIT ?`,
+    ).all(limit) as (OrderRow & { strategy_name: string | null })[];
   }
 
   getRecentSignals(limit: number = 50): SignalRow[] {

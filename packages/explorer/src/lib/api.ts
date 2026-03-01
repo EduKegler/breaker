@@ -46,7 +46,9 @@ async function deleteJson<T>(path: string): Promise<T> {
 }
 
 interface QuickSignalPayload {
+  coin: string;
   direction: "long" | "short";
+  strategy?: string;
 }
 
 interface QuickSignalResponse {
@@ -86,6 +88,6 @@ export const api = {
     postJson<{ status: string }>("/close-position", { coin }),
   cancelOrder: (oid: number) =>
     deleteJson<{ status: string }>(`/open-order/${oid}`),
-  setAutoTrading: (enabled: boolean) =>
-    postJson<{ autoTradingEnabled: boolean }>("/auto-trading", { enabled }),
+  setAutoTrading: (coin: string, enabled: boolean) =>
+    postJson<{ autoTradingEnabled: boolean }>("/auto-trading", { coin, enabled }),
 };

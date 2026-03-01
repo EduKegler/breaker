@@ -1,16 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "../lib/api.js";
+import type { CoinConfig } from "../types/api.js";
 
 interface SignalPopoverProps {
+  coins: CoinConfig[];
+  availableStrategies: string[];
   onClose: () => void;
   onSuccess: () => void;
 }
 
-export function SignalPopover({ onClose, onSuccess }: SignalPopoverProps) {
+export function SignalPopover({ coins, availableStrategies, onClose, onSuccess }: SignalPopoverProps) {
+  const [coin, setCoin] = useState(coins[0]?.coin ?? "");
+  const [strategy, setStrategy] = useState(availableStrategies[0] ?? "");
   const [direction, setDirection] = useState<"long" | "short">("long");
   const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+
+  // No need to sync strategy on coin change — all strategies are always available
 
   // Close on Escape
   useEffect(() => {
@@ -40,7 +47,7 @@ export function SignalPopover({ onClose, onSuccess }: SignalPopoverProps) {
     setFeedback(null);
 
     try {
-      const res = await api.sendQuickSignal({ direction });
+      const res = await api.sendQuickSignal({ coin, direction, strategy });
       if (res.status === "executed") {
         const sl = res.stopLoss ? ` · SL ${res.stopLoss}` : "";
         setFeedback({ ok: true, msg: `Executed #${res.signalId}${sl}` });
@@ -56,16 +63,47 @@ export function SignalPopover({ onClose, onSuccess }: SignalPopoverProps) {
     } finally {
       setSending(false);
     }
-  }, [direction, onSuccess]);
+  }, [coin, direction, strategy, onSuccess]);
 
   const isLong = direction === "long";
 
   return (
     <div
       ref={popoverRef}
-      className="absolute top-full right-0 mt-2 z-50 bg-terminal-surface border border-terminal-border rounded-sm shadow-lg w-56"
+      className="absolute top-full right-0 mt-2 z-50 bg-terminal-surface border border-terminal-border rounded-sm shadow-lg w-64"
     >
       <div className="p-3 space-y-3">
+        {/* Coin selector */}
+        <div className="flex gap-1 flex-wrap">
+          {coins.map((c) => (
+            <button
+              key={c.coin}
+              type="button"
+              className={`px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm transition-colors ${
+                coin === c.coin
+                  ? "bg-amber/20 text-amber border border-amber/40"
+                  : "bg-terminal-bg text-txt-secondary border border-terminal-border hover:text-txt-primary"
+              }`}
+              onClick={() => setCoin(c.coin)}
+            >
+              {c.coin}
+            </button>
+          ))}
+        </div>
+
+        {/* Strategy selector */}
+        <select
+          value={strategy}
+          onChange={(e) => setStrategy(e.target.value)}
+          className="w-full bg-terminal-bg text-txt-primary text-xs border border-terminal-border rounded-sm px-2 py-1.5 font-mono focus:outline-none focus:border-amber/50"
+        >
+          {availableStrategies.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+
         {/* Direction toggle */}
         <div className="flex gap-1">
           <button
@@ -94,7 +132,7 @@ export function SignalPopover({ onClose, onSuccess }: SignalPopoverProps) {
 
         {/* Info: entry + SL computed by strategy */}
         <div className="text-[10px] text-txt-secondary tracking-wider uppercase">
-          Entry market · SL via ATR
+          Entry market · SL via ATR ({strategy})
         </div>
 
         {/* Send button */}
@@ -108,7 +146,7 @@ export function SignalPopover({ onClose, onSuccess }: SignalPopoverProps) {
               : "bg-loss/20 text-loss border border-loss/40 hover:bg-loss/30"
           }`}
         >
-          {sending ? "Sending..." : `Send ${direction}`}
+          {sending ? "Sending..." : `Send ${direction} ${coin}`}
         </button>
 
         {/* Feedback */}
