@@ -86,6 +86,7 @@ export const selectFilteredSignals = createSelector(
     return signals.filter((sig) => {
       if (sig.asset !== selectedCoin) return false;
       if (!sig.strategy_name) return true;
+      if (sig.source !== "strategy-runner") return true;
       return strats.includes(sig.strategy_name);
     });
   },

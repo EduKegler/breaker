@@ -37,6 +37,12 @@ describe("truncateSize", () => {
   it("handles szDecimals=5 (default fallback)", () => {
     expect(truncateSize(0.123456789, 5)).toBe(0.12345);
   });
+
+  it("handles IEEE 754 representation errors (e.g. 0.00112 * 1e5 = 111.999...)", () => {
+    expect(truncateSize(0.00112, 5)).toBe(0.00112);
+    expect(truncateSize(0.00223, 5)).toBe(0.00223);
+    expect(truncateSize(0.1 + 0.2, 1)).toBe(0.3);
+  });
 });
 
 describe("truncatePrice", () => {

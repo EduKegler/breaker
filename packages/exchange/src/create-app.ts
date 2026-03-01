@@ -8,7 +8,7 @@ import { handleSignal, type SignalHandlerDeps } from "./application/handle-signa
 import { replayStrategy } from "./application/replay-strategy.js";
 import type { CandleStreamer } from "./adapters/candle-streamer.js";
 import type { StrategyRunner } from "./application/strategy-runner.js";
-import { intervalToMs, CandleInterval, atr, computeMinWarmupBars, type Strategy, type CandleCache } from "@breaker/backtest";
+import { intervalToMs, CandleInterval, atr, keltner, computeMinWarmupBars, type Strategy, type CandleCache } from "@breaker/backtest";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
@@ -493,11 +493,25 @@ export function createApp(deps: ServerDeps): express.Express {
     const stopDist = atrMult * lastAtr;
     const stopLoss = direction === "long" ? price - stopDist : price + stopDist;
 
+    // Compute TPs from strategy indicators when available
+    const takeProfits: { price: number; pctOfPosition: number }[] = [];
+    if (strategy.params.kcMultiplier) {
+      const kcMult = strategy.params.kcMultiplier.value;
+      const kcResult = keltner(candles, 20, 20, kcMult);
+      const kcMid = kcResult.mid[candles.length - 1];
+      if (!isNaN(kcMid)) {
+        takeProfits.push({
+          price: kcMid,
+          pctOfPosition: direction === "long" ? 1.0 : 0.6,
+        });
+      }
+    }
+
     const signal = {
       direction,
       entryPrice: null as number | null,
       stopLoss,
-      takeProfits: [] as { price: number; pctOfPosition: number }[],
+      takeProfits,
       comment: "Manual from dashboard",
     };
 
@@ -513,7 +527,7 @@ export function createApp(deps: ServerDeps): express.Express {
           coin,
           leverage: coinCfg.leverage,
           autoTradingEnabled: true, // Manual signals always allowed
-          strategyName: "manual",
+          strategyName: stratName,
         },
         deps.signalHandlerDeps,
       );

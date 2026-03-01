@@ -62,6 +62,7 @@ export interface HlClient {
   placeEntryOrder(coin: string, isBuy: boolean, size: number, currentPrice: number, slippageBps: number): Promise<HlEntryResult>;
   placeStopOrder(coin: string, isBuy: boolean, size: number, triggerPrice: number, reduceOnly: boolean): Promise<HlOrderResult>;
   placeLimitOrder(coin: string, isBuy: boolean, size: number, price: number, reduceOnly: boolean): Promise<HlOrderResult>;
+  placeTpOrder(coin: string, isBuy: boolean, size: number, triggerPrice: number, reduceOnly: boolean): Promise<HlOrderResult>;
   cancelOrder(coin: string, orderId: number): Promise<void>;
   getPositions(walletAddress: string): Promise<HlPosition[]>;
   getOpenOrders(walletAddress: string): Promise<HlOpenOrder[]>;

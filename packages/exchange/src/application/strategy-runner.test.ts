@@ -104,6 +104,7 @@ function createDeps(strategy: Strategy, streamer: ReturnType<typeof createMockSt
         placeEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-E1", filledSize: 0.01, avgPrice: 95200, status: "placed" }),
         placeStopOrder: vi.fn().mockResolvedValue({ orderId: "HL-2", status: "placed" }),
         placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
+        placeTpOrder: vi.fn().mockResolvedValue({ orderId: "HL-TP1", status: "placed" }),
         cancelOrder: vi.fn(),
         getPositions: vi.fn().mockResolvedValue([]),
         getOpenOrders: vi.fn().mockResolvedValue([]),

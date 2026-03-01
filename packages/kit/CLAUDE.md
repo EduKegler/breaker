@@ -13,7 +13,7 @@ Shared utilities consumed by all other packages in the monorepo.
 - `isSanePrice(value)` — safety-net range check for prices (0 < v < 10M)
 - `isSaneSize(value)` — safety-net range check for sizes (0 ≤ v < 1M)
 - `isSaneEquity(value)` — safety-net range check for equity (-1M < v < 100M)
-- `truncateSize(size, szDecimals)` — floor-truncate to exchange-allowed decimals
+- `truncateSize(size, szDecimals)` — floor-truncate to exchange-allowed decimals (with epsilon to prevent IEEE 754 drift)
 - `truncatePrice(price)` — truncate to 5 significant figures (SDK requirement)
 - `backoffDelay(attempt, baseMs?, maxMs?)` — exponential backoff delay calculator
 

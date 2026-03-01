@@ -323,11 +323,19 @@ async function handleSignalInner(
 
   // TP partially closes: opposite side, reduceOnly=true for same reason as SL.
   // TP failure is non-critical: the SL protects the position. Log and continue.
+  let allocatedTpSize = 0;
   for (let i = 0; i < intent.takeProfits.length; i++) {
     const tp = intent.takeProfits[i];
-    const tpSize = truncateSize(actualSize * tp.pctOfPosition, szDecimals);
+    const isLast = i === intent.takeProfits.length - 1;
+    // Last TP that would reach 100% allocation gets the exact remainder to avoid
+    // floating-point dust (e.g. 0.00112 * 1.0 → 0.001119... → truncated to 0.00111).
+    const cumulativePct = allocatedTpSize / actualSize + tp.pctOfPosition;
+    const tpSize = isLast && cumulativePct >= 1 - 1e-9
+      ? actualSize - allocatedTpSize
+      : truncateSize(actualSize * tp.pctOfPosition, szDecimals);
+    allocatedTpSize += tpSize;
     try {
-      const tpResult = await hlClient.placeLimitOrder(
+      const tpResult = await hlClient.placeTpOrder(
         coin,
         intent.side === "sell",
         tpSize,
@@ -343,7 +351,7 @@ async function handleSignalInner(
         side: intent.side === "buy" ? "sell" : "buy",
         size: tpSize,
         price: tp.price,
-        order_type: "limit",
+        order_type: "trigger",
         tag: `tp${i + 1}`,
         status: "pending",
         mode: config.mode,

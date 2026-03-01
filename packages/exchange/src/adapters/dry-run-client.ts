@@ -46,6 +46,13 @@ export class DryRunHlClient implements HlClient {
     return { orderId, status: "simulated" };
   }
 
+  async placeTpOrder(coin: string, isBuy: boolean, size: number, triggerPrice: number, reduceOnly: boolean): Promise<HlOrderResult> {
+    this.counter++;
+    const orderId = `dry-run-${this.counter}`;
+    log.info({ action: "DRY_RUN", method: "placeTpOrder", coin, isBuy, size, triggerPrice, reduceOnly, orderId }, "Dry-run: placeTpOrder");
+    return { orderId, status: "simulated" };
+  }
+
   async cancelOrder(coin: string, orderId: number): Promise<void> {
     log.info({ action: "DRY_RUN", method: "cancelOrder", coin, orderId }, "Dry-run: cancelOrder");
   }

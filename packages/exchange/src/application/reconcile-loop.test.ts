@@ -14,6 +14,7 @@ function createMockHlClient(overrides: Partial<HlClient> = {}): HlClient {
     placeEntryOrder: vi.fn(),
     placeStopOrder: vi.fn(),
     placeLimitOrder: vi.fn(),
+    placeTpOrder: vi.fn(),
     cancelOrder: vi.fn(),
     getPositions: vi.fn().mockResolvedValue([]),
     getOpenOrders: vi.fn().mockResolvedValue([]),

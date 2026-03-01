@@ -62,6 +62,7 @@ function createDeps(): SignalHandlerDeps {
       placeEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-E1", filledSize: 0.01052, avgPrice: 95000, status: "placed" }),
       placeStopOrder: vi.fn().mockResolvedValue({ orderId: "HL-2", status: "placed" }),
       placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
+      placeTpOrder: vi.fn().mockResolvedValue({ orderId: "HL-TP1", status: "placed" }),
       cancelOrder: vi.fn(),
       getPositions: vi.fn().mockResolvedValue([]),
       getOpenOrders: vi.fn().mockResolvedValue([]),
@@ -105,8 +106,8 @@ describe("handleSignal", () => {
     // Verify SL placed
     expect(deps.hlClient.placeStopOrder).toHaveBeenCalledOnce();
 
-    // Verify TP placed
-    expect(deps.hlClient.placeLimitOrder).toHaveBeenCalledOnce();
+    // Verify TP placed (trigger order with tpsl: "tp")
+    expect(deps.hlClient.placeTpOrder).toHaveBeenCalledOnce();
 
     // Verify position opened
     expect(deps.positionBook.count()).toBe(1);
@@ -214,7 +215,7 @@ describe("handleSignal", () => {
     expect(deps.positionBook.count()).toBe(0);
     // SL and TP should not be placed
     expect(deps.hlClient.placeStopOrder).not.toHaveBeenCalled();
-    expect(deps.hlClient.placeLimitOrder).not.toHaveBeenCalled();
+    expect(deps.hlClient.placeTpOrder).not.toHaveBeenCalled();
     // entry_order_error event should be logged with context
     expect(deps.eventLog.append).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -267,7 +268,7 @@ describe("handleSignal", () => {
   });
 
   it("keeps position open when TP fails but SL succeeded (position is protected)", async () => {
-    (deps.hlClient.placeLimitOrder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+    (deps.hlClient.placeTpOrder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error("TP order rejected"),
     );
 
@@ -316,7 +317,7 @@ describe("handleSignal", () => {
     expect(deps.hlClient.placeEntryOrder).toHaveBeenCalledWith("BTC", true, 1.42, 100, 10);
 
     // TP size also truncated: 1.42 * 0.5 = 0.71 (already clean, but verify)
-    const tpCalls = (deps.hlClient.placeLimitOrder as ReturnType<typeof vi.fn>).mock.calls;
+    const tpCalls = (deps.hlClient.placeTpOrder as ReturnType<typeof vi.fn>).mock.calls;
     expect(tpCalls[0][2]).toBe(0.71); // truncateSize(1.42 * 0.5, 2) = 0.71
   });
 
@@ -350,7 +351,7 @@ describe("handleSignal", () => {
     expect(result.reason).toBe("Entry order not filled");
     // No SL/TP should be placed
     expect(deps.hlClient.placeStopOrder).not.toHaveBeenCalled();
-    expect(deps.hlClient.placeLimitOrder).not.toHaveBeenCalled();
+    expect(deps.hlClient.placeTpOrder).not.toHaveBeenCalled();
     // Position should NOT be opened
     expect(deps.positionBook.count()).toBe(0);
     // entry_no_fill event logged
@@ -395,13 +396,44 @@ describe("handleSignal", () => {
     expect(slCalls[0][2]).toBe(0.005);
 
     // TP size should be based on actualSize: truncateSize(0.005 * 0.5, 5) = 0.0025
-    const tpCalls = (deps.hlClient.placeLimitOrder as ReturnType<typeof vi.fn>).mock.calls;
+    const tpCalls = (deps.hlClient.placeTpOrder as ReturnType<typeof vi.fn>).mock.calls;
     expect(tpCalls[0][2]).toBe(0.0025);
 
     // Position book should reflect actual filled size and avgPrice
     const pos = deps.positionBook.get("BTC")!;
     expect(pos.size).toBe(0.005);
     expect(pos.entryPrice).toBe(95100);
+  });
+
+  it("avoids TP dust when single TP covers 100% of position", async () => {
+    // 0.00112 has floating-point representation issues:
+    // 0.00112 * 100000 = 111.99999... → Math.floor gives 111 → 0.00111 (dust!)
+    (deps.hlClient.placeEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "HL-E1", filledSize: 0.00112, avgPrice: 95000, status: "placed",
+    });
+
+    const fullTpSignal: Signal = {
+      direction: "long",
+      entryPrice: 95000,
+      stopLoss: 94000,
+      takeProfits: [{ price: 97000, pctOfPosition: 1.0 }],
+      comment: "Full TP",
+    };
+
+    const result = await handleSignal(
+      createInput({ signal: fullTpSignal, alertId: "dust-001" }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+
+    // TP size must equal actualSize exactly — no dust
+    const tpCalls = (deps.hlClient.placeTpOrder as ReturnType<typeof vi.fn>).mock.calls;
+    expect(tpCalls[0][2]).toBe(0.00112);
+
+    // SL also uses full actualSize
+    const slCalls = (deps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>).mock.calls;
+    expect(slCalls[0][2]).toBe(0.00112);
   });
 
   it("propagates avgPrice to positionBook on full fill", async () => {

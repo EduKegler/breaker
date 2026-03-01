@@ -10,7 +10,7 @@ src/
 │   ├── check-risk.ts    # Guardrails: max-notional, leverage, positions, daily-loss, trades/day
 │   ├── signal-to-intent.ts  # Signal → OrderIntent conversion with sizing
 │   ├── position-book.ts # In-memory position state, price updates, PnL
-│   ├── recover-sl-tp.ts # Recover SL/TP from HL open orders (trigger→SL, limit→TP)
+│   ├── recover-sl-tp.ts # Recover SL/TP from HL open orders (both are trigger orders)
 │   └── order-status.ts  # HL → internal order status mapping
 ├── adapters/            # External I/O (injectable, mockable)
 │   ├── hyperliquid-client.ts  # SDK wrapper (HyperliquidClient class)
@@ -67,7 +67,7 @@ src/
 ## Known pitfalls
 - Must build `@breaker/backtest` before running exchange tests (workspace dependency)
 - PositionBook is in-memory — ReconcileLoop auto-corrects via hydration/auto-close/order sync
-- HL position data does NOT include SL/TP — `recoverSlTp()` extracts them from open orders (trigger→SL, limit reduceOnly→TP)
+- HL position data does NOT include SL/TP — `recoverSlTp()` extracts them from open orders (trigger→SL, trigger tpsl→TP)
 - Dual SL architecture: fixed SL (never moves) + trailing SL (moves favorably). Both `reduceOnly` trigger orders on HL. If daemon crashes, trailing SL order lives on the exchange. `recoverSlTp(direction)` discriminates fixed vs trailing by price ordering
 - Trailing SL placement uses place-first/cancel-after pattern — guarantees continuous coverage even if cancel fails (briefly 3 orders, all reduceOnly)
 - Signal handler has SL failure rollback (compensating transaction) and entry order error handling (`entry_order_error` event with full context)

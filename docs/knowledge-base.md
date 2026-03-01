@@ -1,14 +1,47 @@
 # BTC Multi-Timeframe Trading Knowledge Base
 
-> **Version:** 4.0 (living document)
-> **Last updated:** 2026-02-25
+> **Version:** 4.1 (living document)
+> **Last updated:** 2026-03-01
 > **Sources:** Cross-research (Claude, GPT, Gemini, Grok) + papers/articles
 > **Tool:** BREAKER (loop: test -> analyze -> research -> improve -> test)
 > **Status:** Clean slate. BREAKER reset. All previous results archived.
 
 ---
 
-## Core Philosophy
+## Table of Contents
+
+**Part 1 -- Foundation**
+1. [Core Philosophy](#1-core-philosophy)
+2. [Strategy Taxonomy](#2-strategy-taxonomy)
+
+**Part 2 -- Modules**
+3. [Module 1: Breakout](#3-module-1-breakout)
+4. [Module 2: Mean Reversion](#4-module-2-mean-reversion)
+5. [Module 3: Do Not Trade](#5-module-3-do-not-trade)
+
+**Part 3 -- Operations**
+6. [Session Map](#6-session-map)
+7. [Risk Management](#7-risk-management)
+
+**Part 4 -- Validation**
+8. [Stopping Criteria & Promotion Gates](#8-stopping-criteria--promotion-gates)
+9. [Walk-Forward Validation](#9-walk-forward-validation)
+10. [Backtest Period](#10-backtest-period)
+
+**Part 5 -- BREAKER Tool**
+11. [BREAKER Guidelines](#11-breaker-guidelines)
+12. [Strategy Logic Reference](#12-strategy-logic-reference)
+
+**Part 6 -- Roadmap & Meta**
+13. [Implementation Order](#13-implementation-order)
+14. [Concerns and Real Risks](#14-concerns-and-real-risks)
+15. [References](#15-references)
+
+---
+
+# Part 1 -- Foundation
+
+## 1. Core Philosophy
 
 **Less is more.** Simple strategies with few variables outperform complex ones out of sample. Each added rule improves the backtest but likely worsens real results. ([source](https://blog.traderspost.io/article/simple-trading-strategies-effectiveness), [source](https://www.quantifiedstrategies.com/simple-vs-complex-trading-strategies/))
 
@@ -20,20 +53,38 @@
 
 ---
 
-## Strategy Taxonomy
+## 2. Strategy Taxonomy
 
-### Testable in BREAKER (TypeScript local engine + BTC multi-timeframe)
+### 2.1 Quick reference: 4 active, 7 discarded
+
+| # | Strategy | Status | Phase | Regime |
+|---|----------|--------|-------|--------|
+| 1 | **Breakout** | Active | Phase 1 (now) | Trending (start of move) |
+| 2 | **Mean Reversion** | Active | Phase 1 (now) | Ranging |
+| 3 | **Pullback** | Active | Phase 4 (future) | Trending (middle of move) |
+| 4 | **Trend Following** | Active | Phase 4 (future) | Trending (duration of move) |
+| 5 | Reversal | Discarded | -- | Insufficient sample, highest degradation (~35%), too discretionary |
+| 6 | Scalping | Out of scope | -- | Needs 1m/tick, low latency |
+| 7 | Arbitrage | Out of scope | -- | Needs multi-exchange bots, no indicators |
+| 8 | Market Making | Out of scope | -- | Needs HFT, inventory management |
+| 9 | Pairs / Stat Arb | Out of scope | -- | Needs multiple assets simultaneously |
+| 10 | Order Flow | Out of scope | -- | Needs tick/L2 data, not OHLCV |
+| 11 | Event-Driven | Out of scope | -- | Edge in reaction, not backtestable |
+
+> **Uncertain regime = do not trade** (Module 3). The 4 active strategies cover trending + ranging. Nothing else needed.
+
+### 2.2 Active strategies (detail)
 
 | Type | What it does | Signal/Regime TF | BREAKER profile |
 |------|-------------|-----------------|-----------------|
 | **Mean Reversion** | Price went too far from the mean, bets it comes back. Enters against the move. Works in sideways markets. | 15m / 1H | `mean-reversion` |
 | **Breakout** | Price was compressed, bets the breakout generates directional movement. Enters at the explosion. | 15m / 4H-Daily | `breakout` |
-| **Trend Continuation** | Trend already exists, waits for a temporary correction, enters on resumption. ABCD, flags, "buy the dip" at EMA. | 15m / 4H | `trend-continuation` |
+| **Pullback** | Trend already exists, waits for a temporary correction, enters on resumption. ABCD, flags, "buy the dip" at EMA. | 15m / 4H | `pullback` |
 | **Trend Following** | Follows the dominant direction without waiting for pullback. MA crossovers, supertrend. Swing-style, holds hours to days. | 4H / Daily | `trend-following` |
 
 > **Reversal discarded.** Bets the entire trend reverses (double top/bottom, RSI divergence). Discarded because: (1) insufficient sample size on intraday BTC, (2) highest degradation backtest->live (~35%), (3) hardest to mechanize -- most reversal setups depend on discretionary context (liquidity sweeps, order flow) that automated backtesting cannot capture reliably.
 
-### Not testable in BREAKER (need different infrastructure)
+### 2.3 Discarded strategies (detail)
 
 | Type | What it does | Why not |
 |------|-------------|---------|
@@ -44,27 +95,27 @@
 | **Order Flow** | Reads order book, volume delta, footprint charts. | Requires tick/L2 data not available in OHLCV-based backtesting. |
 | **Event-Driven** | Trades around events (FOMC, CPI, halving). | Edge is in the reaction, not indicators. Hard to backtest mechanically. |
 
-### Coverage by regime
+### 2.4 Coverage by regime
 
 ```
 TRENDING REGIME    ->  Breakout -- captures START of the move
-                       Trend Continuation -- captures MIDDLE of the move (pullbacks)
+                       Pullback -- captures MIDDLE of the move (pullbacks)
                        Trend Following (4H/Daily, swing) -- captures DURATION of the move
 RANGING REGIME     ->  Mean Reversion
 UNCERTAIN REGIME   ->  Do not trade
 ```
 
-### Signal overlap between modules
+### 2.5 Signal overlap between modules
 
 When multiple modules are active, signals may coincide. This is not a problem -- it is confirmation.
 
-**Same direction (confirmation):** Breakout goes long + TC also goes long = two independent systems agreeing on direction. More conviction.
+**Same direction (confirmation):** Breakout goes long + Pullback also goes long = two independent systems agreeing on direction. More conviction.
 
 **Opposite direction (conflict):** MR says short + Breakout says long. Simple rule: one position at a time. If already in a position, other module does not enter.
 
 **No complex arbitration needed between modules.** Simple mutex rule: one position at a time, first signal wins. See Enforceability Matrix for how this is (and isn't) enforced.
 
-### How to identify the regime (simple)
+### 2.6 How to identify the regime
 
 **Trending:**
 - Price making HH/HL (up) or LH/LL (down)
@@ -86,11 +137,274 @@ When multiple modules are active, signals may coincide. This is not a problem --
 
 ---
 
-## Stopping Criteria per Strategy Type
+# Part 2 -- Modules
+
+## 3. Module 1: Breakout
+
+> **When:** Trending market
+> **Objective:** Capture directional moves
+> **Signal TF:** 15m | **Regime TF:** 4H
+
+### 3.1 Design: Donchian Channel Breakout + ADX + Higher-TF Regime Filter
+
+**Core idea:** Consolidation on higher timeframe -> breakout confirmed on 15m. A Donchian channel on 15m alone (e.g. dcSlow=50 = only 12.5 hours of data) is insufficient to define meaningful consolidation for BTC -- it captures intraday noise, not real compression. The higher-TF regime filter provides the independent context that 15m alone cannot.
+
+| Indicator | Parameter | Function |
+|-----------|-----------|--------|
+| Donchian Channel (slow) | dcSlow periods | Entry signal: new high/low breakout |
+| Donchian Channel (fast) | dcFast periods | Exit signal: trailing channel stop |
+| ADX | 14 periods | Consolidation filter: only enter when ADX < threshold |
+| Higher-TF regime filter | EMA50 Daily or 4H consolidation | Regime context: direction and/or compression from higher TF |
+
+```
+LONG:  close > DC_upper(slow) AND ADX < adxThreshold AND regime confirms bullish
+SHORT: close < DC_lower(slow) AND ADX < adxThreshold AND regime confirms bearish
+EXIT LONG:  close < DC_lower(fast) OR SL hit OR timeout
+EXIT SHORT: close > DC_upper(fast) OR SL hit OR timeout
+STOP:  ATR-based (atrStopMult, safety fallback)
+```
+
+### 3.2 Free variables for BREAKER
+
+Rule: max 8 free variables (breakout profile).
+
+| # | Variable | Range | Function |
+|---|----------|-------|----------|
+| 1 | dcSlow | 30-60 | Donchian entry channel period |
+| 2 | dcFast | 10-25 | Donchian exit channel period (trailing) |
+| 3 | adxThreshold | 20-35 | Max ADX to allow entry (consolidation filter) |
+| 4 | atrStopMult | 1.5-3.0 | ATR multiplier for safety stop |
+| 5 | maxTradesDay | 2-5 | Daily trade limit |
+| 6 | timeoutBars | 10-40 (step 5) | Max bars before forced exit. Default 20 (5h on 15m) |
+
+**Total: 6 of 8 max variables. Regime filter is fixed (not optimized).**
+
+> **Lessons from previous testing:** Same-timeframe directional filters (e.g. DI+/DI-) are strongly colinear with Donchian breakout and add no independent information. Higher-TF regime filters (EMA50 Daily, 4H consolidation) provide independent context. Breakout on 15m alone (without higher-TF context) produces too many false signals.
+
+---
+
+## 4. Module 2: Mean Reversion
+
+> **When:** Sideways market, all sessions (24/7)
+> **Objective:** Capture returns to the mean
+> **Signal TF:** 15m | **Regime TF:** 1H
+
+### 4.1 Design: Keltner Channels + RSI(2)
+
+**Core idea:** KC bands define extremes, RSI(2) confirms exhaustion. Ultra-sensitive RSI reacts fast to short-term overextension.
+
+| Indicator | Parameter | Function |
+|-----------|-----------|--------|
+| Keltner Channels | EMA(20), mult | Reference bands for extremes |
+| RSI(2) | 2 periods | Confirms exhaustion (ultra-sensitive, reacts fast) |
+
+**Entry rules:**
+
+```
+LONG:
+  - Price breaks below lower KC band
+  - RSI(2) < 20
+
+SHORT:
+  - Price breaks above upper KC band
+  - RSI(2) > 80
+  - Volume > 1.5 x SMA(volume, 20)  [ASYMMETRIC -- shorts only]
+```
+
+> **[NEEDS ABLATION TEST]** The volume spike filter on shorts was found in `keltner-rsi2.ts` but its origin is unclear (thesis-driven vs optimizer-discovered). Rationale if thesis-driven: shorting against momentum in crypto has asymmetric risk (squeezes), so requiring volume confirmation reduces false signals in rallies. Run ablation: remove the filter, compare PF/WR with and without. If PF delta < 0.05, remove it (complexity not justified).
+
+**Management:**
+
+```
+STOP:    ATR 1H x multiplier (guardrail minAtrMult)
+
+TP LONG:   KC mid (EMA 20) -- full exit
+TP SHORT:  60% exit at KC mid (EMA 20), remaining 40% trails or times out  [ASYMMETRIC]
+
+TIMEOUT: If TP not reached in N bars, exit
+```
+
+> **[NEEDS ABLATION TEST]** Partial TP on shorts (60/40 split) was found in `keltner-rsi2.ts` but not previously documented. Rationale if thesis-driven: short squeeze risk in crypto justifies taking partial profit early. Run ablation: compare full exit at KC mid vs 60/40 split. If 60/40 has better risk-adjusted returns (lower DD, similar or better PF), keep it and consider applying to longs too.
+
+**Operational limits:**
+- Max trades per day (BREAKER optimizes)
+- After 2 consecutive losses: shut down until next day
+
+### 4.2 Free variables for BREAKER
+
+1. `kcMultiplier` -- KC band multiplier
+2. `rsi2Long` -- RSI(2) threshold for long
+3. `rsi2Short` -- RSI(2) threshold for short
+4. `maxTradesDay` -- 1 to 5
+5. `timeoutBars` -- 4 to 16
+6. `atrStopMult` -- ATR 1H multiplier for stop (1.0 to 2.5)
+
+**Total: 6 variables. Variable 6 added to address known adverse R:R risk (stop too wide vs TP too close). Max free variables for MR raised from 5 to 6.**
+
+> **Known risk: adverse R:R.** ATR-based stop vs KC mid TP can create R:R < 1.0. This is acceptable IF win rate is high enough to produce positive expectancy. If not, `atrStopMult` (variable 6) and/or TP logic must be reworked.
+
+---
+
+## 5. Module 3: Do Not Trade
+
+> **When:** Uncertain regime, extreme compression, session transition
+> **Objective:** Preserve capital
+
+### 5.1 When NOT to trade
+
+```
+- Active squeeze (BB inside KC) without release yet
+- Session transition (last 30min of one, first 30min of the next)
+- ADX between 18-25 without clear direction (gray zone)
+- After 2 consecutive losses in any module
+- CPI, FOMC, NFP days (or any major macro event)
+- Daily loss > 2R reached
+```
+
+**This is not weakness, it is discipline.** Overtrading usually destroys capital faster than losing on individual trades.
+
+---
+
+# Part 3 -- Operations
+
+## 6. Session Map
+
+> **Note:** Times below are non-DST (winter). During US/EU DST (Mar-Nov), all sessions shift ~1h earlier in UTC. The code uses `America/New_York` timezone and converts internally -- these UTC values are the reference for KB rules and regime logic.
+
+| Session | UTC Time | ET equivalent | Character | Module |
+|--------|------------|--------------|---------|--------|
+| Asia | 22:00 - 08:00 | 17:00 - 03:00 | Low vol, range | **MR** + potential **Breakout** |
+| London | 08:00 - 17:00 | 03:00 - 12:00 | Expansion, breakouts | **Breakout** + **MR** |
+| NY | 14:30 - 21:00 | 09:30 - 16:00 | Directional, maximum liquidity | **Breakout** + **MR** |
+| London/NY overlap | 14:30 - 17:00 | 09:30 - 12:00 | Peak volume + volatility | **Breakout** primary |
+| Off-peak | 21:00 - 22:00 | 16:00 - 17:00 | Deceleration | **MR only**. Breakout disabled. Lower conviction |
+
+> **MR operates 24/7**, including off-peak. Session breakdown monitors whether off-peak edge holds. If MR PF in off-peak is consistently < 1.0, revisit restricting it.
+>
+> **Breakout is session-restricted:** disabled in off-peak (21:00-22:00 UTC). Low volume = too many false breakouts.
+
+---
+
+## 7. Risk Management
+
+*Universal -- applies to all modules.*
+
+### 7.1 Exchange: Hyperliquid (perps)
+
+All trades are in perpetual contracts on Hyperliquid. No gas fees, only trading fees + funding.
+
+| Fee | Tier 0 (base) | Tier 1 ($5M 14d vol) | Tier 2 ($100M) |
+|-----|--------------|----------------------|----------------|
+| **Taker** | 0.045% | 0.040% | 0.030% |
+| **Maker** | 0.015% | 0.012% | 0.004% |
+
+**Round trip (taker/taker):** 0.09% at Tier 0 = ~$85.50 per trade of 1 BTC at $95k.
+**Round trip (maker/maker):** 0.03% at Tier 0 = ~$28.50 per trade of 1 BTC at $95k.
+
+> **Impact on MR:** With fixed $ risk, tight stop = larger notional = more fees. Monitor `stopAtrMult` -- if too low, fees can dominate. Use limit orders (maker) when possible.
+
+**In BREAKER engine config:**
+```
+takerFee: 0.045%    // conservative -- assumes worst case
+slippage: 2 ticks   // conservative to cover microstructure
+```
+
+**Funding rate:** Paid/received every hour. Not modeled in backtest by default. For MR (short trades of 1-2h), impact is minimal. For trend following (trades lasting hours/days), consider adding to cost model.
+
+### 7.2 Sizing
+
+- **Risk per trade:** 1% of capital (max 2% on A+ setup)
+- **Ramp-up:** first 1-2 weeks of live trading at 0.25-0.5% risk per trade. Scale to 1% after confirming live metrics match paper
+- **Calculation:** position = risk / stop distance
+
+### 7.3 Leverage Policy
+
+**Max available:** 40x for BTC on Hyperliquid. **Max allowed by this playbook: 5x.** Hard rule.
+
+**Why leverage exists here:** Leverage does NOT change expectancy per trade. A 1% risk trade returns the same R whether at 1x or 10x. What leverage changes is **capital efficiency** -- how much collateral is locked per position, freeing the rest for other modules or as buffer against drawdown.
+
+**Margin modes:**
+
+| Mode | How it works | When to use |
+|------|-------------|-------------|
+| **Isolated** | Margin locked per position. Liquidation affects only that position. Other positions and free capital untouched. | **Default for all modules.** Prevents one bad trade from cascading. |
+| **Cross** | All positions share a single margin pool. Unrealized PnL from winners offsets losers. | Only if running portfolio margin optimization later (Phase 5+). NOT for initial deployment. |
+
+**Leverage tiers:**
+
+| Phase | Max leverage | Rationale |
+|-------|-------------|-----------|
+| Paper trading | Any (no real capital) | Test freely, but log the leverage used |
+| Capital Deployment (weeks 1-2) | 2x | Ramp-up period. Conservative. Focus on execution quality, not returns |
+| Capital Deployment (weeks 3+) | 3x | Standard operating leverage after confirming live metrics |
+| Experienced (3+ months live) | 5x | Only if all modules are profitable and drawdown < 50% of max allowed |
+
+**Liquidation math (isolated margin, BTC at 40x max):**
+
+Maintenance margin = initial margin at max leverage / 2 = (1/40) / 2 = **1.25% of notional**.
+
+| Your leverage | Initial margin | Liq distance from entry (approx) |
+|--------------|---------------|----------------------------------|
+| 2x | 50% | ~49.4% |
+| 3x | 33.3% | ~32.9% |
+| 5x | 20% | ~19.4% |
+| 10x | 10% | ~9.4% |
+| 20x | 5% | ~4.4% |
+| 40x (max) | 2.5% | ~1.25% |
+
+> **Why 5x hard cap:** At 5x, liquidation is ~19% away from entry. BTC ATR Daily is typically 2-5%. Even a 3-sigma daily move (~10-15%) would not liquidate. At 10x+, a large wick during low-liquidity hours (21:00-00:00 UTC) can liquidate before your stop fires. The stop is your exit, not the liquidation engine.
+
+**Key rules:**
+
+1. **Stop must ALWAYS be closer than liquidation price.** If your ATR stop is at 3% and your liq price is at 4.4% (10x), you have only 1.4% buffer. That is too thin. At 3x (liq ~33%), you have 30% buffer. Safe.
+2. **Leverage is set per-position on Hyperliquid.** Each isolated position can have different leverage. MR (tight stops, frequent trades) can use 3x. Breakout (wider stops, less frequent) can use 2-3x.
+3. **Never use leverage to increase position size beyond 1% risk.** Leverage reduces collateral locked, it does NOT mean "bet bigger." If your 1% risk = $100, and stop distance = $1000, position = 0.1 BTC regardless of leverage. At 3x you just lock $3,166 collateral instead of $9,500.
+4. **Funding rate awareness:** At higher leverage, funding payments are proportionally larger relative to your margin. For MR (1-2h holds), negligible. For TF (multi-day holds at 3-5x), funding can erode 0.01-0.03% per hour. Monitor.
+5. **No leverage adjustment mid-trade.** Set leverage before entry. Increasing leverage on a losing position is equivalent to averaging down -- forbidden.
+
+### 7.4 Iron rules
+
+- Stop on 1H ATR (via request.security), avoid 15m ATR on BTC
+- **Positive expectancy required:** (WR x avgWin) > ((1-WR) x avgLoss) after fees. MR can have low R:R + high WR. Breakout/PB/TF naturally have high R:R + low WR. The test is expectancy, not R:R alone
+- Hyperliquid fee (0.045% taker) included in every backtest
+- Prefer limit orders (maker 0.015%) when possible to reduce cost
+- No martingale. No averaging down. No revenge trading.
+
+### 7.5 Daily limits
+
+- Max daily loss: 2R -> shut down for today
+- Max daily trades: 5 across all modules (per-module caps are subordinate internal limits)
+- 2 consecutive losses in the same module -> shut down that module until next session
+
+### 7.6 Enforceability Matrix
+
+Some rules are enforceable per-module in the BREAKER engine. Others require the orchestrator. This distinction matters because each module runs as an independent strategy instance.
+
+| Rule | Enforceable in engine? | How it works |
+|------|----------------------|-------------|
+| Per-module maxTradesDay | **Yes** -- counter resets daily in each strategy | Per-module |
+| Per-module consecutive loss gate (2) | **Yes** -- counter in each strategy | Per-module |
+| ATR-based stop | **Yes** -- per-trade in strategy | Per-trade |
+| Timeout (N bars) | **Yes** -- per-trade in strategy | Per-trade |
+| Global 5 trades/day across modules | **No** -- strategies don't share state | Orchestrator |
+| One position at a time across modules | **No** -- strategies don't see each other | Orchestrator |
+| Daily loss 2R shutdown | **No** -- strategies don't share P&L | Orchestrator |
+| Macro event blackout (CPI/FOMC/NFP) | **Yes** -- orchestrator has economic calendar API | Orchestrator |
+| Leverage cap (5x max) | **No** -- backtests don't model leverage/margin | Orchestrator sets per-position via Hyperliquid API |
+
+> **Implication:** The orchestrator is implemented (TypeScript). Handles mutex, daily P&L limits, macro blackout, leverage enforcement via Hyperliquid API.
+
+---
+
+# Part 4 -- Validation
+
+## 8. Stopping Criteria & Promotion Gates
+
+### 8.1 Minimum criteria per strategy type
 
 > **Targets** based on research: PF 1.6-1.8 is realistic for daily/4H timeframes but not for intraday crypto. Sources: QuantifiedStrategies (PF 1.75+ optimal but 1.2+ tradable), TheRobustTrader (1.4-2.0 comfortable range), Freqtrade community (intraday PF 1.07-1.24 common).
 
-| Metric | Mean Reversion | Breakout | Trend Continuation | Trend Following |
+| Metric | Mean Reversion | Breakout | Pullback | Trend Following |
 |---------|---------------|----------|-------------------|-----------------|
 | **Signal TF** | 15m | 15m | 15m | 4H |
 | **Regime TF** | 1H | 4H-Daily | 4H | Daily |
@@ -107,14 +421,14 @@ When multiple modules are active, signals may coincide. This is not a problem --
 |------|--------|-----------|-----------------|
 | MR | 1.3 | ~20% | ~1.04 |
 | Breakout | 1.3 | ~30% | ~0.91 |
-| TC | 1.4 | ~25% | ~1.05 |
+| PB | 1.4 | ~25% | ~1.05 |
 | TF | 1.4 | ~30% | ~0.98 |
 
 > **Warning:** At PF 1.3 backtest, live PF after degradation is near breakeven. PF 1.5+ in backtest is needed for real margin (~1.05-1.12 live). Strategies that converge at PF 1.3-1.4 should be treated as marginal. MR degrades less (frequent trades, predictable fills). TF degrades more (longer holds, regime changes mid-trade).
 
 > **KB vs BREAKER config:** The criteria above are the **minimum floor** defined by this playbook. The BREAKER operational config (`breaker-config.json`) may use stricter thresholds (e.g. PF 1.6 instead of 1.3 for breakout, DD 6% instead of 10%). If the config is stricter than the KB, the config prevails. If the config is less strict than the KB, that is a bug -- fix the config.
 
-### Promotion Gates
+### 8.2 Promotion Gates
 
 The stopping criteria above are **Research Pass** -- the minimum to keep investigating. A strategy that meets them is not ready for money. Three gates, each harder:
 
@@ -126,7 +440,7 @@ The stopping criteria above are **Research Pass** -- the minimum to keep investi
 
 ---
 
-## Walk-Forward Validation
+## 9. Walk-Forward Validation
 
 There are 3 distinct validation methods. They test different things and should not be confused.
 
@@ -158,24 +472,41 @@ Run the final strategy on a period **after** the optimization window (e.g. if BR
 
 ---
 
-## BREAKER Guidelines
+## 10. Backtest Period
 
-### Limits per run
+| Use | Period | Reason |
+|-----|---------|--------|
+| **BREAKER loop (optimization)** | Last 6-9 months | Recent data, current market. ~35,000 candles on 15m = plenty of sample |
+| **OOS Historical holdout** | 2-3 months before the loop period | Data the loop never touched. Tests generalization to earlier regime |
+| **OOS Future** | 1-2 months after the loop period | True forward test. Closest proxy to live performance |
+| **Stress test (optional)** | Crash or extreme rally period | Not for optimization -- just to understand DD in extreme scenarios |
 
-- **Max free variables:** MR = 6, Breakout = 8, TC/TF = 8 (hard gate in refine -- rejects +2 per iteration)
+**Do not use the entire available history.** Pre-ETF BTC (before Jan/2024) is a structurally different market: liquidity, participants, correlations, and volatility have changed. Optimizing on 2021-2022 data pollutes the model with regimes that no longer exist.
+
+**Do not use less than 6 months.** Risk of capturing only one regime (e.g.: only bull) and incorrectly concluding it works.
+
+---
+
+# Part 5 -- BREAKER Tool
+
+## 11. BREAKER Guidelines
+
+### 11.1 Limits per run
+
+- **Max free variables:** MR = 6, Breakout = 8, PB/TF = 8 (hard gate in refine -- rejects +2 per iteration)
 - **Max iterations per strategy:** defined in config (recommendation: 15)
 - **Walk-forward:** 70/30 split + pfRatio + automatic overfitFlag (>= 10 trades)
 - **Session breakdown:** Asia/London/NY/Off-peak with count, WR, PF, PnL in prompt
 - **Include real costs:** commission 0.045% (Hyperliquid taker) + slippage 2 ticks in backtest config
-- **Category lock:** BREAKER cannot change strategy type (e.g. breakout -> trend continuation) without explicit user approval. RESTRUCTURE may change indicators/logic within the same category only
+- **Category lock:** BREAKER cannot change strategy type (e.g. breakout -> pullback) without explicit user approval. RESTRUCTURE may change indicators/logic within the same category only
 
-### Session breakdown sanity checks
+### 11.2 Session breakdown sanity checks
 
 - MR: operates 24/7, validate that PF is consistent across sessions (not dependent on one specific session)
 - Breakout with high PF in London/NY and low PF in Asia = **correct**
 - If reversed = suspicious logic
 
-### Red flags in backtest (heuristics, not absolute rules)
+### 11.3 Red flags in backtest (heuristics, not absolute rules)
 
 - [ ] PF > 3.0 -> strong overfit signal in this system's context (low-frequency intraday BTC)
 - [ ] Sharpe > 3.0 -> strong overfit signal (same reasoning)
@@ -188,7 +519,7 @@ Run the final strategy on a period **after** the optimization window (e.g. if BR
 - [ ] MR with PF concentrated in 1-2 sessions -> fragile edge, should be consistent 24/7
 - [ ] Breakout with high PF in Asia -> edge in the wrong place, suspicious logic
 
-### Trusted domain whitelist for research
+### 11.4 Trusted domain whitelist for research
 
 **Tier 1 -- Academic / Papers**
 
@@ -238,381 +569,15 @@ Run the final strategy on a period **after** the optimization window (e.g. if BR
 
 ---
 
-## Concerns and Real Risks
+## 12. Strategy Logic Reference (TypeScript pseudocode)
 
-These are concerns that are not consensus among the AIs, but important enough to document. Some are technical, others are structural.
-
-### 1. Mean Reversion in crypto != Mean Reversion in equities
-
-Most MR literature comes from equities and forex, where mean reversion is a well-documented phenomenon (especially in pairs and ETFs). Crypto is different:
-- BTC can trend for weeks without reverting (bull runs, liquidation cascades)
-- There is no clear "fundamental value" for the price to "revert" to
-- Session VWAP is a fragile anchor -- if the price opened with a gap, the VWAP already starts displaced
-
-**Real risk:** MR in BTC may simply not have enough edge to be consistent.
-
-**Mitigation:** Test first. If BREAKER cannot achieve PF >= 1.3 in 15 iterations with realistic criteria, the honest answer is: MR on 15m BTC does not work well enough. And that is a valid result -- knowing that something does not work saves money.
-
-### 2. Consensus bias from the 4 AIs
-
-The 4 AIs (Claude, GPT, Gemini, Grok) agree on a lot. This seems good, but it could be shared bias:
-- All were trained on similar data (trading blogs, indicator documentation, same papers)
-- If all learned from the same 50 blog posts about "Bollinger Band mean reversion," the consensus is not independent evidence -- it is an echo of the same source
-- None of them actually tested. All are reasoning about what "should" work
-
-**Real risk:** The entire knowledge base may be based on conventional wisdom that does not survive rigorous backtesting.
-
-**Mitigation:** BREAKER is the final judge, not the AIs. If backtest numbers contradict the consensus of the 4 AIs, the numbers win. Always.
-
-### 3. The Asian session may not be consistently range-bound
-
-The argument is: "Asian session has lower volume, so BTC trades sideways, so MR works." But:
-- Asia includes Korea, Japan, China -- which are enormous crypto markets
-- Asian macro events (BOJ, China data, Korea regulation) can create violent trends during the "Asian session"
-- The structure itself may be changing (more algo trading 24/7, less dependence on human sessions)
-
-**Real risk:** The session edge may be weaker than it appears, or may be diminishing over time.
-
-**Mitigation:** Session breakdown will show whether the edge actually exists in Asia. If MR has similar PF across all sessions, the session filter is not adding value.
-
-### 4. Candle-based backtesting has real limitations
-
-- **Does not model the order book.** In MR, you enter at extremes -- exactly where liquidity is lowest. The real fill may be worse than the backtest assumes.
-- **Slippage is an estimate.** The engine uses configured slippage (2 ticks). In BTC perp during Asian session (low liquidity), real slippage can be 2-5x the estimate.
-- **15m candles hide microstructure.** A candle that "touched KC lower band and bounced back" may have been a 2-second wick that you would never catch with a real order.
-
-**Real risk:** Pretty backtest -> ugly live trading. The backtest-live gap is larger in strategies that trade at extremes (like MR). Degradation of 20-30% is a base estimate; in volatile regimes (cascades, regime shifts), it can reach 40-50%.
-
-**Mitigation:** After BREAKER validates, do real paper trading for at least 2 weeks before committing capital. Paper trading with real orders (not backtest) reveals true slippage. Slippage checklist is part of the Capital Deployment gate.
-
-### 5. BREAKER's research phase may introduce noise
-
-When BREAKER stalls and goes to the research phase, it searches the web. The problem: 90% of content about "trading strategies" online is junk. Affiliate blog posts, courses selling indicators, gurus with no verifiable track record.
-
-**Real risk:** BREAKER imports a "new idea" from a bad blog, that idea adds 3 variables, the backtest improves due to overfit, and now the strategy has a layer of complexity based on blog wisdom.
-
-**Mitigation:**
-- When reviewing research phase output, verify: does the idea make logical sense? Or is it just "add indicator X because a blog said so"?
-- Whitelist: domain on the list -> finding goes directly. Domain not on the list -> marked as `[UNVERIFIED SOURCE]`
-
-### 6. "Do Not Trade" is the hardest to follow
-
-Psychologically, it is much harder NOT to trade than to trade poorly. Especially when:
-- BREAKER found a strategy that "works" in backtest
-- You are looking at the chart and "see" a setup
-- You had 2 losses and want to recover
-
-**Real risk:** Ignoring the no-trade rule and trading in an uncertain regime, destroying the edge of the other modules.
-
-**Mitigation:** The orchestrator is the solution. If the system did not generate a signal, do not trade. No discretionary trading. The system decides, not the human. The orchestrator enforces this automatically.
-
-### 7. Temporal overfit risk
-
-BREAKER runs on a fixed date range of historical data. If that range includes an atypical period (crash, rally, chop), the strategy may be optimized for that specific regime.
-
-**Real risk:** Strategy that works in "BTC chopping between 90k-100k" but breaks when BTC is in a strong trend.
-
-**Mitigation:**
-- Use the longest possible range (6+ months)
-- OOS Historical + OOS Future validation on different periods
-- If possible, test across 2-3 different regimes (one trending, one ranging, one mixed)
-
-### 8. Accidental complexity via research + restructure
-
-BREAKER's research and restructure phases are powerful but dangerous. Each can add indicators, filters, or change the structural logic. After 15 iterations, the strategy may have accumulated 10+ variables without anyone noticing.
-
-**Real risk:** Death by a thousand cuts. Each individual change seemed reasonable, but the accumulation is a fragile strategy with too many moving parts.
-
-**Mitigation:** The `maxFreeVariables` gate (MR=6, Breakout=8) + rejection of +2/iteration in refine limits this. Before declaring success, count the tunable parameters in the final strategy config. If it exceeded the profile limit, simplify by removing those with the least impact (ablation test: remove 1 at a time and see which makes the least difference -> candidate to cut).
-
-### 9. Leverage amplifies behavioral errors
-
-Leverage is a capital efficiency tool, not a profit multiplier. But psychologically it acts as one: seeing a larger notional position makes losses feel bigger, triggering revenge trading, premature stop-moving, or position increases.
-
-**Real risk:** A trader using 5x leverage who experiences a normal 3-trade losing streak (-3R = -3% of account) sees -15% drawdown on the position's notional value. This "feels" much worse than it is and triggers emotional overrides.
-
-**Mitigation:**
-- Hard cap at 5x in the playbook (see Leverage Policy section). Even 5x is only allowed after 3+ months of profitable live trading.
-- Ramp-up: start at 2x during Capital Deployment. Increase only after confirming emotional stability under drawdown.
-- Always think in R (risk units), never in $ notional. The leverage is invisible if your risk per trade is always 1% of account.
-- Isolated margin only: prevents one module's loss from liquidating another module's position.
-
----
-
-## Backtest Period
-
-| Use | Period | Reason |
-|-----|---------|--------|
-| **BREAKER loop (optimization)** | Last 6-9 months | Recent data, current market. ~35,000 candles on 15m = plenty of sample |
-| **OOS Historical holdout** | 2-3 months before the loop period | Data the loop never touched. Tests generalization to earlier regime |
-| **OOS Future** | 1-2 months after the loop period | True forward test. Closest proxy to live performance |
-| **Stress test (optional)** | Crash or extreme rally period | Not for optimization -- just to understand DD in extreme scenarios |
-
-**Do not use the entire available history.** Pre-ETF BTC (before Jan/2024) is a structurally different market: liquidity, participants, correlations, and volatility have changed. Optimizing on 2021-2022 data pollutes the model with regimes that no longer exist.
-
-**Do not use less than 6 months.** Risk of capturing only one regime (e.g.: only bull) and incorrectly concluding it works.
-
----
-
-## Module 1: Breakout
-
-> **When:** Trending market
-> **Objective:** Capture directional moves
-> **Signal TF:** 15m | **Regime TF:** 4H
-
-### Design: Donchian Channel Breakout + ADX + Higher-TF Regime Filter
-
-**Core idea:** Consolidation on higher timeframe -> breakout confirmed on 15m. A Donchian channel on 15m alone (e.g. dcSlow=50 = only 12.5 hours of data) is insufficient to define meaningful consolidation for BTC -- it captures intraday noise, not real compression. The higher-TF regime filter provides the independent context that 15m alone cannot.
-
-| Indicator | Parameter | Function |
-|-----------|-----------|--------|
-| Donchian Channel (slow) | dcSlow periods | Entry signal: new high/low breakout |
-| Donchian Channel (fast) | dcFast periods | Exit signal: trailing channel stop |
-| ADX | 14 periods | Consolidation filter: only enter when ADX < threshold |
-| Higher-TF regime filter | EMA50 Daily or 4H consolidation | Regime context: direction and/or compression from higher TF |
-
-```
-LONG:  close > DC_upper(slow) AND ADX < adxThreshold AND regime confirms bullish
-SHORT: close < DC_lower(slow) AND ADX < adxThreshold AND regime confirms bearish
-EXIT LONG:  close < DC_lower(fast) OR SL hit OR timeout
-EXIT SHORT: close > DC_upper(fast) OR SL hit OR timeout
-STOP:  ATR-based (atrStopMult, safety fallback)
-```
-
-### Free variables for BREAKER
-
-Rule: max 8 free variables (breakout profile).
-
-| # | Variable | Range | Function |
-|---|----------|-------|----------|
-| 1 | dcSlow | 30-60 | Donchian entry channel period |
-| 2 | dcFast | 10-25 | Donchian exit channel period (trailing) |
-| 3 | adxThreshold | 20-35 | Max ADX to allow entry (consolidation filter) |
-| 4 | atrStopMult | 1.5-3.0 | ATR multiplier for safety stop |
-| 5 | maxTradesDay | 2-5 | Daily trade limit |
-| 6 | timeoutBars | 10-40 (step 5) | Max bars before forced exit. Default 20 (5h on 15m) |
-
-**Total: 6 of 8 max variables. Regime filter is fixed (not optimized).**
-
-> **Lessons from previous testing:** Same-timeframe directional filters (e.g. DI+/DI-) are strongly colinear with Donchian breakout and add no independent information. Higher-TF regime filters (EMA50 Daily, 4H consolidation) provide independent context. Breakout on 15m alone (without higher-TF context) produces too many false signals.
-
----
-
-## Module 2: Mean Reversion
-
-> **When:** Sideways market, all sessions (24/7)
-> **Objective:** Capture returns to the mean
-> **Signal TF:** 15m | **Regime TF:** 1H
-
-### Design: Keltner Channels + RSI(2)
-
-**Core idea:** KC bands define extremes, RSI(2) confirms exhaustion. Ultra-sensitive RSI reacts fast to short-term overextension.
-
-| Indicator | Parameter | Function |
-|-----------|-----------|--------|
-| Keltner Channels | EMA(20), mult | Reference bands for extremes |
-| RSI(2) | 2 periods | Confirms exhaustion (ultra-sensitive, reacts fast) |
-
-**Entry rules:**
-
-```
-LONG:
-  - Price breaks below lower KC band
-  - RSI(2) < 20
-
-SHORT:
-  - Price breaks above upper KC band
-  - RSI(2) > 80
-  - Volume > 1.5 x SMA(volume, 20)  [ASYMMETRIC -- shorts only]
-```
-
-> **[NEEDS ABLATION TEST]** The volume spike filter on shorts was found in `keltner-rsi2.ts` but its origin is unclear (thesis-driven vs optimizer-discovered). Rationale if thesis-driven: shorting against momentum in crypto has asymmetric risk (squeezes), so requiring volume confirmation reduces false signals in rallies. Run ablation: remove the filter, compare PF/WR with and without. If PF delta < 0.05, remove it (complexity not justified).
-
-**Management:**
-
-```
-STOP:    ATR 1H x multiplier (guardrail minAtrMult)
-
-TP LONG:   KC mid (EMA 20) -- full exit
-TP SHORT:  60% exit at KC mid (EMA 20), remaining 40% trails or times out  [ASYMMETRIC]
-
-TIMEOUT: If TP not reached in N bars, exit
-```
-
-> **[NEEDS ABLATION TEST]** Partial TP on shorts (60/40 split) was found in `keltner-rsi2.ts` but not previously documented. Rationale if thesis-driven: short squeeze risk in crypto justifies taking partial profit early. Run ablation: compare full exit at KC mid vs 60/40 split. If 60/40 has better risk-adjusted returns (lower DD, similar or better PF), keep it and consider applying to longs too.
-
-**Operational limits:**
-- Max trades per day (BREAKER optimizes)
-- After 2 consecutive losses: shut down until next day
-
-### Free variables for BREAKER
-
-1. `kcMultiplier` -- KC band multiplier
-2. `rsi2Long` -- RSI(2) threshold for long
-3. `rsi2Short` -- RSI(2) threshold for short
-4. `maxTradesDay` -- 1 to 5
-5. `timeoutBars` -- 4 to 16
-6. `atrStopMult` -- ATR 1H multiplier for stop (1.0 to 2.5)
-
-**Total: 6 variables. Variable 6 added to address known adverse R:R risk (stop too wide vs TP too close). Max free variables for MR raised from 5 to 6.**
-
-> **Known risk: adverse R:R.** ATR-based stop vs KC mid TP can create R:R < 1.0. This is acceptable IF win rate is high enough to produce positive expectancy. If not, `atrStopMult` (variable 6) and/or TP logic must be reworked.
-
----
-
-## Module 3: Do Not Trade
-
-> **When:** Uncertain regime, extreme compression, session transition
-> **Objective:** Preserve capital
-
-### When NOT to trade
-
-```
-- Active squeeze (BB inside KC) without release yet
-- Session transition (last 30min of one, first 30min of the next)
-- ADX between 18-25 without clear direction (gray zone)
-- After 2 consecutive losses in any module
-- CPI, FOMC, NFP days (or any major macro event)
-- Daily loss > 2R reached
-```
-
-**This is not weakness, it is discipline.** Overtrading usually destroys capital faster than losing on individual trades.
-
----
-
-## Session Map (UTC)
-
-> **Note:** Times below are non-DST (winter). During US/EU DST (Mar-Nov), all sessions shift ~1h earlier in UTC. The code uses `America/New_York` timezone and converts internally -- these UTC values are the reference for KB rules and regime logic.
-
-| Session | UTC Time | ET equivalent | Character | Module |
-|--------|------------|--------------|---------|--------|
-| Asia | 22:00 - 08:00 | 17:00 - 03:00 | Low vol, range | **MR** + potential **Breakout** |
-| London | 08:00 - 17:00 | 03:00 - 12:00 | Expansion, breakouts | **Breakout** + **MR** |
-| NY | 14:30 - 21:00 | 09:30 - 16:00 | Directional, maximum liquidity | **Breakout** + **MR** |
-| London/NY overlap | 14:30 - 17:00 | 09:30 - 12:00 | Peak volume + volatility | **Breakout** primary |
-| Off-peak | 21:00 - 22:00 | 16:00 - 17:00 | Deceleration | **MR only**. Breakout disabled. Lower conviction |
-
-> **MR operates 24/7**, including off-peak. Session breakdown monitors whether off-peak edge holds. If MR PF in off-peak is consistently < 1.0, revisit restricting it.
->
-> **Breakout is session-restricted:** disabled in off-peak (21:00-22:00 UTC). Low volume = too many false breakouts.
-
----
-
-## Risk Management (universal -- applies to all modules)
-
-### Exchange: Hyperliquid (perps)
-
-All trades are in perpetual contracts on Hyperliquid. No gas fees, only trading fees + funding.
-
-| Fee | Tier 0 (base) | Tier 1 ($5M 14d vol) | Tier 2 ($100M) |
-|-----|--------------|----------------------|----------------|
-| **Taker** | 0.045% | 0.040% | 0.030% |
-| **Maker** | 0.015% | 0.012% | 0.004% |
-
-**Round trip (taker/taker):** 0.09% at Tier 0 = ~$85.50 per trade of 1 BTC at $95k.
-**Round trip (maker/maker):** 0.03% at Tier 0 = ~$28.50 per trade of 1 BTC at $95k.
-
-> **Impact on MR:** With fixed $ risk, tight stop = larger notional = more fees. Monitor `stopAtrMult` -- if too low, fees can dominate. Use limit orders (maker) when possible.
-
-**In BREAKER engine config:**
-```
-takerFee: 0.045%    // conservative -- assumes worst case
-slippage: 2 ticks   // conservative to cover microstructure
-```
-
-**Funding rate:** Paid/received every hour. Not modeled in backtest by default. For MR (short trades of 1-2h), impact is minimal. For trend following (trades lasting hours/days), consider adding to cost model.
-
-### Sizing
-- **Risk per trade:** 1% of capital (max 2% on A+ setup)
-- **Ramp-up:** first 1-2 weeks of live trading at 0.25-0.5% risk per trade. Scale to 1% after confirming live metrics match paper
-- **Calculation:** position = risk / stop distance
-
-### Leverage Policy (Hyperliquid BTC perps)
-
-**Max available:** 40x for BTC on Hyperliquid. **Max allowed by this playbook: 5x.** Hard rule.
-
-**Why leverage exists here:** Leverage does NOT change expectancy per trade. A 1% risk trade returns the same R whether at 1x or 10x. What leverage changes is **capital efficiency** -- how much collateral is locked per position, freeing the rest for other modules or as buffer against drawdown.
-
-**Margin modes:**
-
-| Mode | How it works | When to use |
-|------|-------------|-------------|
-| **Isolated** | Margin locked per position. Liquidation affects only that position. Other positions and free capital untouched. | **Default for all modules.** Prevents one bad trade from cascading. |
-| **Cross** | All positions share a single margin pool. Unrealized PnL from winners offsets losers. | Only if running portfolio margin optimization later (Phase 5+). NOT for initial deployment. |
-
-**Leverage tiers for this playbook:**
-
-| Phase | Max leverage | Rationale |
-|-------|-------------|-----------|
-| Paper trading | Any (no real capital) | Test freely, but log the leverage used |
-| Capital Deployment (weeks 1-2) | 2x | Ramp-up period. Conservative. Focus on execution quality, not returns |
-| Capital Deployment (weeks 3+) | 3x | Standard operating leverage after confirming live metrics |
-| Experienced (3+ months live) | 5x | Only if all modules are profitable and drawdown < 50% of max allowed |
-
-**Liquidation math (isolated margin, BTC at 40x max):**
-
-Maintenance margin = initial margin at max leverage / 2 = (1/40) / 2 = **1.25% of notional**.
-
-| Your leverage | Initial margin | Liq distance from entry (approx) |
-|--------------|---------------|----------------------------------|
-| 2x | 50% | ~49.4% |
-| 3x | 33.3% | ~32.9% |
-| 5x | 20% | ~19.4% |
-| 10x | 10% | ~9.4% |
-| 20x | 5% | ~4.4% |
-| 40x (max) | 2.5% | ~1.25% |
-
-> **Why 5x hard cap:** At 5x, liquidation is ~19% away from entry. BTC ATR Daily is typically 2-5%. Even a 3-sigma daily move (~10-15%) would not liquidate. At 10x+, a large wick during low-liquidity hours (21:00-00:00 UTC) can liquidate before your stop fires. The stop is your exit, not the liquidation engine.
-
-**Key rules:**
-
-1. **Stop must ALWAYS be closer than liquidation price.** If your ATR stop is at 3% and your liq price is at 4.4% (10x), you have only 1.4% buffer. That is too thin. At 3x (liq ~33%), you have 30% buffer. Safe.
-2. **Leverage is set per-position on Hyperliquid.** Each isolated position can have different leverage. MR (tight stops, frequent trades) can use 3x. Breakout (wider stops, less frequent) can use 2-3x.
-3. **Never use leverage to increase position size beyond 1% risk.** Leverage reduces collateral locked, it does NOT mean "bet bigger." If your 1% risk = $100, and stop distance = $1000, position = 0.1 BTC regardless of leverage. At 3x you just lock $3,166 collateral instead of $9,500.
-4. **Funding rate awareness:** At higher leverage, funding payments are proportionally larger relative to your margin. For MR (1-2h holds), negligible. For TF (multi-day holds at 3-5x), funding can erode 0.01-0.03% per hour. Monitor.
-5. **No leverage adjustment mid-trade.** Set leverage before entry. Increasing leverage on a losing position is equivalent to averaging down -- forbidden.
-
-### Iron rules
-- Stop on 1H ATR (via request.security), avoid 15m ATR on BTC
-- **Positive expectancy required:** (WR x avgWin) > ((1-WR) x avgLoss) after fees. MR can have low R:R + high WR. Breakout/TC/TF naturally have high R:R + low WR. The test is expectancy, not R:R alone
-- Hyperliquid fee (0.045% taker) included in every backtest
-- Prefer limit orders (maker 0.015%) when possible to reduce cost
-- No martingale. No averaging down. No revenge trading.
-
-### Daily limits
-- Max daily loss: 2R -> shut down for today
-- Max daily trades: 5 across all modules (per-module caps are subordinate internal limits)
-- 2 consecutive losses in the same module -> shut down that module until next session
-
-### Enforceability Matrix
-
-Some rules are enforceable per-module in the BREAKER engine. Others require the orchestrator. This distinction matters because each module runs as an independent strategy instance.
-
-| Rule | Enforceable in engine? | How it works |
-|------|----------------------|-------------|
-| Per-module maxTradesDay | **Yes** -- counter resets daily in each strategy | Per-module |
-| Per-module consecutive loss gate (2) | **Yes** -- counter in each strategy | Per-module |
-| ATR-based stop | **Yes** -- per-trade in strategy | Per-trade |
-| Timeout (N bars) | **Yes** -- per-trade in strategy | Per-trade |
-| Global 5 trades/day across modules | **No** -- strategies don't share state | Orchestrator |
-| One position at a time across modules | **No** -- strategies don't see each other | Orchestrator |
-| Daily loss 2R shutdown | **No** -- strategies don't share P&L | Orchestrator |
-| Macro event blackout (CPI/FOMC/NFP) | **Yes** -- orchestrator has economic calendar API | Orchestrator |
-| Leverage cap (5x max) | **No** -- backtests don't model leverage/margin | Orchestrator sets per-position via Hyperliquid API |
-
-> **Implication:** The orchestrator is implemented (TypeScript). Handles mutex, daily P&L limits, macro blackout, leverage enforcement via Hyperliquid API.
-
----
-
-## Strategy Logic Reference (TypeScript pseudocode)
-
-### ATR 1H (higher timeframe, anti-repaint)
+### 12.1 ATR 1H (higher timeframe, anti-repaint)
 ```typescript
 // Use completed 1H candle only (no lookahead)
 const atr1h = indicators.atr({ source: '1H', period: 14, offset: 1 })
 ```
 
-### Keltner Channels + RSI(2) (MR)
+### 12.2 Keltner Channels + RSI(2) (MR)
 ```typescript
 const { mid, upper, lower } = indicators.keltnerChannels({ period: 20, mult: params.kcMultiplier })
 const rsi2 = indicators.rsi({ period: 2 })
@@ -620,7 +585,7 @@ const longSignal  = close < lower && rsi2 < params.rsi2Long
 const shortSignal = close > upper && rsi2 > params.rsi2Short
 ```
 
-### Donchian Channel + ADX + Regime Filter (Breakout)
+### 12.3 Donchian Channel + ADX + Regime Filter (Breakout)
 ```typescript
 const dcSlow = indicators.donchian({ period: params.dcSlow })
 const dcFast = indicators.donchian({ period: params.dcFast })
@@ -638,14 +603,14 @@ const longExit  = close < dcFast.lower
 const shortExit = close > dcFast.upper
 ```
 
-### Squeeze detection (reference)
+### 12.4 Squeeze detection (reference)
 ```typescript
 const bb = indicators.bollingerBands({ period: 20, mult: 2.0 })
 const kc = indicators.keltnerChannels({ period: 20, mult: 1.5 })
 const squeezeOn = bb.lower > kc.lower && bb.upper < kc.upper
 ```
 
-### Session tracking (reference)
+### 12.5 Session tracking (reference)
 ```typescript
 const sessions = {
   asia:    timeUtils.inSession('18:00-03:00', 'America/New_York'),
@@ -657,7 +622,9 @@ const sessions = {
 
 ---
 
-## Implementation Order
+# Part 6 -- Roadmap & Meta
+
+## 13. Implementation Order
 
 ### Phase 1 -- Validate the foundations
 - Test Module 1 (Breakout) and Module 2 (MR) candidates individually in BREAKER
@@ -676,14 +643,117 @@ const sessions = {
 - Enforce global limits via orchestrator
 
 ### Phase 4 -- Expand coverage
-- Trend Continuation: 15m signal, 4H regime. BREAKER profile `trend-continuation`
+- Pullback: 15m signal, 4H regime. BREAKER profile `pullback`
 - Trend Following: 4H signal, Daily regime. Swing trading, not day trading. Profile `trend-following`
 
 ### Phase 5 -- Infra
 - Automatic regime switcher (orchestrator)
 - Add more assets if desired (ETH, SOL -- same logic, different parameters)
 
-## References
+---
+
+## 14. Concerns and Real Risks
+
+These are concerns that are not consensus among the AIs, but important enough to document. Some are technical, others are structural.
+
+### 14.1 Mean Reversion in crypto != Mean Reversion in equities
+
+Most MR literature comes from equities and forex, where mean reversion is a well-documented phenomenon (especially in pairs and ETFs). Crypto is different:
+- BTC can trend for weeks without reverting (bull runs, liquidation cascades)
+- There is no clear "fundamental value" for the price to "revert" to
+- Session VWAP is a fragile anchor -- if the price opened with a gap, the VWAP already starts displaced
+
+**Real risk:** MR in BTC may simply not have enough edge to be consistent.
+
+**Mitigation:** Test first. If BREAKER cannot achieve PF >= 1.3 in 15 iterations with realistic criteria, the honest answer is: MR on 15m BTC does not work well enough. And that is a valid result -- knowing that something does not work saves money.
+
+### 14.2 Consensus bias from the 4 AIs
+
+The 4 AIs (Claude, GPT, Gemini, Grok) agree on a lot. This seems good, but it could be shared bias:
+- All were trained on similar data (trading blogs, indicator documentation, same papers)
+- If all learned from the same 50 blog posts about "Bollinger Band mean reversion," the consensus is not independent evidence -- it is an echo of the same source
+- None of them actually tested. All are reasoning about what "should" work
+
+**Real risk:** The entire knowledge base may be based on conventional wisdom that does not survive rigorous backtesting.
+
+**Mitigation:** BREAKER is the final judge, not the AIs. If backtest numbers contradict the consensus of the 4 AIs, the numbers win. Always.
+
+### 14.3 The Asian session may not be consistently range-bound
+
+The argument is: "Asian session has lower volume, so BTC trades sideways, so MR works." But:
+- Asia includes Korea, Japan, China -- which are enormous crypto markets
+- Asian macro events (BOJ, China data, Korea regulation) can create violent trends during the "Asian session"
+- The structure itself may be changing (more algo trading 24/7, less dependence on human sessions)
+
+**Real risk:** The session edge may be weaker than it appears, or may be diminishing over time.
+
+**Mitigation:** Session breakdown will show whether the edge actually exists in Asia. If MR has similar PF across all sessions, the session filter is not adding value.
+
+### 14.4 Candle-based backtesting has real limitations
+
+- **Does not model the order book.** In MR, you enter at extremes -- exactly where liquidity is lowest. The real fill may be worse than the backtest assumes.
+- **Slippage is an estimate.** The engine uses configured slippage (2 ticks). In BTC perp during Asian session (low liquidity), real slippage can be 2-5x the estimate.
+- **15m candles hide microstructure.** A candle that "touched KC lower band and bounced back" may have been a 2-second wick that you would never catch with a real order.
+
+**Real risk:** Pretty backtest -> ugly live trading. The backtest-live gap is larger in strategies that trade at extremes (like MR). Degradation of 20-30% is a base estimate; in volatile regimes (cascades, regime shifts), it can reach 40-50%.
+
+**Mitigation:** After BREAKER validates, do real paper trading for at least 2 weeks before committing capital. Paper trading with real orders (not backtest) reveals true slippage. Slippage checklist is part of the Capital Deployment gate.
+
+### 14.5 BREAKER's research phase may introduce noise
+
+When BREAKER stalls and goes to the research phase, it searches the web. The problem: 90% of content about "trading strategies" online is junk. Affiliate blog posts, courses selling indicators, gurus with no verifiable track record.
+
+**Real risk:** BREAKER imports a "new idea" from a bad blog, that idea adds 3 variables, the backtest improves due to overfit, and now the strategy has a layer of complexity based on blog wisdom.
+
+**Mitigation:**
+- When reviewing research phase output, verify: does the idea make logical sense? Or is it just "add indicator X because a blog said so"?
+- Whitelist: domain on the list -> finding goes directly. Domain not on the list -> marked as `[UNVERIFIED SOURCE]`
+
+### 14.6 "Do Not Trade" is the hardest to follow
+
+Psychologically, it is much harder NOT to trade than to trade poorly. Especially when:
+- BREAKER found a strategy that "works" in backtest
+- You are looking at the chart and "see" a setup
+- You had 2 losses and want to recover
+
+**Real risk:** Ignoring the no-trade rule and trading in an uncertain regime, destroying the edge of the other modules.
+
+**Mitigation:** The orchestrator is the solution. If the system did not generate a signal, do not trade. No discretionary trading. The system decides, not the human. The orchestrator enforces this automatically.
+
+### 14.7 Temporal overfit risk
+
+BREAKER runs on a fixed date range of historical data. If that range includes an atypical period (crash, rally, chop), the strategy may be optimized for that specific regime.
+
+**Real risk:** Strategy that works in "BTC chopping between 90k-100k" but breaks when BTC is in a strong trend.
+
+**Mitigation:**
+- Use the longest possible range (6+ months)
+- OOS Historical + OOS Future validation on different periods
+- If possible, test across 2-3 different regimes (one trending, one ranging, one mixed)
+
+### 14.8 Accidental complexity via research + restructure
+
+BREAKER's research and restructure phases are powerful but dangerous. Each can add indicators, filters, or change the structural logic. After 15 iterations, the strategy may have accumulated 10+ variables without anyone noticing.
+
+**Real risk:** Death by a thousand cuts. Each individual change seemed reasonable, but the accumulation is a fragile strategy with too many moving parts.
+
+**Mitigation:** The `maxFreeVariables` gate (MR=6, Breakout=8) + rejection of +2/iteration in refine limits this. Before declaring success, count the tunable parameters in the final strategy config. If it exceeded the profile limit, simplify by removing those with the least impact (ablation test: remove 1 at a time and see which makes the least difference -> candidate to cut).
+
+### 14.9 Leverage amplifies behavioral errors
+
+Leverage is a capital efficiency tool, not a profit multiplier. But psychologically it acts as one: seeing a larger notional position makes losses feel bigger, triggering revenge trading, premature stop-moving, or position increases.
+
+**Real risk:** A trader using 5x leverage who experiences a normal 3-trade losing streak (-3R = -3% of account) sees -15% drawdown on the position's notional value. This "feels" much worse than it is and triggers emotional overrides.
+
+**Mitigation:**
+- Hard cap at 5x in the playbook (see Leverage Policy section). Even 5x is only allowed after 3+ months of profitable live trading.
+- Ramp-up: start at 2x during Capital Deployment. Increase only after confirming emotional stability under drawdown.
+- Always think in R (risk units), never in $ notional. The leverage is invisible if your risk per trade is always 1% of account.
+- Isolated margin only: prevents one module's loss from liquidating another module's position.
+
+---
+
+## 15. References
 
 ### Principles
 - [Simple vs Complex Trading Strategies](https://www.quantifiedstrategies.com/simple-vs-complex-trading-strategies/) -- QuantifiedStrategies

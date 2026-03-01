@@ -195,6 +195,30 @@ export class HyperliquidClient implements HlClient {
     return { orderId, status: "placed" };
   }
 
+  async placeTpOrder(
+    coin: string,
+    isBuy: boolean,
+    size: number,
+    triggerPrice: number,
+    reduceOnly: boolean,
+  ): Promise<HlOrderResult> {
+    const sz = reduceOnly ? size : truncateSize(size, this.getSzDecimals(coin));
+    if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
+    const px = truncatePrice(triggerPrice);
+    const t0 = performance.now();
+    const result = await this.sdk.exchange.placeOrder({
+      coin: this.toSymbol(coin),
+      is_buy: isBuy,
+      sz,
+      limit_px: px,
+      order_type: { trigger: { triggerPx: String(px), isMarket: true, tpsl: "tp" } },
+      reduce_only: reduceOnly,
+    });
+    const orderId = extractOid(result);
+    log.info({ action: "placeTpOrder", coin, isBuy, size: sz, triggerPrice: px, orderId, latencyMs: Math.round(performance.now() - t0) }, "Take-profit trigger order placed");
+    return { orderId, status: "placed" };
+  }
+
   async cancelOrder(coin: string, orderId: number): Promise<void> {
     const t0 = performance.now();
     await this.sdk.exchange.cancelOrder({ coin: this.toSymbol(coin), o: orderId });

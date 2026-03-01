@@ -51,6 +51,13 @@ describe("DryRunHlClient", () => {
     expect(r.status).toBe("simulated");
   });
 
+  it("placeTpOrder returns simulated result", async () => {
+    const client = new DryRunHlClient();
+    const r = await client.placeTpOrder("BTC", false, 0.005, 97000, true);
+    expect(r.orderId).toBe("dry-run-1");
+    expect(r.status).toBe("simulated");
+  });
+
   it("cancelOrder is a no-op", async () => {
     const client = new DryRunHlClient();
     await expect(client.cancelOrder("BTC", 12345)).resolves.toBeUndefined();
