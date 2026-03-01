@@ -64,7 +64,7 @@ class VolumeProfileView implements IPrimitivePaneView {
   }
 }
 
-export interface VpvrCandle {
+interface VpvrCandle {
   time: Time;
   open: number;
   high: number;

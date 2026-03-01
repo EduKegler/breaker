@@ -12,7 +12,7 @@ import type { ExchangeConfig } from "../types/config.js";
 import type { PositionBook } from "../domain/position-book.js";
 import { handleSignal, type SignalHandlerDeps } from "./handle-signal.js";
 import type { EventLog } from "../adapters/event-log.js";
-import { truncatePrice } from "../lib/truncate-price.js";
+import { truncatePrice } from "@breaker/kit";
 import { logger } from "../lib/logger.js";
 
 const log = logger.createChild("strategyRunner");
@@ -225,7 +225,14 @@ export class StrategyRunner {
       if (pos.unrealizedPnl < 0) this.consecutiveLosses++;
       else this.consecutiveLosses = 0;
       this.dailyPnl += pos.unrealizedPnl;
-      log.info({ action: "positionClosed", coin: this.deps.coin, pnl: pos.unrealizedPnl }, "Position closed");
+      log.info({
+        action: "positionClosed",
+        coin: this.deps.coin,
+        direction: pos.direction,
+        entryPrice: pos.entryPrice,
+        pnl: pos.unrealizedPnl,
+        exitReason: exitSignal.comment ?? "strategy_exit",
+      }, "Position closed");
       return true;
     }
 
@@ -358,7 +365,14 @@ export class StrategyRunner {
     });
 
     if (!tradingAllowed) {
-      log.debug({ action: "tradingBlocked", barsSinceExit: this.barsSinceExit, consecutiveLosses: this.consecutiveLosses, tradesToday: this.tradesToday }, "Trading blocked by guardrails");
+      log.debug({
+        action: "tradingBlocked",
+        coin: this.deps.coin,
+        barsSinceExit: this.barsSinceExit,
+        consecutiveLosses: this.consecutiveLosses,
+        tradesToday: this.tradesToday,
+        dailyPnl: this.dailyPnl,
+      }, "Trading blocked by guardrails");
       return;
     }
 
@@ -382,7 +396,17 @@ export class StrategyRunner {
       return;
     }
 
-    log.info({ action: "signalGenerated", coin: this.deps.coin, direction: signal.direction, entryPrice: signal.entryPrice, stopLoss: signal.stopLoss }, "Strategy signal generated");
+    log.info({
+      action: "signalGenerated",
+      coin: this.deps.coin,
+      direction: signal.direction,
+      entryPrice: signal.entryPrice,
+      stopLoss: signal.stopLoss,
+      takeProfits: signal.takeProfits.map((tp) => tp.price),
+      comment: signal.comment,
+      barsSinceExit: this.barsSinceExit,
+      tradesToday: this.tradesToday,
+    }, "Strategy signal generated");
 
     this.signalCounter++;
     const alertId = `runner-${Date.now()}-${this.signalCounter}`;
@@ -443,6 +467,7 @@ export class StrategyRunner {
       try {
         await this.processClosedCandle(candle);
       } catch (err) {
+        log.error({ action: "processClosedCandle", coin: this.deps.coin, err }, "Error processing closed candle");
         await this.deps.eventLog.append({
           type: "error",
           timestamp: new Date().toISOString(),

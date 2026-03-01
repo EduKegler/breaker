@@ -23,7 +23,6 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - EMA: `trading-signals` library uses first-value seed (not SMA seed); converges after ~5x period
 - ADX: library's pdi/mdi return fractions (multiplied by 100 in wrapper); DI available at period-1, ADX at 2*period-2
 - Pine's `ta.kc` uses EMA of True Range for band width (not ATR/RMA)
-- `@ixjb94/indicators` is a reference dep (not imported in src/) — kept for validating future indicator implementations
 - CCXT symbol mapping: bybit→`BTC/USDT:USDT`, hyperliquid→`BTC/USDC:USDC`, coinbase→`BTC/USD`, coinbase-perp→`BTC/USD:USD`
 - Candle `n` (trade count) is always 0 — CCXT doesn't return it
 

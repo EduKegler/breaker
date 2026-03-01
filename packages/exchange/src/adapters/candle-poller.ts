@@ -58,13 +58,19 @@ export class CandlePoller {
     // Fetch from the CURRENT candle onwards (not lastTs + ivlMs) so we also
     // get the in-progress candle with updated OHLCV values.
     const t0 = performance.now();
-    const newCandles = await fetchCandles(
-      this.config.coin,
-      this.config.interval,
-      lastTs,
-      Date.now(),
-      { source: this.config.dataSource },
-    );
+    let newCandles: Candle[];
+    try {
+      newCandles = await fetchCandles(
+        this.config.coin,
+        this.config.interval,
+        lastTs,
+        Date.now(),
+        { source: this.config.dataSource },
+      );
+    } catch (err) {
+      log.error({ action: "poll", coin: this.config.coin, err, latencyMs: Math.round(performance.now() - t0) }, "Candle fetch failed during poll");
+      throw err;
+    }
 
     if (newCandles.length === 0) return null;
 

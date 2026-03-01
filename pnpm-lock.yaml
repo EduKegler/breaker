@@ -41,9 +41,6 @@ importers:
       '@breaker/kit':
         specifier: workspace:*
         version: link:../kit
-      '@ixjb94/indicators':
-        specifier: ^1.2.4
-        version: 1.2.4
       better-sqlite3:
         specifier: ^11.0.0
         version: 11.10.0
@@ -753,9 +750,6 @@ packages:
   '@istanbuljs/schema@0.1.3':
     resolution: {integrity: sha512-ZXRY4jNvVgSVQ8DL3LTcakaAtXwTVUxE81hslsyD2AtoXW/wVob10HkOJ1X/pAlcI7D+2YoZKg5do8G/w6RYgA==}
     engines: {node: '>=8'}
-
-  '@ixjb94/indicators@1.2.4':
-    resolution: {integrity: sha512-wJhe9yRsbubJm+xDyoTZBdlc8GsREX4aBNzpSWqxl2KxjCd9zmX2ugZraLwY24NhWFrIAzTgLovjn6hx1/5Fyg==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -3098,8 +3092,6 @@ snapshots:
       wrap-ansi-cjs: wrap-ansi@7.0.0
 
   '@istanbuljs/schema@0.1.3': {}
-
-  '@ixjb94/indicators@1.2.4': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:

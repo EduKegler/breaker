@@ -14,14 +14,13 @@ import { execaSync } from "execa";
 import writeFileAtomic from "write-file-atomic";
 import { createActor } from "xstate";
 
-import { isMainModule } from "@breaker/kit";
+import { isMainModule, backoffDelay } from "@breaker/kit";
 import { sendWhatsApp as sendWhatsAppWithRetry } from "@breaker/alerts";
 import { getStrategySourcePath } from "../lib/get-strategy-source-path.js";
 import { strategyRegistry } from "../lib/strategy-registry.js";
 import { loadCandles } from "../lib/candle-loader.js";
 import { lock } from "../lib/lock.js";
 import { classifyError } from "./classify-error.js";
-import { backoffDelay } from "./backoff-delay.js";
 import { parseArgs } from "./parse-args.js";
 import { buildLoopConfig } from "./build-loop-config.js";
 import { checkCriteria } from "./check-criteria.js";

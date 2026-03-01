@@ -1,7 +1,14 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { formatOpenMessage, formatTrailingSlMessage } from "./format-alert-message.js";
 import type { OrderIntent } from "../domain/signal-to-intent.js";
 import type { AlertsClient } from "../types/alerts-client.js";
+import { HttpAlertsClient } from "./alerts-client.js";
+
+vi.mock("got", () => ({
+  default: {
+    post: vi.fn().mockResolvedValue({ statusCode: 200 }),
+  },
+}));
 
 const intent: OrderIntent = {
   coin: "BTC",
@@ -100,5 +107,77 @@ describe("AlertsClient interface (mock)", () => {
 
     await mockClient.notifyTrailingSlMoved("BTC", "long", 93000, 94000, 92000, "testnet");
     expect(mockClient.notifyTrailingSlMoved).toHaveBeenCalledWith("BTC", "long", 93000, 94000, 92000, "testnet");
+  });
+});
+
+describe("HttpAlertsClient", () => {
+  const GATEWAY_URL = "http://localhost:3100/send";
+  let mockPost: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    const got = await import("got");
+    mockPost = got.default.post as unknown as ReturnType<typeof vi.fn>;
+    mockPost.mockReset();
+    mockPost.mockResolvedValue({ statusCode: 200 });
+  });
+
+  describe("notifyPositionOpened", () => {
+    it("sends formatted message via POST", async () => {
+      const client = new HttpAlertsClient(GATEWAY_URL);
+      await client.notifyPositionOpened(intent, "testnet");
+
+      expect(mockPost).toHaveBeenCalledOnce();
+      const [url, opts] = mockPost.mock.calls[0];
+      expect(url).toBe(GATEWAY_URL);
+      expect(opts.json.text).toContain("BTC");
+      expect(opts.json.text).toContain("LONG");
+    });
+
+    it("propagates network error", async () => {
+      mockPost.mockRejectedValue(new Error("Connection refused"));
+
+      const client = new HttpAlertsClient(GATEWAY_URL);
+      await expect(client.notifyPositionOpened(intent, "testnet")).rejects.toThrow("Connection refused");
+    });
+  });
+
+  describe("sendText", () => {
+    it("sends text message via POST", async () => {
+      const client = new HttpAlertsClient(GATEWAY_URL);
+      await client.sendText("Hello from test");
+
+      expect(mockPost).toHaveBeenCalledOnce();
+      const [url, opts] = mockPost.mock.calls[0];
+      expect(url).toBe(GATEWAY_URL);
+      expect(opts.json.text).toBe("Hello from test");
+    });
+
+    it("propagates network error", async () => {
+      mockPost.mockRejectedValue(new Error("Timeout"));
+
+      const client = new HttpAlertsClient(GATEWAY_URL);
+      await expect(client.sendText("test")).rejects.toThrow("Timeout");
+    });
+  });
+
+  describe("notifyTrailingSlMoved", () => {
+    it("sends formatted trailing SL message", async () => {
+      const client = new HttpAlertsClient(GATEWAY_URL);
+      await client.notifyTrailingSlMoved("BTC", "long", 93000, 94000, 95000, "mainnet");
+
+      expect(mockPost).toHaveBeenCalledOnce();
+      const [, opts] = mockPost.mock.calls[0];
+      expect(opts.json.text).toContain("BTC");
+      expect(opts.json.text).toContain("trailing SL");
+    });
+
+    it("propagates network error", async () => {
+      mockPost.mockRejectedValue(new Error("ECONNREFUSED"));
+
+      const client = new HttpAlertsClient(GATEWAY_URL);
+      await expect(
+        client.notifyTrailingSlMoved("BTC", "long", 93000, 94000, 95000, "testnet"),
+      ).rejects.toThrow("ECONNREFUSED");
+    });
   });
 });

@@ -1,10 +1,6 @@
 import { Hyperliquid } from "hyperliquid";
+import { finiteOrThrow, finiteOr, isSanePrice, truncateSize, truncatePrice } from "@breaker/kit";
 import { logger } from "../lib/logger.js";
-import { finiteOrThrow } from "../lib/finite-or-throw.js";
-import { finiteOr } from "../lib/finite-or.js";
-import { isSanePrice } from "../lib/is-sane-price.js";
-import { truncateSize } from "../lib/truncate-size.js";
-import { truncatePrice } from "../lib/truncate-price.js";
 import type { HlClient, HlPosition, HlOpenOrder, HlHistoricalOrder, HlOrderResult, HlEntryResult, HlAccountState, HlSpotBalance } from "../types/hl-client.js";
 
 const log = logger.createChild("hlClient");
@@ -328,6 +324,7 @@ export class HyperliquidClient implements HlClient {
   }
 
   async getMidPrice(coin: string): Promise<number | null> {
+    const t0 = performance.now();
     try {
       const mids = await this.sdk.info.getAllMids();
       const raw = mids[this.toSymbol(coin)];
@@ -335,7 +332,14 @@ export class HyperliquidClient implements HlClient {
       const price = Number(raw);
       return Number.isFinite(price) && price > 0 ? price : null;
     } catch (err) {
-      log.warn({ action: "getMidPrice", coin, err }, "Failed to fetch mid-price");
+      const errObj = err as Error & { code?: string; response?: { statusCode?: number } };
+      log.warn({
+        action: "getMidPrice",
+        coin, err,
+        errorCode: errObj.code,
+        statusCode: errObj.response?.statusCode,
+        latencyMs: Math.round(performance.now() - t0),
+      }, "Failed to fetch mid-price");
       return null;
     }
   }

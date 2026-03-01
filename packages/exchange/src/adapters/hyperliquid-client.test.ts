@@ -560,4 +560,227 @@ describe("HyperliquidClient input validation", () => {
       expect(equity).toBe(16);
     });
   });
+
+  describe("getPositions isSanePrice branch", () => {
+    it("skips position with entryPx=0 (fails isSanePrice)", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        assetPositions: [
+          { position: { coin: "BTC", szi: "0.01", entryPx: "0", unrealizedPnl: "5", leverage: { value: 5 }, liquidationPx: null } },
+          { position: { coin: "ETH", szi: "1.0", entryPx: "3500", unrealizedPnl: "10", leverage: { value: 3 }, liquidationPx: "2800" } },
+        ],
+      });
+
+      const client = new HyperliquidClient(sdk);
+      const positions = await client.getPositions("0xtest");
+
+      expect(positions).toHaveLength(1);
+      expect(positions[0].coin).toBe("ETH");
+    });
+
+    it("skips position with entryPx=-100 (fails isSanePrice)", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        assetPositions: [
+          { position: { coin: "BTC", szi: "0.5", entryPx: "-100", unrealizedPnl: "0", leverage: { value: 5 }, liquidationPx: null } },
+        ],
+      });
+
+      const client = new HyperliquidClient(sdk);
+      const positions = await client.getPositions("0xtest");
+
+      expect(positions).toHaveLength(0);
+    });
+  });
+
+  describe("getHistoricalOrders", () => {
+    it("parses orders with inner.oid", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.getHistoricalOrders as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { order: { oid: 100, coin: "BTC" }, status: "filled" },
+        { order: { oid: 200, coin: "ETH" }, status: "cancelled" },
+      ]);
+
+      const client = new HyperliquidClient(sdk);
+      const orders = await client.getHistoricalOrders("0xtest");
+
+      expect(orders).toHaveLength(2);
+      expect(orders[0]).toEqual({ oid: 100, status: "filled" });
+      expect(orders[1]).toEqual({ oid: 200, status: "cancelled" });
+    });
+
+    it("falls back to o.oid when inner.oid is missing", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.getHistoricalOrders as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { oid: 300, status: "triggered" },
+      ]);
+
+      const client = new HyperliquidClient(sdk);
+      const orders = await client.getHistoricalOrders("0xtest");
+
+      expect(orders).toHaveLength(1);
+      expect(orders[0]).toEqual({ oid: 300, status: "triggered" });
+    });
+
+    it("defaults status to 'open' when missing", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.getHistoricalOrders as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { order: { oid: 400 } },
+      ]);
+
+      const client = new HyperliquidClient(sdk);
+      const orders = await client.getHistoricalOrders("0xtest");
+
+      expect(orders).toHaveLength(1);
+      expect(orders[0].status).toBe("open");
+    });
+
+    it("returns empty array when SDK returns null/undefined", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.getHistoricalOrders as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const client = new HyperliquidClient(sdk);
+      const orders = await client.getHistoricalOrders("0xtest");
+
+      expect(orders).toEqual([]);
+    });
+  });
+
+  describe("getMidPrice", () => {
+    it("returns price for valid coin", async () => {
+      const sdk = createMockSdk();
+      sdk.info.getAllMids = vi.fn().mockResolvedValue({ "BTC-PERP": "95123.5" });
+
+      const client = new HyperliquidClient(sdk);
+      const price = await client.getMidPrice("BTC");
+
+      expect(price).toBe(95123.5);
+    });
+
+    it("returns null for unknown coin", async () => {
+      const sdk = createMockSdk();
+      sdk.info.getAllMids = vi.fn().mockResolvedValue({ "BTC-PERP": "95000" });
+
+      const client = new HyperliquidClient(sdk);
+      const price = await client.getMidPrice("XYZ");
+
+      expect(price).toBeNull();
+    });
+
+    it("returns null when SDK throws", async () => {
+      const sdk = createMockSdk();
+      sdk.info.getAllMids = vi.fn().mockRejectedValue(new Error("Network error"));
+
+      const client = new HyperliquidClient(sdk);
+      const price = await client.getMidPrice("BTC");
+
+      expect(price).toBeNull();
+    });
+
+    it("returns null for non-positive price", async () => {
+      const sdk = createMockSdk();
+      sdk.info.getAllMids = vi.fn().mockResolvedValue({ "BTC-PERP": "0" });
+
+      const client = new HyperliquidClient(sdk);
+      const price = await client.getMidPrice("BTC");
+
+      expect(price).toBeNull();
+    });
+  });
+
+  describe("getAccountState", () => {
+    it("returns full account state with perp + spot data", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        marginSummary: { accountValue: "1000", totalMarginUsed: "200", totalNtlPos: "950", totalRawUsd: "800" },
+        withdrawable: "750",
+      });
+      (sdk.info.spot.getSpotClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        balances: [
+          { coin: "USDC", total: "50", hold: "10" },
+          { coin: "ETH-SPOT", total: "2.5", hold: "0" },
+        ],
+      });
+
+      const client = new HyperliquidClient(sdk);
+      const state = await client.getAccountState("0xtest");
+
+      // accountValue = perpEquity(1000) + freeSpotUsdc(50-10=40)
+      expect(state.accountValue).toBe(1040);
+      expect(state.totalMarginUsed).toBe(200);
+      expect(state.totalNtlPos).toBe(950);
+      expect(state.totalRawUsd).toBe(800);
+      // withdrawable = perp(750) + freeSpotUsdc(40)
+      expect(state.withdrawable).toBe(790);
+      expect(state.spotBalances).toHaveLength(2);
+      expect(state.spotBalances[0]).toEqual({ coin: "USDC", total: 50, hold: 10 });
+      expect(state.spotBalances[1]).toEqual({ coin: "ETH-SPOT", total: 2.5, hold: 0 });
+    });
+
+    it("handles missing marginSummary gracefully", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      (sdk.info.spot.getSpotClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({ balances: [] });
+
+      const client = new HyperliquidClient(sdk);
+      const state = await client.getAccountState("0xtest");
+
+      expect(state.accountValue).toBe(0);
+      expect(state.totalMarginUsed).toBe(0);
+      expect(state.withdrawable).toBe(0);
+    });
+
+    it("skips spot balances with total=0", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        marginSummary: { accountValue: "500" },
+        withdrawable: "400",
+      });
+      (sdk.info.spot.getSpotClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        balances: [
+          { coin: "USDC", total: "100", hold: "0" },
+          { coin: "ETH-SPOT", total: "0", hold: "0" },
+        ],
+      });
+
+      const client = new HyperliquidClient(sdk);
+      const state = await client.getAccountState("0xtest");
+
+      expect(state.spotBalances).toHaveLength(1);
+      expect(state.spotBalances[0].coin).toBe("USDC");
+    });
+
+    it("prevents double-counting of spot USDC held as collateral", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        marginSummary: { accountValue: "500", totalMarginUsed: "100", totalNtlPos: "0", totalRawUsd: "0" },
+        withdrawable: "400",
+      });
+      (sdk.info.spot.getSpotClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        balances: [{ coin: "USDC", total: "500", hold: "500" }],
+      });
+
+      const client = new HyperliquidClient(sdk);
+      const state = await client.getAccountState("0xtest");
+
+      // freeSpotUsdc = max(0, 500-500) = 0 → no double-counting
+      expect(state.accountValue).toBe(500);
+      expect(state.withdrawable).toBe(400);
+    });
+
+    it("handles spot API failure gracefully", async () => {
+      const sdk = createMockSdk();
+      (sdk.info.perpetuals.getClearinghouseState as ReturnType<typeof vi.fn>).mockResolvedValue({
+        marginSummary: { accountValue: "1000", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+        withdrawable: "1000",
+      });
+      (sdk.info.spot.getSpotClearinghouseState as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Spot API down"));
+
+      const client = new HyperliquidClient(sdk);
+      const state = await client.getAccountState("0xtest");
+
+      expect(state.accountValue).toBe(1000);
+      expect(state.spotBalances).toEqual([]);
+    });
+  });
 });

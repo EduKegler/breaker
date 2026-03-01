@@ -21,7 +21,6 @@
   },
   "dependencies": {
     "@breaker/kit": "workspace:*",
-    "@ixjb94/indicators": "^1.2.4",
     "better-sqlite3": "^11.0.0",
     "cac": "^6.7.14",
     "ccxt": "^4.4.0",

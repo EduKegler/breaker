@@ -480,7 +480,7 @@ export function createApp(deps: ServerDeps): express.Express {
     // Compute SL from ATR using strategy params (same logic as the strategy)
     const stratName = strategyParam ?? coinCfg.strategies[0]?.name ?? "donchian-adx";
     const strategy = deps.strategyFactory(stratName);
-    const atrLen = strategy.params.atrLen?.value ?? strategy.params.atrStopMult ? 14 : 14;
+    const atrLen = strategy.params.atrLen?.value ?? 14;
     const atrMult = strategy.params.atrStopMult?.value ?? 2.0;
     const atrValues = atr(candles, atrLen);
     const lastAtr = atrValues[atrValues.length - 1];

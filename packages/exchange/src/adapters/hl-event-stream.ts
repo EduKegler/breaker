@@ -18,29 +18,36 @@ export class HlEventStream {
     this.started = true;
     log.info({ action: "start" }, "Subscribing to HL events");
 
-    await this.sdk.subscriptions.subscribeToOrderUpdates(
-      this.walletAddress,
-      (orders: WsOrder[]) => {
-        if (!this.started) return;
-        try {
-          callbacks.onOrderUpdate(orders);
-        } catch (err) {
-          log.error({ action: "onOrderUpdate", err }, "Callback error in order update handler");
-        }
-      },
-    );
+    try {
+      await this.sdk.subscriptions.subscribeToOrderUpdates(
+        this.walletAddress,
+        (orders: WsOrder[]) => {
+          if (!this.started) return;
+          try {
+            callbacks.onOrderUpdate(orders);
+          } catch (err) {
+            log.error({ action: "onOrderUpdate", err }, "Callback error in order update handler");
+          }
+        },
+      );
+      log.info({ action: "subscribed", channel: "orderUpdates" }, "Subscribed to order updates");
 
-    await this.sdk.subscriptions.subscribeToUserFills(
-      this.walletAddress,
-      (data: { isSnapshot: boolean; fills: WsUserFill[] }) => {
-        if (!this.started) return;
-        try {
-          callbacks.onFill(data.fills, data.isSnapshot);
-        } catch (err) {
-          log.error({ action: "onFill", err }, "Callback error in fill handler");
-        }
-      },
-    );
+      await this.sdk.subscriptions.subscribeToUserFills(
+        this.walletAddress,
+        (data: { isSnapshot: boolean; fills: WsUserFill[] }) => {
+          if (!this.started) return;
+          try {
+            callbacks.onFill(data.fills, data.isSnapshot);
+          } catch (err) {
+            log.error({ action: "onFill", err }, "Callback error in fill handler");
+          }
+        },
+      );
+      log.info({ action: "subscribed", channel: "userFills" }, "Subscribed to user fills");
+    } catch (err) {
+      log.error({ action: "subscriptionFailed", err }, "Failed to subscribe to HL events");
+      throw err;
+    }
   }
 
   stop(): void {

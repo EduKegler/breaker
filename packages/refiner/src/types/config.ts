@@ -19,7 +19,7 @@ export const CriteriaSchema = AssetClassCriteriaSchema.extend({
   minTradesForFilter: z.number().int().min(0).optional(),
 });
 
-export const CoreParameterDefSchema = z.object({
+const CoreParameterDefSchema = z.object({
   name: z.string().min(1),
   min: z.number(),
   max: z.number(),

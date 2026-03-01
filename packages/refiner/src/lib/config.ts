@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { BreakerConfigSchema } from "../types/config.js";
 import type { BreakerConfig, ResolvedCriteria, StrategyDateRange } from "../types/config.js";
 
-export interface ResolvedConfig {
+interface ResolvedConfig {
   config: BreakerConfig;
   criteria: ResolvedCriteria;
   dataConfig: {

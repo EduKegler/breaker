@@ -349,7 +349,9 @@ async function main() {
   logger.info("Running startup reconciliation...");
   const startupResult = await reconciler.check();
   if (startupResult.actions.length > 0) {
-    logger.info({ actions: startupResult.actions }, "Startup corrections applied");
+    logger.info({ actions: startupResult.actions, drifts: startupResult.drifts.length }, "Startup corrections applied");
+  } else {
+    logger.info({ drifts: startupResult.drifts.length }, "Startup reconciliation: no corrections needed");
   }
 
   // Warmup all runners in parallel (each fetches from independent APIs)

@@ -32,15 +32,9 @@ src/
 ├── lib/
 │   ├── load-env.ts      # Zod + parseEnv (HL_ACCOUNT_ADDRESS, HL_PRIVATE_KEY)
 │   ├── logger.ts        # pino + pino-roll (single `logger` export with .createChild/.setLogConfig)
-│   ├── truncate-size.ts # truncateSize (exchange precision)
-│   ├── truncate-price.ts # truncatePrice (5 sig figs)
-│   ├── finite-or-throw.ts # Guard: throws on NaN/Infinity
-│   ├── finite-or.ts     # Guard: fallback on NaN/Infinity
-│   ├── assert-positive.ts # Guard: throws on non-positive
-│   ├── is-sane-price.ts # Safety range check for prices
-│   ├── is-sane-size.ts  # Safety range check for sizes
-│   ├── is-sane-equity.ts # Safety range check for equity
 │   └── ws-broker.ts     # WebSocket event broadcast
+│   # Guards & truncators extracted to @breaker/kit:
+│   # finiteOr, finiteOrThrow, assertPositive, isSane*, truncateSize, truncatePrice
 ├── types/
 │   ├── config.ts        # ExchangeConfig Zod schema
 │   ├── events.ts        # Event types for NDJSON log

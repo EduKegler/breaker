@@ -40,6 +40,7 @@ export class ReconcileLoop {
 
   async check(): Promise<ReconcileResult> {
     const { hlClient, positionBook, eventLog, store, walletAddress } = this.deps;
+    const t0 = performance.now();
     const actions: string[] = [];
 
     // 1. Fetch positions and open orders from HL
@@ -76,7 +77,16 @@ export class ReconcileLoop {
           signalId: -1,
         });
         actions.push(`position_hydrated:${coin}`);
-        log.info({ action: "positionHydrated", coin, direction: hlPos.direction, size: hlPos.size }, "Position hydrated from HL");
+        log.info({
+          action: "positionHydrated",
+          coin,
+          direction: hlPos.direction,
+          size: hlPos.size,
+          entryPrice: hlPos.entryPrice,
+          stopLoss: recovered.stopLoss,
+          takeProfits: recovered.takeProfits.length,
+          trailingStopLoss: recovered.trailingStopLoss,
+        }, "Position hydrated from HL");
       }
     }
 
@@ -106,6 +116,15 @@ export class ReconcileLoop {
           positionBook.updateTakeProfits(coin, recovered.takeProfits);
         }
         positionBook.updateTrailingStopLoss(coin, recovered.trailingStopLoss);
+        if (recovered.stopLoss > 0 || recovered.takeProfits.length > 0 || recovered.trailingStopLoss !== null) {
+          log.info({
+            action: "slTpRecovered",
+            coin,
+            stopLoss: recovered.stopLoss,
+            takeProfits: recovered.takeProfits.length,
+            trailingStopLoss: recovered.trailingStopLoss,
+          }, "SL/TP recovered from HL open orders");
+        }
       }
 
       if (
@@ -181,6 +200,13 @@ export class ReconcileLoop {
       orders: store.getRecentOrders(100),
       equity,
     });
+
+    log.info({
+      action: "reconcileComplete",
+      drifts: result.drifts.length,
+      actions: actions.length,
+      latencyMs: Math.round(performance.now() - t0),
+    }, "Reconciliation cycle complete");
 
     return {
       ...result,

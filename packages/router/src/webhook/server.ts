@@ -255,7 +255,15 @@ async function handleWebhook(req: express.Request, res: express.Response): Promi
     logger.info({ alert_id: typedAlert.alert_id, trades_today: dailyLimit.getStatus().count }, "WhatsApp sent");
     res.json({ status: "sent", alert_id: typedAlert.alert_id });
   } catch (err) {
-    logger.error({ alert_id: typedAlert.alert_id, error: (err as Error).message }, "WhatsApp send failed after retry");
+    const re = err as Error & { response?: { statusCode?: number; body?: unknown }; code?: string; options?: { url?: { toString(): string }; method?: string } };
+    logger.error({
+      alert_id: typedAlert.alert_id,
+      error: re.message,
+      endpoint: re.options?.url?.toString(),
+      statusCode: re.response?.statusCode,
+      responseBody: typeof re.response?.body === "string" ? re.response.body.slice(0, 200) : undefined,
+      errorCode: re.code,
+    }, "WhatsApp send failed after retry");
     res.status(502).json({
       status: "send_failed",
       alert_id: typedAlert.alert_id,
@@ -306,7 +314,14 @@ async function handleSend(req: express.Request, res: express.Response): Promise<
     logger.info({ text_length: text.length }, "Message proxied");
     res.json({ status: "sent" });
   } catch (err) {
-    logger.error({ error: (err as Error).message }, "Send proxy failed");
+    const re = err as Error & { response?: { statusCode?: number; body?: unknown }; code?: string; options?: { url?: { toString(): string } } };
+    logger.error({
+      error: re.message,
+      endpoint: re.options?.url?.toString(),
+      statusCode: re.response?.statusCode,
+      responseBody: typeof re.response?.body === "string" ? re.response.body.slice(0, 200) : undefined,
+      errorCode: re.code,
+    }, "Send proxy failed");
     res.status(502).json({ status: "send_failed" });
   }
 }

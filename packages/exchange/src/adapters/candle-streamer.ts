@@ -165,7 +165,14 @@ export class CandleStreamer extends EventEmitter {
           BASE_RECONNECT_DELAY_MS * 2 ** (this.reconnectAttempt - 1),
           MAX_RECONNECT_DELAY_MS,
         );
-        log.error({ err, coin, delay, attempt: this.reconnectAttempt }, "WS stream error, reconnecting");
+        const errMsg = (err as Error).message ?? "";
+        const errCode = (err as Error & { code?: string }).code;
+        const errorCategory =
+          errCode === "ETIMEDOUT" || errCode === "ESOCKETTIMEDOUT" ? "timeout" :
+          errCode === "ECONNREFUSED" || errCode === "ECONNRESET" || errCode === "ENOTFOUND" ? "connection" :
+          errMsg.includes("WebSocket") || errMsg.includes("socket hang up") ? "websocket" :
+          "unknown";
+        log.error({ err, coin, delay, attempt: this.reconnectAttempt, errorCategory, errorCode: errCode }, "WS stream error, reconnecting");
         await new Promise((r) => setTimeout(r, delay));
       }
     }

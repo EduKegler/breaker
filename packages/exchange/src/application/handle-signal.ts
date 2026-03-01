@@ -8,9 +8,8 @@ import type { EventLog } from "../adapters/event-log.js";
 import type { AlertsClient } from "../types/alerts-client.js";
 import type { PositionBook } from "../domain/position-book.js";
 import { randomUUID } from "node:crypto";
+import { truncateSize, truncatePrice } from "@breaker/kit";
 import { logger } from "../lib/logger.js";
-import { truncateSize } from "../lib/truncate-size.js";
-import { truncatePrice } from "../lib/truncate-price.js";
 
 const log = logger.createChild("signalHandler");
 
@@ -97,6 +96,7 @@ async function handleSignalInner(
 ): Promise<HandleSignalResult> {
   const { signal, currentPrice, source, coin, leverage } = input;
   const { config, hlClient, store, eventLog, alertsClient, positionBook } = deps;
+  const t0 = performance.now();
 
   // Convert signal to order intent, then truncate to exchange precision.
   // This ensures values stored in positionBook/SQLite match what the exchange receives.
@@ -187,6 +187,7 @@ async function handleSignalInner(
       size: intent.size,
       entryPrice: intent.entryPrice,
       err: entryErr,
+      latencyMs: Math.round(performance.now() - t0),
     }, "Entry order failed (e.g. insufficient margin)");
 
     await eventLog.append({
@@ -409,6 +410,14 @@ async function handleSignalInner(
   }
 
   deps.onSignalProcessed?.();
+
+  log.info({
+    action: "handleSignalComplete",
+    signalId, coin,
+    direction: intent.direction,
+    size: actualSize,
+    latencyMs: Math.round(performance.now() - t0),
+  }, "Signal flow completed");
 
   return { success: true, signalId, intent };
 }
