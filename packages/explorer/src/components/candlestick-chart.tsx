@@ -15,23 +15,13 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { CandleData, SignalRow, LivePosition, ReplaySignal } from "../types/api.js";
-
-/** SQLite datetime('now') returns UTC without 'Z' — append it so JS parses as UTC */
-function parseUtc(dt: string): Date {
-  return new Date(dt.endsWith("Z") ? dt : dt + "Z");
-}
-
-const STRATEGY_ABBREVIATIONS: Record<string, string> = {
-  "donchian-adx": "B",
-  "keltner-rsi2": "MR",
-  "manual": "M",
-};
+import { strategyAbbr } from "../lib/strategy-abbreviations.js";
+import { parseUtc } from "../lib/parse-utc.js";
 
 function strategyLabel(direction: "long" | "short", strategyName: string | null | undefined): string {
   const dir = direction === "long" ? "L" : "S";
   if (!strategyName) return dir;
-  const abbr = STRATEGY_ABBREVIATIONS[strategyName] ?? strategyName.slice(0, 2).toUpperCase();
-  return `${dir}(${abbr})`;
+  return `${dir}(${strategyAbbr(strategyName)})`;
 }
 
 interface CandlestickChartProps {

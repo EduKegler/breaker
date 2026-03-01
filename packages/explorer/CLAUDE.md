@@ -7,18 +7,19 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 ```
 ├── src/
 │   ├── main.tsx            # React root
-│   ├── app.tsx             # App shell with nav (Dashboard/Orders/Equity)
-│   ├── pages/
-│   │   ├── dashboard.tsx   # Positions + equity + status bar
-│   │   ├── orders.tsx      # Order history table
-│   │   └── equity.tsx      # Full equity chart
+│   ├── app.tsx             # App shell: per-coin state, WS routing, chart filtering
 │   ├── components/
-│   │   ├── position-card.tsx  # Position card with PnL
-│   │   ├── order-table.tsx    # Sortable order table
-│   │   └── equity-chart.tsx   # recharts line chart
+│   │   ├── candlestick-chart.tsx   # lightweight-charts v5.1 candlestick + markers
+│   │   ├── coin-chart-toolbar.tsx  # Coin tabs + strategy toggles above chart
+│   │   ├── position-card.tsx       # Position card with PnL
+│   │   ├── order-table.tsx         # Sortable order table
+│   │   ├── signal-popover.tsx      # Quick signal popover (multi-coin)
+│   │   └── ...
 │   ├── lib/
-│   │   ├── api.ts          # Fetch wrapper for exchange APIs
-│   │   └── use-poll.ts     # Generic polling hook
+│   │   ├── api.ts                  # Fetch wrapper for exchange APIs
+│   │   ├── strategy-abbreviations.ts # [B], [MR], [PB] abbreviation map
+│   │   ├── parse-utc.ts            # UTC date parser for SQLite datetimes
+│   │   └── ...
 │   └── index.css           # Tailwind imports
 ├── index.html              # SPA entry
 ├── vite.config.ts          # Vite + React plugin + proxy to :3200
@@ -36,8 +37,11 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 ## Data flow
 - Hybrid HTTP+WS model: initial HTTP fetch + WebSocket push updates
 - Vite dev proxy: `/api/*` → `http://localhost:3200/*`, `/ws` with `ws: true`
-- Exchange endpoints: /health, /positions, /orders, /equity, /config, /open-orders
-- WS events: "candle" appends new candle, "signals" replaces signals array
+- Exchange endpoints: /health, /positions, /orders, /equity, /config, /open-orders, /candles, /signals, /strategy-signals
+- WS events: "candle" (routed by `coin`), "prices" (routed by `coin`), "signals" replaces signals array
+- **Per-coin state**: `coinCandles`, `coinReplaySignals`, `coinPrices` keyed by coin name
+- `selectedCoinRef` (useRef) prevents stale closures in WS handlers
+- Derived data (`filteredSignals`, `filteredReplaySignals`, `coinPositions`) computed via `useMemo`
 
 ## Build and test
 - `pnpm dev` — Vite dev server on port 5173
@@ -48,6 +52,8 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 - useWebSocket hook with auto-reconnect (3s), WS status indicator in header
 - "Tactical Terminal" dark aesthetic: terminal-bg (#0a0a0f), noise overlay via SVG feTurbulence
 - Entry markers: blue (auto) / yellow (manual), "L"/"S" text, size 1
+- Strategy abbreviations: `[B]` donchian-adx, `[MR]` keltner-rsi2, `[PB]` ema-pullback, `[M]` manual — centralized in `strategy-abbreviations.ts`
+- `key={selectedCoin}` on CandlestickChart forces re-mount on coin switch (avoids stale canvas)
 - API interfaces in `src/types/api.ts`; `src/lib/api.ts` exports the `api` object
 - `ToastProvider` in `lib/toast-provider.tsx`; `useToasts` hook in `lib/use-toasts.ts`
 - No backend server needed — Vite proxy handles API routing in dev

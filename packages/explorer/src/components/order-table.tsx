@@ -1,9 +1,6 @@
 import type { OrderRow } from "../types/api.js";
-
-/** SQLite datetime('now') returns UTC without 'Z' — append it so JS parses as UTC */
-function parseUtc(dt: string): Date {
-  return new Date(dt.endsWith("Z") ? dt : dt + "Z");
-}
+import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
+import { parseUtc } from "../lib/parse-utc.js";
 
 const statusDot: Record<string, string> = {
   filled: "bg-profit",
@@ -91,7 +88,7 @@ export function OrderTable({ orders }: { orders: OrderRow[] }) {
                   </span>
                 </span>
               </td>
-              <td className="py-1.5 pr-3 text-txt-secondary">{o.strategy_name ?? "—"}</td>
+              <td className="py-1.5 pr-3 text-txt-secondary">{o.strategy_name ? strategyDisplayName(o.strategy_name) : "—"}</td>
               <td className="py-1.5 text-txt-secondary">{o.mode}</td>
             </tr>
           ))}

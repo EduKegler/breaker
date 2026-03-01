@@ -67,18 +67,21 @@ export const api = {
   equity: () => fetchJson<{ snapshots: EquitySnapshot[] }>("/equity"),
   openOrders: () => fetchJson<{ orders: OpenOrder[] }>("/open-orders"),
   config: () => fetchJson<ConfigResponse>("/config"),
-  candles: (before?: number, limit?: number) => {
+  candles: (opts?: { coin?: string; before?: number; limit?: number }) => {
     const params = new URLSearchParams();
-    if (before) params.set("before", String(before));
-    if (limit) params.set("limit", String(limit));
+    if (opts?.coin) params.set("coin", opts.coin);
+    if (opts?.before) params.set("before", String(opts.before));
+    if (opts?.limit) params.set("limit", String(opts.limit));
     const qs = params.toString();
     return fetchJson<{ candles: CandleData[] }>(`/candles${qs ? `?${qs}` : ""}`);
   },
   signals: () => fetchJson<{ signals: SignalRow[] }>("/signals"),
-  strategySignals: (before?: number, limit?: number) => {
+  strategySignals: (opts?: { coin?: string; strategy?: string; before?: number; limit?: number }) => {
     const params = new URLSearchParams();
-    if (before) params.set("before", String(before));
-    if (limit) params.set("limit", String(limit));
+    if (opts?.coin) params.set("coin", opts.coin);
+    if (opts?.strategy) params.set("strategy", opts.strategy);
+    if (opts?.before) params.set("before", String(opts.before));
+    if (opts?.limit) params.set("limit", String(opts.limit));
     const qs = params.toString();
     return fetchJson<{ signals: ReplaySignal[] }>(`/strategy-signals${qs ? `?${qs}` : ""}`);
   },

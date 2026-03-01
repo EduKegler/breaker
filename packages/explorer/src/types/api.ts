@@ -3,6 +3,8 @@ export interface HealthResponse {
   mode: string;
   asset: string;
   strategy: string;
+  coins?: string[];
+  streamers?: string[];
   uptime: number;
 }
 
@@ -103,6 +105,7 @@ export interface AccountResponse {
 }
 
 export interface PricesEvent {
+  coin?: string;
   dataSourcePrice: number | null;
   hlMidPrice: number | null;
   trailingExitLevel: number | null;

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "../lib/api.js";
 import type { CoinConfig } from "../types/api.js";
+import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
 
 interface SignalPopoverProps {
   coins: CoinConfig[];
@@ -144,7 +145,7 @@ export function SignalPopover({ coins, onClose, onSuccess }: SignalPopoverProps)
                 }}
                 onClick={() => setStrategy(s)}
               >
-                {s}
+                {strategyDisplayName(s)}
               </button>
             ))}
           </div>
@@ -189,7 +190,7 @@ export function SignalPopover({ coins, onClose, onSuccess }: SignalPopoverProps)
             border: "1px solid rgba(255,255,255,0.03)",
           }}
         >
-          Entry market &middot; SL via ATR &middot; <span className="text-txt-primary/70">{strategy}</span>
+          Entry market &middot; SL via ATR &middot; <span className="text-txt-primary/70">{strategyDisplayName(strategy)}</span>
         </div>
 
         {/* Send button */}
