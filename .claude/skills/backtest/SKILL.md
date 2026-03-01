@@ -1,49 +1,56 @@
 ---
 name: backtest
-description: Run a backtest via breaker-loop. Use when the user says "backtest", "run backtest", "test the strategy", "breaker-loop", "optimize", "roda backtest", "testa a estrategia", "otimiza", or wants to run the strategy optimization loop.
-argument-hint: "[ASSET] [MAX_ITER]"
+description: Run the strategy optimization loop via breaker-loop. Use when the user says "backtest", "run backtest", "breaker-loop", "optimize", "roda backtest", "testa a estrategia", "otimiza", or wants to run the optimization loop.
+argument-hint: "[--asset=BTC] [--strategy=breakout] [--max-iter=20]"
 disable-model-invocation: true
 allowed-tools: "Bash, Read"
 ---
 
-# Run Backtest (B.R.E.A.K.E.R.)
+# Run B.R.E.A.K.E.R. Optimization Loop
 
-Run the strategy optimization loop for a given asset.
+Run the strategy optimization loop using the refiner package.
 
 ## Steps
 
 ### 1. Parse arguments
 
-- `$ARGUMENTS[0]` or `$0`: Asset name (BTC, ETH, SOL). If not provided, ask the user.
-- `$ARGUMENTS[1]` or `$1`: Max iterations (default: 5). Optional.
+Extract from `$ARGUMENTS`:
+- `--asset`: Coin name (BTC, ETH, SOL). If not provided, ask the user.
+- `--strategy`: Strategy category (breakout, mean-reversion). If not provided, ask the user.
+- `--max-iter`: Max iterations (default: 20). Optional.
 
 ### 2. Verify prerequisites
 
-Check that the strategy file exists:
+Check that backtest package builds:
 ```bash
-ls /Users/edu/Projects/pine/assets/{ASSET}/strategy.pine
+cd /Users/edu/Projects/trading && pnpm --filter @breaker/backtest build
 ```
 
-Check that Playwright auth exists:
+Check breaker-loop.sh exists:
 ```bash
-ls /Users/edu/Projects/pine/playwright/.auth/
+ls /Users/edu/Projects/trading/packages/refiner/breaker-loop.sh
 ```
 
-If auth is missing, suggest running `pnpm run login` first.
+### 3. Run the optimization loop
 
-### 3. Run breaker-loop
-
+**Option A** — Via shell script:
 ```bash
-cd /Users/edu/Projects/pine && ASSET={ASSET} MAX_ITER={MAX_ITER} ./breaker-loop.sh
+cd /Users/edu/Projects/trading/packages/refiner && ASSET={ASSET} STRATEGY={STRATEGY} MAX_ITER={MAX_ITER} ./breaker-loop.sh
+```
+
+**Option B** — Via node directly:
+```bash
+cd /Users/edu/Projects/trading && pnpm --filter @breaker/refiner start -- --asset={ASSET} --strategy={STRATEGY} --max-iter={MAX_ITER}
 ```
 
 This will take several minutes per iteration. Let the user know it's running.
 
 ### 4. Report results
 
-After completion, read the latest results:
+After completion, read the latest checkpoint:
 ```bash
-cat /Users/edu/Projects/pine/assets/{ASSET}/checkpoints/best-metrics.json
+ls -lt /Users/edu/Projects/trading/packages/refiner/assets/{ASSET}/*/{STRATEGY}/checkpoints/ | head -5
 ```
 
-Show: PnL, Profit Factor, Drawdown, Win Rate, Avg R, Trades. Compare against gates (from breaker-config.json).
+Read the latest metrics file and show: PnL, Profit Factor, Drawdown, Win Rate, Avg R, Trades.
+Compare against criteria gates in `packages/refiner/breaker-config.json`.

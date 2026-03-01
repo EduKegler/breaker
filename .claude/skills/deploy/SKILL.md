@@ -1,21 +1,21 @@
 ---
 name: deploy
-description: Deploy the application to VPS. Use when the user says "deploy", "push to VPS", "publish", "deploy to production", "manda pra VPS", "publica", "sobe pra producao", or wants to deploy to tv.kegler.dev.
-argument-hint: "[--skip-tests]"
+description: Build, test, and deploy the monorepo. Use when the user says "deploy", "push to VPS", "publish", "manda pra VPS", "publica", "sobe pra producao", or wants to deploy.
+argument-hint: "[--skip-tests] [--filter=package]"
 disable-model-invocation: true
 allowed-tools: "Bash, Read"
 ---
 
-# Deploy to VPS
+# Deploy B.R.E.A.K.E.R. Monorepo
 
-Deploy the B.R.E.A.K.E.R. server to tv.kegler.dev via deploy.sh.
+Build, test, and deploy the monorepo packages.
 
 ## Steps
 
-### 1. Build TypeScript
+### 1. Build all packages
 
 ```bash
-cd /Users/edu/Projects/pine && pnpm run build
+cd /Users/edu/Projects/trading && pnpm build
 ```
 
 If build fails, show the errors and STOP. Do not deploy broken code.
@@ -25,26 +25,30 @@ If build fails, show the errors and STOP. Do not deploy broken code.
 If `$ARGUMENTS` contains `--skip-tests`, skip this step.
 
 ```bash
-cd /Users/edu/Projects/pine && pnpm test
+cd /Users/edu/Projects/trading && pnpm test
 ```
 
-If tests fail, show the failures and STOP. Do not deploy with failing tests.
+If tests fail, show the failures and STOP.
 
-### 3. Deploy to VPS
+### 3. Deploy the exchange daemon
+
+The exchange daemon runs locally. Restart it:
 
 ```bash
-cd /Users/edu/Projects/pine && ./deploy.sh
+cd /Users/edu/Projects/trading && pnpm --filter @breaker/exchange start
 ```
+
+If `$ARGUMENTS` contains `--filter=`, only build/test/deploy the specified package.
 
 ### 4. Health check
 
-Wait 10 seconds, then verify:
+Wait 5 seconds, then verify the daemon is running:
 
 ```bash
-curl -sf https://tv.kegler.dev/health
+curl -sf http://localhost:3200/health
 ```
 
 ### 5. Report result
 
-- If health check returns 200: confirm deploy succeeded
-- If health check fails: show docker logs from VPS and suggest debugging
+- If health check returns 200: confirm deploy succeeded, show mode and uptime
+- If health check fails: check if process is running with `lsof -i :3200` and suggest debugging

@@ -1,41 +1,33 @@
 ---
 name: health
-description: Check VPS health status. Use when the user says "health", "check server", "is it running?", "webhook status", "status da VPS", "ta rodando?", "como ta o webhook", or wants to check if tv.kegler.dev is running.
+description: Quick health check of the exchange daemon. Use when the user says "health", "is it running?", "ta rodando?", "status do daemon", "como ta o webhook", or wants a quick daemon check.
 disable-model-invocation: true
-allowed-tools: "Bash"
+allowed-tools: "Bash, Read"
 ---
 
-# VPS Health Check
+# Daemon Quick Health Check
 
-Check the status of the B.R.E.A.K.E.R. server on tv.kegler.dev.
+Quick check of the local exchange daemon on port 3200.
 
 ## Steps
 
-### 1. Check webhook endpoint
+### 1. Check health endpoint
 
 ```bash
-curl -sf -w "\nHTTP Status: %{http_code}\nResponse Time: %{time_total}s\n" https://tv.kegler.dev/health
+curl -sf -w "\nHTTP Status: %{http_code}\nResponse Time: %{time_total}s\n" http://localhost:3200/health
 ```
 
-### 2. Check recent webhook logs (if accessible)
+### 2. Check process
 
 ```bash
-source /Users/edu/Projects/pine/.deploy.env 2>/dev/null && ssh "$VPS_HOST" "tail -20 /opt/breaker-webhook/infra/logs/$(date -u +%Y-%m-%d).ndjson 2>/dev/null || echo 'No logs for today'"
+lsof -i :3200 2>/dev/null || echo "No process listening on port 3200"
 ```
 
-If SSH fails, skip this step silently.
-
-### 3. Check Docker container status
-
-```bash
-source /Users/edu/Projects/pine/.deploy.env 2>/dev/null && ssh "$VPS_HOST" "cd /opt/breaker-webhook/infra && docker compose ps 2>/dev/null"
-```
-
-If SSH fails, skip this step silently.
-
-### 4. Report
+### 3. Report
 
 Present a summary:
-- Webhook status (UP/DOWN + response time)
-- Last alerts received (from logs, if available)
-- Container status (if available)
+- Daemon status (UP/DOWN + response time)
+- Mode (mainnet/testnet/dry-run)
+- Coins being traded
+- Uptime
+- If DOWN: suggest starting with `cd /Users/edu/Projects/trading && pnpm --filter @breaker/exchange start`
