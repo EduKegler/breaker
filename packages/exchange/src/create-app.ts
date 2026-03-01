@@ -36,6 +36,7 @@ export interface ServerDeps {
   candleCache?: CandleCache;
   strategyFactory: (name: string) => Strategy;
   runners: StrategyRunner[];
+  persistConfig?: () => void;
 }
 
 export function createApp(deps: ServerDeps): express.Express {
@@ -271,6 +272,9 @@ export function createApp(deps: ServerDeps): express.Express {
       if (stratName && runner.getStrategyName() !== stratName) continue;
       runner.setAutoTradingEnabled(enabled);
     }
+
+    // Persist to config file so the value survives daemon restarts
+    deps.persistConfig?.();
 
     res.json({ coin, autoTradingEnabled: enabled });
   });

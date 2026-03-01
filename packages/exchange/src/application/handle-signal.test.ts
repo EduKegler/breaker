@@ -422,6 +422,21 @@ describe("handleSignal", () => {
     expect(deps.positionBook.count()).toBe(0);
   });
 
+  it("logs auto_trading_blocked event when autoTradingEnabled is false", async () => {
+    await handleSignal(
+      createInput({ alertId: "auto-off-log-001", autoTradingEnabled: false, coin: "BTC" }),
+      deps,
+    );
+
+    const calls = (deps.eventLog.append as ReturnType<typeof vi.fn>).mock.calls;
+    const blockedEvent = calls.find((c: unknown[]) => (c[0] as { type: string }).type === "auto_trading_blocked");
+    expect(blockedEvent).toBeDefined();
+    expect(blockedEvent![0]).toEqual(expect.objectContaining({
+      type: "auto_trading_blocked",
+      data: expect.objectContaining({ coin: "BTC", direction: "long", source: "strategy-runner" }),
+    }));
+  });
+
   it("allows api signal when autoTradingEnabled is false", async () => {
     const result = await handleSignal(
       createInput({ source: "api", alertId: "auto-off-api-001", autoTradingEnabled: false }),

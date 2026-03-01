@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hyperliquid } from "hyperliquid";
@@ -32,8 +32,9 @@ import type WebSocket from "ws";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const log = logger.createChild("daemon");
 
+const configPath = join(__dirname, "../exchange-config.json");
+
 function loadConfig(): ExchangeConfig {
-  const configPath = join(__dirname, "../exchange-config.json");
   const raw = JSON.parse(readFileSync(configPath, "utf-8"));
   return ExchangeConfigSchema.parse(raw);
 }
@@ -360,6 +361,9 @@ async function main() {
     candleCache,
     strategyFactory: createStrategy,
     runners,
+    persistConfig: () => {
+      writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+    },
   });
 
   const server = app.listen(config.port, () => {

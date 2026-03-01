@@ -651,6 +651,20 @@ describe("Exchange server", () => {
     expect(mockRunner.setAutoTradingEnabled).toHaveBeenCalledWith(false);
   });
 
+  it("POST /auto-trading calls persistConfig to survive restarts", async () => {
+    const persistConfig = vi.fn();
+    deps.persistConfig = persistConfig;
+    deps.config.coins[0].strategies[0].autoTradingEnabled = false;
+
+    const app = createApp(deps);
+    await request(app)
+      .post("/auto-trading")
+      .send({ coin: "BTC", enabled: true });
+
+    expect(persistConfig).toHaveBeenCalledOnce();
+    expect(deps.config.coins[0].strategies[0].autoTradingEnabled).toBe(true);
+  });
+
   it("POST /auto-trading rejects invalid payload", async () => {
     const app = createApp(deps);
     const res = await request(app)

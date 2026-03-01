@@ -56,7 +56,12 @@ export async function handleSignal(
 
   // Auto-trading kill switch: block strategy-runner entries when disabled
   if (source === "strategy-runner" && !autoTradingEnabled) {
-    log.info({ action: "autoTradingDisabled", alertId }, "Auto-trading disabled — signal ignored");
+    log.info({ action: "autoTradingDisabled", alertId, coin }, "Auto-trading disabled — signal ignored");
+    await eventLog.append({
+      type: "auto_trading_blocked",
+      timestamp: new Date().toISOString(),
+      data: { alertId, coin, direction: signal.direction, source },
+    });
     return { success: false, signalId: -1, reason: "Auto-trading disabled" };
   }
 
