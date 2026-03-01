@@ -148,6 +148,14 @@ export class StrategyRunner {
 
     const higherTimeframes = this.buildHigherTimeframes(candles);
 
+    // Refresh strategy indicator caches with current candle data.
+    // init() pre-computes indicator arrays (EMA, RSI, ATR, etc.) sized to the
+    // warmup candle set. As new candles arrive, their indices fall beyond the
+    // cached arrays, causing onCandle()/shouldExit() to read undefined values
+    // and silently return null. Re-calling init() extends the caches to cover
+    // the full candle buffer (cost: ~O(N) every interval — negligible at 200 bars).
+    this.deps.strategy.init?.(candles, higherTimeframes);
+
     // Exit takes priority: if we close a position, skip entry check on the same
     // candle to avoid immediate re-entry oscillation from the same bar's signal.
     const pos = this.deps.positionBook.get(this.deps.coin) ?? null;

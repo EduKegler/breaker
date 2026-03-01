@@ -18,6 +18,7 @@ export type EventType =
   | "notification_sent"
   | "notification_failed"
   | "entry_no_fill"
+  | "entry_order_error"
   | "auto_trading_blocked"
   | "error";
 

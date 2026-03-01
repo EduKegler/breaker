@@ -199,20 +199,32 @@ describe("handleSignal", () => {
     expect(onSignalProcessed).toHaveBeenCalledOnce();
   });
 
-  it("returns failure when placeEntryOrder throws (entry)", async () => {
+  it("returns failure and logs entry_order_error when placeEntryOrder throws", async () => {
     (deps.hlClient.placeEntryOrder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error("Insufficient margin"),
     );
 
     const input = createInput({ alertId: "entry-fail-001" });
 
-    await expect(handleSignal(input, deps)).rejects.toThrow("Insufficient margin");
+    const result = await handleSignal(input, deps);
 
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe("Insufficient margin");
     // Position should NOT be opened since entry failed
     expect(deps.positionBook.count()).toBe(0);
     // SL and TP should not be placed
     expect(deps.hlClient.placeStopOrder).not.toHaveBeenCalled();
     expect(deps.hlClient.placeLimitOrder).not.toHaveBeenCalled();
+    // entry_order_error event should be logged with context
+    expect(deps.eventLog.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "entry_order_error",
+        data: expect.objectContaining({
+          coin: "BTC",
+          error: "Insufficient margin",
+        }),
+      }),
+    );
   });
 
   it("rolls back entry when SL placement fails (closes position)", async () => {

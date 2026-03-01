@@ -756,4 +756,162 @@ describe("StrategyRunner", () => {
       expect(runner.getLastCandleAt()).toBe(newCandle.t);
     });
   });
+
+  describe("indicator cache refresh", () => {
+    it("re-inits strategy caches before each onCandle so new candles get valid indicators", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+
+      // Strategy that caches close prices during init; onCandle returns null
+      // if cache doesn't cover the current index (mimics real EMA/RSI caching).
+      let cache: number[] | null = null;
+      const strategy: Strategy = {
+        name: "cache-test",
+        params: {},
+        init: vi.fn((cs: Candle[]) => {
+          cache = cs.map((c) => c.c);
+        }),
+        onCandle: vi.fn((ctx: StrategyContext) => {
+          if (!cache || ctx.index >= cache.length) return null;
+          if (ctx.index === 5) {
+            return {
+              direction: "long" as const,
+              entryPrice: ctx.currentCandle.c,
+              stopLoss: ctx.currentCandle.c - 1000,
+              takeProfits: [],
+              comment: "Cache-dependent signal",
+            };
+          }
+          return null;
+        }),
+        shouldExit: vi.fn().mockReturnValue(null),
+      };
+
+      const deps = createDeps(strategy, streamer);
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      expect(strategy.init).toHaveBeenCalledOnce();
+
+      // New candle at index 5 — beyond the original warmup cache range
+      streamer.addCandle(makeCandle(5));
+      await runner.tick();
+
+      // init must be re-called to extend caches before onCandle evaluation
+      expect(strategy.init).toHaveBeenCalledTimes(2);
+      // Signal should fire because cache now covers index 5
+      expect(deps.positionBook.count()).toBe(1);
+    });
+
+    it("refreshes stale cache when warmup candle closes with different price", async () => {
+      // Simulate: warmup includes in-progress candle with partial close=95240.
+      // Candle then closes at 95300, changing the signal condition.
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+
+      // Strategy signals long only when cached close at index 4 > 95250
+      let cache: number[] | null = null;
+      const strategy: Strategy = {
+        name: "stale-cache-test",
+        params: {},
+        init: vi.fn((cs: Candle[]) => {
+          cache = cs.map((c) => c.c);
+        }),
+        onCandle: vi.fn((ctx: StrategyContext) => {
+          if (!cache || ctx.index >= cache.length) return null;
+          // Signal fires only when the cached close exceeds threshold
+          if (cache[ctx.index] > 95250) {
+            return {
+              direction: "long" as const,
+              entryPrice: ctx.currentCandle.c,
+              stopLoss: ctx.currentCandle.c - 1000,
+              takeProfits: [],
+              comment: "Stale-cache signal",
+            };
+          }
+          return null;
+        }),
+        shouldExit: vi.fn().mockReturnValue(null),
+      };
+
+      const streamer = createMockStreamer(candles);
+      const deps = createDeps(strategy, streamer);
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // Warmup cached candle[4].c = 95240 (below threshold). Now simulate
+      // the candle closing with a higher price — streamer updates in place.
+      candles[4] = { ...candles[4], c: 95300 };
+
+      // tick() won't fire because lastCandleAt === candles[4].t; use a new candle.
+      streamer.addCandle(makeCandle(5));
+      // Adjust: strategy should signal on bar 5 using refreshed cache at bar 5.
+      // With the re-init, cache[5] = makeCandle(5).c = 95250 — still at boundary,
+      // but the updated candle[4].c = 95300 is now in the cache too.
+      // Let's make the strategy signal on index 4 being > 95250 evaluated at index 5:
+      vi.mocked(strategy.onCandle).mockImplementation((ctx: StrategyContext) => {
+        if (!cache || cache.length <= 4) return null;
+        // Use the refreshed cache value at index 4 (was 95240, now 95300)
+        if (cache[4] > 95250 && ctx.index === 5) {
+          return {
+            direction: "long" as const,
+            entryPrice: ctx.currentCandle.c,
+            stopLoss: ctx.currentCandle.c - 1000,
+            takeProfits: [],
+            comment: "Refreshed-cache signal",
+          };
+        }
+        return null;
+      });
+
+      await runner.tick();
+
+      // Without re-init, cache[4] would still be 95240 (no signal).
+      // With re-init, cache[4] is 95300 (signal fires).
+      expect(deps.positionBook.count()).toBe(1);
+    });
+
+    it("re-inits before shouldExit so exit checks use fresh indicators", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+
+      let initCount = 0;
+      const strategy: Strategy = {
+        name: "exit-cache-test",
+        params: {},
+        init: vi.fn(() => { initCount++; }),
+        onCandle: vi.fn().mockReturnValue(null),
+        shouldExit: vi.fn().mockReturnValue(null),
+      };
+
+      const deps = createDeps(strategy, streamer);
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // Open position so shouldExit path runs
+      streamer.addCandle(makeCandle(5));
+      await runner.tick(); // no signal, no position
+
+      // Manually open a position to trigger shouldExit path
+      deps.positionBook.open({
+        coin: "BTC",
+        direction: "long",
+        entryPrice: 95000,
+        size: 0.01,
+        stopLoss: 94000,
+        takeProfits: [],
+        liquidationPx: null,
+        trailingStopLoss: null,
+        leverage: 5,
+        openedAt: new Date().toISOString(),
+        signalId: 1,
+      });
+
+      const initCountBefore = initCount;
+      streamer.addCandle(makeCandle(6));
+      await runner.tick();
+
+      // init must have been called again for the exit evaluation
+      expect(initCount).toBeGreaterThan(initCountBefore);
+    });
+  });
 });

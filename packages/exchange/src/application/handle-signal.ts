@@ -169,13 +169,42 @@ async function handleSignalInner(
   );
 
   // Place entry limit IOC order (controlled slippage)
-  const entryResult = await hlClient.placeEntryOrder(
-    coin,
-    intent.side === "buy",
-    intent.size,
-    currentPrice,
-    config.entrySlippageBps,
-  );
+  let entryResult: Awaited<ReturnType<typeof hlClient.placeEntryOrder>>;
+  try {
+    entryResult = await hlClient.placeEntryOrder(
+      coin,
+      intent.side === "buy",
+      intent.size,
+      currentPrice,
+      config.entrySlippageBps,
+    );
+  } catch (entryErr) {
+    log.error({
+      action: "entryOrderError",
+      signalId,
+      coin,
+      direction: intent.direction,
+      size: intent.size,
+      entryPrice: intent.entryPrice,
+      err: entryErr,
+    }, "Entry order failed (e.g. insufficient margin)");
+
+    await eventLog.append({
+      type: "entry_order_error",
+      timestamp: new Date().toISOString(),
+      data: {
+        signalId,
+        alertId,
+        coin,
+        direction: intent.direction,
+        size: intent.size,
+        entryPrice: intent.entryPrice,
+        error: (entryErr as Error).message,
+      },
+    });
+
+    return { success: false, signalId, reason: (entryErr as Error).message, intent };
+  }
 
   // Determine actual filled size (truncate to exchange precision)
   const actualSize = truncateSize(entryResult.filledSize, szDecimals);
