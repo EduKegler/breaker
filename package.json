@@ -12,6 +12,7 @@
     "router": "pnpm --filter @breaker/router start",
     "alerts": "pnpm --filter @breaker/alerts start",
     "dashboard": "pnpm --filter @breaker/refiner dashboard:open",
-    "validate": "pnpm build && pnpm test && pnpm typecheck"
+    "validate": "pnpm build && pnpm test && pnpm typecheck",
+    "promote": "pnpm --filter @breaker/backtest promote"
   }
 }

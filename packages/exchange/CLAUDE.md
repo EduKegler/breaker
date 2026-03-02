@@ -88,5 +88,6 @@ src/
 
 ## Integration points
 - **@breaker/backtest**: Strategy, Signal, fetchCandles, buildContext, canTrade
+- **@breaker/backtest/deployed**: Strategy factories (createDonchianAdx, etc.) — daemon uses frozen copies, NOT live source
 - **@breaker/alerts**: WhatsApp via gatewayUrl/send
 - **Hyperliquid**: SDK `hyperliquid` npm (testnet/mainnet)

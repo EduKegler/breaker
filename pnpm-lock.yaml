@@ -50,9 +50,15 @@ importers:
       ccxt:
         specifier: ^4.4.0
         version: 4.5.40
+      execa:
+        specifier: ^9.6.1
+        version: 9.6.1
       trading-signals:
         specifier: ^7.4.3
         version: 7.4.3
+      write-file-atomic:
+        specifier: ^7.0.0
+        version: 7.0.0
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -63,6 +69,9 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.12
+      '@types/write-file-atomic':
+        specifier: ^4.0.3
+        version: 4.0.3
       '@vitest/coverage-v8':
         specifier: ^3.2.4
         version: 3.2.4(vitest@3.2.4(@types/node@22.19.12)(jiti@1.21.7)(tsx@4.21.0))

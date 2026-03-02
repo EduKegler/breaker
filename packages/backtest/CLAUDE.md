@@ -35,8 +35,17 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - `fetchCandles` tests inject mock CCXT exchange via `_exchange` option (no module mocking)
 - `computeMinWarmupBars(strategy, sourceInterval)` converts `requiredWarmup` to source bars with 20% margin for HTF bucket alignment; used by exchange StrategyRunner for auto-correction
 
+## Deployed strategies (daemon isolation)
+- `src/strategies/deployed/` — frozen copies of strategies used by the exchange daemon
+- Daemon imports from `@breaker/backtest/deployed` (sub-path export), NOT from root
+- `pnpm promote <name>` or `pnpm promote --all` copies source → deployed/ with import rewriting (`../` → `../../`)
+- `pnpm promote <name> --from-checkpoint <path>` promotes from a refiner checkpoint
+- After promote, run `pnpm build` to compile and restart daemon
+- The refiner can freely modify `src/strategies/*.ts` without affecting the running daemon
+
 ## Build and test
 - `pnpm build` — compile TypeScript
 - `pnpm test` — run all tests
 - `pnpm typecheck` — type-check without emitting
+- `pnpm promote` — promote strategies to deployed/
 - Every src file has a matching test file (TDD-first)
