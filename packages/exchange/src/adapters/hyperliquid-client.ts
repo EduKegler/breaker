@@ -13,6 +13,7 @@ interface OrderResponse {
       statuses: Array<{
         resting?: { oid: number };
         filled?: { oid: number; totalSz: string; avgPx: string };
+        error?: string;
       }>;
     };
   };
@@ -21,6 +22,9 @@ interface OrderResponse {
 function extractOid(result: unknown): string {
   const resp = result as OrderResponse | undefined;
   const status = resp?.response?.data?.statuses?.[0];
+  if (status?.error) {
+    log.warn({ action: "extractOid", error: status.error }, "Exchange rejected order");
+  }
   const oid = status?.filled?.oid ?? status?.resting?.oid;
   return String(oid ?? "unknown");
 }
@@ -28,6 +32,10 @@ function extractOid(result: unknown): string {
 function extractFillInfo(result: unknown): HlEntryResult {
   const resp = result as OrderResponse | undefined;
   const status = resp?.response?.data?.statuses?.[0];
+  if (status?.error) {
+    log.warn({ action: "extractFillInfo", error: status.error }, "Exchange rejected entry order");
+    return { orderId: "unknown", filledSize: 0, avgPrice: 0, status: "placed" };
+  }
   const filled = status?.filled;
   if (!filled) {
     const oid = status?.resting?.oid;
@@ -67,7 +75,9 @@ export class HyperliquidClient implements HlClient {
     return this.szDecimalsCache.get(coin) ?? 5;
   }
 
-  /** Fetch and cache szDecimals for a coin from exchange metadata */
+  /** Fetch and cache szDecimals for a coin from exchange metadata.
+   *  SDK's getMeta() applies symbolConversion (e.g. "SOL" → "SOL-PERP"),
+   *  so we normalize back via fromSymbol() to match our domain naming. */
   async loadSzDecimals(coin: string): Promise<void> {
     if (this.szDecimalsCache.has(coin)) return;
     const t0 = performance.now();
@@ -75,7 +85,7 @@ export class HyperliquidClient implements HlClient {
       const meta = await this.sdk.info.perpetuals.getMeta();
       if (meta?.universe) {
         for (const asset of meta.universe) {
-          this.szDecimalsCache.set(asset.name, asset.szDecimals);
+          this.szDecimalsCache.set(this.fromSymbol(asset.name), asset.szDecimals);
         }
       }
       log.info({ action: "loadSzDecimals", coin, count: this.szDecimalsCache.size, latencyMs: Math.round(performance.now() - t0) }, "Loaded szDecimals from meta");
@@ -117,7 +127,8 @@ export class HyperliquidClient implements HlClient {
     currentPrice: number,
     slippageBps: number,
   ): Promise<HlEntryResult> {
-    const sz = truncateSize(size, this.getSzDecimals(coin));
+    const szDec = this.getSzDecimals(coin);
+    const sz = truncateSize(size, szDec);
     if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
     const slippageMul = isBuy ? 1 + slippageBps / 10000 : 1 - slippageBps / 10000;
     const limitPrice = truncatePrice(currentPrice * slippageMul);
@@ -137,6 +148,7 @@ export class HyperliquidClient implements HlClient {
       isBuy,
       requestedSize: size,
       truncatedSize: sz,
+      szDecimals: szDec,
       limitPrice,
       slippageBps,
       orderId: entry.orderId,

@@ -122,6 +122,24 @@ describe("HyperliquidClient.getSzDecimals", () => {
     expect(client.getSzDecimals("ETH")).toBe(3);
   });
 
+  it("normalizes -PERP suffix from SDK symbolConversion", async () => {
+    const sdk = createMockSdk();
+    // SDK getMeta() applies symbolConversion — names come as "SOL-PERP" instead of "SOL"
+    (sdk.info.perpetuals.getMeta as ReturnType<typeof vi.fn>).mockResolvedValue({
+      universe: [
+        { name: "BTC-PERP", szDecimals: 5 },
+        { name: "SOL-PERP", szDecimals: 2 },
+        { name: "ETH-PERP", szDecimals: 4 },
+      ],
+    });
+    const client = new HyperliquidClient(sdk);
+    await client.loadSzDecimals("BTC");
+    // Domain layer uses plain coin names — cache must normalize
+    expect(client.getSzDecimals("BTC")).toBe(5);
+    expect(client.getSzDecimals("SOL")).toBe(2);
+    expect(client.getSzDecimals("ETH")).toBe(4);
+  });
+
   it("returns 5 for unknown coin after meta loaded", async () => {
     const sdk = createMockSdk();
     (sdk.info.perpetuals.getMeta as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -190,6 +208,21 @@ describe("HyperliquidClient.placeEntryOrder", () => {
     expect(result.filledSize).toBe(0);
     expect(result.avgPrice).toBe(0);
     expect(result.orderId).toBe("44");
+  });
+
+  it("returns zero fill when exchange returns error status", async () => {
+    const sdk = createMockSdk();
+    (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{ error: "Invalid size" }] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    const result = await client.placeEntryOrder("BTC", true, 0.01, 95000, 10);
+
+    expect(result.orderId).toBe("unknown");
+    expect(result.filledSize).toBe(0);
+    expect(result.avgPrice).toBe(0);
   });
 
   it("throws when size too small after truncation", async () => {

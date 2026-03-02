@@ -76,10 +76,11 @@ src/
 - Strategy indicator caches (EMA, RSI, ATR, etc.) are pre-computed by `init()` — the runner re-calls `init()` on every candle close to extend caches for new candles; without this, `onCandle()` reads undefined values beyond the warmup range
 - StrategyRunner auto-corrects `warmupBars` at startup via `computeMinWarmupBars()` — if config value is below strategy's `requiredWarmup`, the runner uses the computed minimum and logs a warning
 - HL `getHistoricalOrders` does NOT include trigger orders (SL/TP) — `resolveHistoricalStatuses()` adds parallel fallback via `getOrderStatus(oid)` for missing OIDs
+- SDK `getMeta()` applies `symbolConversion` by default (e.g. "SOL" → "SOL-PERP") — `loadSzDecimals()` normalizes via `fromSymbol()` so cache keys match domain naming. Without this, `getSzDecimals()` returns 5 (fallback) → wrong truncation → exchange rejects orders
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 355 tests across 20 files
+- `pnpm test` — 359 tests across 20 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points
