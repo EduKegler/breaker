@@ -285,6 +285,17 @@ export class StrategyRunner {
       const closeSide = pos.direction === "long" ? "sell" : "buy";
       await hlClient.placeMarketOrder(this.deps.coin, closeSide === "buy", pos.size);
       this.deps.positionBook.close(this.deps.coin);
+      this.deps.eventLog.append({
+        type: "position_closed",
+        timestamp: new Date().toISOString(),
+        data: {
+          coin: this.deps.coin,
+          direction: pos.direction,
+          entryPrice: pos.entryPrice,
+          pnl: pos.unrealizedPnl,
+          reason: exitSignal.comment ?? "strategy_exit",
+        },
+      }).catch(() => {});
       this.barsSinceExit = 0;
       this.lastExitLevel = null;
       this.trailingSlOid = null;
@@ -363,7 +374,7 @@ export class StrategyRunner {
     try {
       const result = await hlClient.placeStopOrder(
         coin,
-        pos.direction === "long",
+        pos.direction === "short",
         pos.size,
         truncatedLevel,
         true,

@@ -93,7 +93,7 @@ function createDeps(strategy: Strategy, streamer: ReturnType<typeof createMockSt
     strategyConfigName: "donchian-adx",
     streamer: streamer as unknown as StrategyRunnerDeps["streamer"],
     positionBook,
-    eventLog: { append: vi.fn() },
+    eventLog: { append: vi.fn().mockResolvedValue(undefined) },
     signalHandlerDeps: {
       config,
       hlClient: {
@@ -365,6 +365,40 @@ describe("StrategyRunner", () => {
     expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).not.toHaveBeenCalled();
   });
 
+  it("logs position_closed event to NDJSON on strategy exit", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    vi.mocked(strategy.shouldExit!).mockImplementation((ctx: StrategyContext) => {
+      if (ctx.index === 6) return { exit: true, comment: "trailing stop hit" };
+      return null;
+    });
+    const deps = createDeps(strategy, streamer);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Open position
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // Exit position
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    const events = (deps.eventLog.append as ReturnType<typeof vi.fn>).mock.calls;
+    const closeEvent = events.find((c: unknown[]) => (c[0] as { type: string }).type === "position_closed");
+    expect(closeEvent).toBeDefined();
+    expect(closeEvent![0]).toEqual(expect.objectContaining({
+      type: "position_closed",
+      data: expect.objectContaining({
+        coin: "BTC",
+        direction: "long",
+        reason: "trailing stop hit",
+      }),
+    }));
+  });
+
   it("places trailing SL order when level is more protective than fixed SL (long)", async () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);
@@ -404,6 +438,68 @@ describe("StrategyRunner", () => {
     expect(placeStopOrder).toHaveBeenCalledTimes(3);
     expect(deps.signalHandlerDeps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 100);
     expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(94800);
+  });
+
+  it("trailing SL uses isBuy=false for long (sells to close)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    strategy.getExitLevel = vi.fn(() => 94500);
+    const deps = createDeps(strategy, streamer);
+    const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
+    placeStopOrder
+      .mockResolvedValueOnce({ orderId: "HL-SL-FIXED", status: "placed" })
+      .mockResolvedValueOnce({ orderId: "100", status: "placed" });
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    // Trailing SL for LONG must sell (isBuy=false) to close the position
+    const trailingCall = placeStopOrder.mock.calls[1];
+    expect(trailingCall[1]).toBe(false); // isBuy=false → SELL
+  });
+
+  it("trailing SL uses isBuy=true for short (buys to close)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    vi.mocked(strategy.onCandle).mockImplementation((ctx: StrategyContext) => {
+      if (ctx.index === 5) {
+        return {
+          direction: "short",
+          entryPrice: ctx.currentCandle.c,
+          stopLoss: ctx.currentCandle.c + 1000,
+          takeProfits: [{ price: ctx.currentCandle.c - 2000, pctOfPosition: 0.5 }],
+          comment: "Test short",
+        };
+      }
+      return null;
+    });
+    strategy.getExitLevel = vi.fn(() => 96000);
+    const deps = createDeps(strategy, streamer);
+    const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
+    placeStopOrder
+      .mockResolvedValueOnce({ orderId: "HL-SL-FIXED", status: "placed" })
+      .mockResolvedValueOnce({ orderId: "100", status: "placed" });
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    // Trailing SL for SHORT must buy (isBuy=true) to close the position
+    const trailingCall = placeStopOrder.mock.calls[1];
+    expect(trailingCall[1]).toBe(true); // isBuy=true → BUY
   });
 
   it("does not place trailing SL when level <= fixed SL (long)", async () => {

@@ -58,8 +58,9 @@ async function syncPositionsAndBroadcast(deps: {
   store: SqliteStore;
   walletAddress: string;
   wsBroker: WsBroker;
+  eventLog: EventLog;
 }): Promise<void> {
-  const { hlClient, positionBook, store, walletAddress, wsBroker } = deps;
+  const { hlClient, positionBook, store, walletAddress, wsBroker, eventLog } = deps;
   const [hlPositions, openOrders] = await Promise.all([
     hlClient.getPositions(walletAddress),
     hlClient.getOpenOrders(walletAddress),
@@ -71,6 +72,16 @@ async function syncPositionsAndBroadcast(deps: {
     if (!hlCoins.has(local.coin)) {
       positionBook.close(local.coin);
       log.info({ coin: local.coin }, "Position closed (WS event)");
+      eventLog.append({
+        type: "position_closed",
+        timestamp: new Date().toISOString(),
+        data: {
+          coin: local.coin,
+          direction: local.direction,
+          entryPrice: local.entryPrice,
+          reason: "ws_sync",
+        },
+      }).catch(() => {});
     }
   }
   for (const hlPos of hlPositions) {
@@ -193,7 +204,7 @@ async function main() {
   const wsBroker = new WsBroker();
 
   // Shared sync deps
-  const syncDeps = { hlClient, positionBook, store, walletAddress: env.HL_ACCOUNT_ADDRESS, wsBroker };
+  const syncDeps = { hlClient, positionBook, store, walletAddress: env.HL_ACCOUNT_ADDRESS, wsBroker, eventLog };
 
   // Create shared deps
   const signalHandlerDeps: SignalHandlerDeps = {
@@ -441,6 +452,36 @@ async function main() {
         syncPositionsAndBroadcast(syncDeps).catch((err) => {
           log.warn({ action: "syncAfterFill", err }, "syncAndBroadcast failed after fill");
         });
+      },
+
+      onReconnected: () => {
+        syncPositionsAndBroadcast(syncDeps).catch((err) => {
+          log.warn({ action: "syncAfterReconnect", err }, "syncAndBroadcast failed after WS reconnect");
+        });
+        eventLog.append({
+          type: "ws_reconnected",
+          timestamp: new Date().toISOString(),
+          data: {},
+        }).catch(() => {});
+      },
+
+      onDisconnected: (code: number, reason: string) => {
+        eventLog.append({
+          type: "ws_disconnected",
+          timestamp: new Date().toISOString(),
+          data: { code, reason },
+        }).catch(() => {});
+      },
+
+      onMaxReconnectFailed: () => {
+        eventLog.append({
+          type: "ws_max_reconnect_failed",
+          timestamp: new Date().toISOString(),
+          data: {},
+        }).catch(() => {});
+        alertsClient.sendText(
+          `🚨 WebSocket DEAD — max reconnect attempts reached. Daemon is blind (no fills/orders). Manual restart required — ${config.mode}`,
+        ).catch(() => {});
       },
     });
     logger.info("Subscribed to HL order updates and user fills");

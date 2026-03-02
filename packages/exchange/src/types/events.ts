@@ -20,6 +20,9 @@ export type EventType =
   | "entry_no_fill"
   | "entry_order_error"
   | "auto_trading_blocked"
+  | "ws_reconnected"
+  | "ws_disconnected"
+  | "ws_max_reconnect_failed"
   | "error";
 
 export interface ExchangeEvent {

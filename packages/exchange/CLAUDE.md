@@ -72,6 +72,9 @@ src/
 - HL position data does NOT include SL/TP — `recoverSlTp()` extracts them from open orders (trigger→SL, trigger tpsl→TP)
 - Dual SL architecture: fixed SL (never moves) + trailing SL (moves favorably). Both `reduceOnly` trigger orders on HL. If daemon crashes, trailing SL order lives on the exchange. `recoverSlTp(direction)` discriminates fixed vs trailing by price ordering
 - Trailing SL placement uses place-first/cancel-after pattern — guarantees continuous coverage even if cancel fails (briefly 3 orders, all reduceOnly)
+- Trailing SL direction: `isBuy` must be the OPPOSITE of position direction (long→isBuy=false=sell, short→isBuy=true=buy) since trailing SL closes the position
+- HlEventStream hooks into SDK `ws.on('reconnect'|'close'|'maxReconnectAttemptsReached')` — fills during disconnect window are lost (isSnapshot guard skips them), so `onReconnected` triggers REST-based position sync
+- `handle-signal` fetches fresh mid-price from HL before placing IOC entry — stale candle close in fast markets causes limit misses. Falls back to candle close on failure
 - Signal handler has SL failure rollback (compensating transaction) and entry order error handling (`entry_order_error` event with full context)
 - Strategy indicator caches (EMA, RSI, ATR, etc.) are pre-computed by `init()` — the runner re-calls `init()` on every candle close to extend caches for new candles; without this, `onCandle()` reads undefined values beyond the warmup range
 - StrategyRunner auto-corrects `warmupBars` at startup via `computeMinWarmupBars()` — if config value is below strategy's `requiredWarmup`, the runner uses the computed minimum and logs a warning
@@ -80,7 +83,7 @@ src/
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 359 tests across 20 files
+- `pnpm test` — 377 tests across 20 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

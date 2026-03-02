@@ -168,6 +168,21 @@ async function handleSignalInner(
     config.marginType === "cross",
   );
 
+  // Fetch a fresh mid-price from the exchange to replace the potentially stale
+  // candle-close price.  IOC limit orders are sensitive to the reference price:
+  // a 3-second-old candle close in a fast market can already be far enough to
+  // cause the limit to miss.  Falls back to candle close on any failure.
+  let entryPrice = currentPrice;
+  try {
+    const mid = await hlClient.getMidPrice(coin);
+    if (mid !== null) {
+      entryPrice = mid;
+      log.info({ action: "freshMidPrice", coin, mid, candleClose: currentPrice }, "Using fresh mid-price");
+    }
+  } catch (err) {
+    log.warn({ action: "midPriceFailed", coin, err }, "Failed to fetch mid-price, using candle close");
+  }
+
   // Place entry limit IOC order (controlled slippage)
   let entryResult: Awaited<ReturnType<typeof hlClient.placeEntryOrder>>;
   try {
@@ -175,7 +190,7 @@ async function handleSignalInner(
       coin,
       intent.side === "buy",
       intent.size,
-      currentPrice,
+      entryPrice,
       config.entrySlippageBps,
     );
   } catch (entryErr) {

@@ -38,7 +38,7 @@ export const ExchangeConfigSchema = z.object({
   marginType: z.enum(["isolated", "cross"]).default("isolated"),
   guardrails: GuardrailsSchema,
   sizing: SizingSchema,
-  entrySlippageBps: z.number().int().nonnegative().default(10),
+  entrySlippageBps: z.number().int().nonnegative().default(50),
   dryRun: z.boolean().default(false),
   logLevels: z.record(z.string()).default({}),
 });

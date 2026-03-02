@@ -603,6 +603,46 @@ describe("handleSignal", () => {
     await first;
   });
 
+  it("uses fresh mid-price when available", async () => {
+    (deps.hlClient.getMidPrice as ReturnType<typeof vi.fn>).mockResolvedValueOnce(95050);
+
+    const result = await handleSignal(
+      createInput({ alertId: "mid-001", currentPrice: 95000 }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    // placeEntryOrder should receive the fresh mid-price (95050), not candle close (95000)
+    const entryCalls = (deps.hlClient.placeEntryOrder as ReturnType<typeof vi.fn>).mock.calls;
+    expect(entryCalls[0][3]).toBe(95050);
+  });
+
+  it("falls back to candle close when getMidPrice returns null", async () => {
+    (deps.hlClient.getMidPrice as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+
+    const result = await handleSignal(
+      createInput({ alertId: "mid-null-001", currentPrice: 95000 }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    const entryCalls = (deps.hlClient.placeEntryOrder as ReturnType<typeof vi.fn>).mock.calls;
+    expect(entryCalls[0][3]).toBe(95000);
+  });
+
+  it("falls back to candle close when getMidPrice throws", async () => {
+    (deps.hlClient.getMidPrice as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("API down"));
+
+    const result = await handleSignal(
+      createInput({ alertId: "mid-err-001", currentPrice: 95000 }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    const entryCalls = (deps.hlClient.placeEntryOrder as ReturnType<typeof vi.fn>).mock.calls;
+    expect(entryCalls[0][3]).toBe(95000);
+  });
+
   it("allows signals for different coins concurrently", async () => {
     const ethSignal: Signal = {
       direction: "short",

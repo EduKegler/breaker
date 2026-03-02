@@ -32,4 +32,7 @@ export interface WsUserFill {
 export interface HlEventStreamCallbacks {
   onOrderUpdate: (orders: WsOrder[]) => void;
   onFill: (fills: WsUserFill[], isSnapshot: boolean) => void;
+  onReconnected?: () => void;
+  onDisconnected?: (code: number, reason: string) => void;
+  onMaxReconnectFailed?: () => void;
 }

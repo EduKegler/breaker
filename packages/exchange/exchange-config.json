@@ -49,7 +49,7 @@
     "riskPerTradeUsd": 10,
     "cashPerTrade": 100
   },
-  "entrySlippageBps": 10,
+  "entrySlippageBps": 50,
   "dryRun": false,
   "logLevels": {}
 }

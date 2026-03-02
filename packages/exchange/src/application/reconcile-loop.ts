@@ -93,9 +93,20 @@ export class ReconcileLoop {
     // 2b. Local has position, HL doesn't → auto-close
     for (const [coin] of localMap) {
       if (!hlMap.has(coin)) {
+        const closedPos = positionBook.get(coin);
         positionBook.close(coin);
         actions.push(`position_auto_closed:${coin}`);
         log.info({ action: "positionAutoClosed", coin }, "Position auto-closed (not on HL)");
+        eventLog.append({
+          type: "position_closed",
+          timestamp: new Date().toISOString(),
+          data: {
+            coin,
+            direction: closedPos?.direction ?? "unknown",
+            entryPrice: closedPos?.entryPrice ?? 0,
+            reason: "reconcile_auto_close",
+          },
+        }).catch(() => {});
       }
     }
 

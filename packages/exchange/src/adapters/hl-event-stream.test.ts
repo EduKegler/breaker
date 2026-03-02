@@ -3,7 +3,18 @@ import { HlEventStream } from "./hl-event-stream.js";
 import type { WsOrder, WsUserFill } from "../types/hl-event-stream.js";
 
 function createMockSdk() {
+  const wsListeners = new Map<string, Array<(...args: unknown[]) => void>>();
   return {
+    ws: {
+      on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+        const list = wsListeners.get(event) ?? [];
+        list.push(cb);
+        wsListeners.set(event, list);
+      }),
+      emit: (event: string, ...args: unknown[]) => {
+        for (const cb of wsListeners.get(event) ?? []) cb(...args);
+      },
+    },
     subscriptions: {
       subscribeToOrderUpdates: vi.fn().mockResolvedValue(undefined),
       subscribeToUserFills: vi.fn().mockResolvedValue(undefined),
@@ -147,5 +158,146 @@ describe("HlEventStream", () => {
 
     expect(onOrderUpdate).not.toHaveBeenCalled();
     expect(onFill).not.toHaveBeenCalled();
+  });
+
+  it("calls onReconnected when SDK emits reconnect event", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onReconnected = vi.fn();
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn(), onReconnected });
+
+    expect(sdk.ws.on).toHaveBeenCalledWith("reconnect", expect.any(Function));
+
+    // Simulate WS reconnect
+    sdk.ws.emit("reconnect");
+
+    expect(onReconnected).toHaveBeenCalledOnce();
+  });
+
+  it("does not call onReconnected after stop()", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onReconnected = vi.fn();
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn(), onReconnected });
+    stream.stop();
+
+    sdk.ws.emit("reconnect");
+
+    expect(onReconnected).not.toHaveBeenCalled();
+  });
+
+  it("onReconnected error does not crash HlEventStream", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onReconnected = vi.fn().mockImplementation(() => {
+      throw new Error("reconnect callback exploded");
+    });
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn(), onReconnected });
+
+    expect(() => sdk.ws.emit("reconnect")).not.toThrow();
+    expect(onReconnected).toHaveBeenCalledOnce();
+  });
+
+  it("works without onReconnected callback", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn() });
+
+    // Should not throw even though onReconnected is undefined
+    expect(() => sdk.ws.emit("reconnect")).not.toThrow();
+  });
+
+  it("calls onDisconnected when SDK emits close event", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onDisconnected = vi.fn();
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn(), onDisconnected });
+
+    expect(sdk.ws.on).toHaveBeenCalledWith("close", expect.any(Function));
+
+    sdk.ws.emit("close", 1006, "connection lost");
+
+    expect(onDisconnected).toHaveBeenCalledWith(1006, "connection lost");
+  });
+
+  it("does not call onDisconnected after stop()", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onDisconnected = vi.fn();
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn(), onDisconnected });
+    stream.stop();
+
+    sdk.ws.emit("close", 1006, "connection lost");
+
+    expect(onDisconnected).not.toHaveBeenCalled();
+  });
+
+  it("onDisconnected error does not crash", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onDisconnected = vi.fn().mockImplementation(() => {
+      throw new Error("disconnect callback exploded");
+    });
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn(), onDisconnected });
+
+    expect(() => sdk.ws.emit("close", 1006, "lost")).not.toThrow();
+    expect(onDisconnected).toHaveBeenCalledOnce();
+  });
+
+  it("calls onMaxReconnectFailed when SDK emits maxReconnectAttemptsReached", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onMaxReconnectFailed = vi.fn();
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn(), onMaxReconnectFailed });
+
+    expect(sdk.ws.on).toHaveBeenCalledWith("maxReconnectAttemptsReached", expect.any(Function));
+
+    sdk.ws.emit("maxReconnectAttemptsReached");
+
+    expect(onMaxReconnectFailed).toHaveBeenCalledOnce();
+  });
+
+  it("does not call onMaxReconnectFailed after stop()", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onMaxReconnectFailed = vi.fn();
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn(), onMaxReconnectFailed });
+    stream.stop();
+
+    sdk.ws.emit("maxReconnectAttemptsReached");
+
+    expect(onMaxReconnectFailed).not.toHaveBeenCalled();
+  });
+
+  it("onMaxReconnectFailed error does not crash", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+    const onMaxReconnectFailed = vi.fn().mockImplementation(() => {
+      throw new Error("maxReconnect callback exploded");
+    });
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn(), onMaxReconnectFailed });
+
+    expect(() => sdk.ws.emit("maxReconnectAttemptsReached")).not.toThrow();
+    expect(onMaxReconnectFailed).toHaveBeenCalledOnce();
+  });
+
+  it("works without onDisconnected/onMaxReconnectFailed callbacks", async () => {
+    const sdk = createMockSdk();
+    const stream = new HlEventStream(sdk as never, "0xtest");
+
+    await stream.start({ onOrderUpdate: vi.fn(), onFill: vi.fn() });
+
+    expect(() => sdk.ws.emit("close", 1006, "lost")).not.toThrow();
+    expect(() => sdk.ws.emit("maxReconnectAttemptsReached")).not.toThrow();
   });
 });

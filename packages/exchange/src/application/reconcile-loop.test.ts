@@ -158,7 +158,7 @@ describe("ReconcileLoop", () => {
   it("check() calls HL and logs result when no drifts", async () => {
     const positionBook = new PositionBook();
     const hlClient = createMockHlClient();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     const result = await loop.check();
@@ -179,7 +179,7 @@ describe("ReconcileLoop", () => {
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     const result = await loop.check();
@@ -206,7 +206,7 @@ describe("ReconcileLoop", () => {
       getPositions: vi.fn().mockResolvedValue(hlPositions),
       getOpenOrders: vi.fn().mockResolvedValue(openOrders),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -243,7 +243,7 @@ describe("ReconcileLoop", () => {
       getPositions: vi.fn().mockResolvedValue(hlPositions),
       getOpenOrders: vi.fn().mockResolvedValue(openOrders),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -280,7 +280,7 @@ describe("ReconcileLoop", () => {
       getPositions: vi.fn().mockResolvedValue(hlPositions),
       getOpenOrders: vi.fn().mockResolvedValue(openOrders),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -309,13 +309,50 @@ describe("ReconcileLoop", () => {
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue([]),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     const result = await loop.check();
 
     expect(result.actions).toContain("position_auto_closed:BTC");
     expect(positionBook.isFlat("BTC")).toBe(true);
+  });
+
+  it("logs position_closed event on auto-close", async () => {
+    const positionBook = new PositionBook();
+    positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000,
+      takeProfits: [],
+      liquidationPx: null,
+      trailingStopLoss: null,
+      leverage: null,
+      openedAt: "2024-01-01T00:00:00Z",
+      signalId: 1,
+    });
+
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue([]),
+    });
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    const events = (eventLog.append as ReturnType<typeof vi.fn>).mock.calls;
+    const closeEvent = events.find((c: unknown[]) => (c[0] as { type: string }).type === "position_closed");
+    expect(closeEvent).toBeDefined();
+    expect(closeEvent![0]).toEqual(expect.objectContaining({
+      type: "position_closed",
+      data: expect.objectContaining({
+        coin: "BTC",
+        direction: "long",
+        reason: "reconcile_auto_close",
+      }),
+    }));
   });
 
   it("syncs filled order when HL historical shows triggered", async () => {
@@ -339,7 +376,7 @@ describe("ReconcileLoop", () => {
       ] as HlHistoricalOrder[]),
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -369,7 +406,7 @@ describe("ReconcileLoop", () => {
       ] as HlHistoricalOrder[]),
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -398,7 +435,7 @@ describe("ReconcileLoop", () => {
       getOpenOrders: vi.fn().mockResolvedValue(openOrders),
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     const result = await loop.check();
@@ -423,7 +460,7 @@ describe("ReconcileLoop", () => {
 
     const hlClient = createMockHlClient();
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     const result = await loop.check();
@@ -453,7 +490,7 @@ describe("ReconcileLoop", () => {
       ] as HlHistoricalOrder[]),
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -470,7 +507,7 @@ describe("ReconcileLoop", () => {
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -498,7 +535,7 @@ describe("ReconcileLoop", () => {
       getOpenOrders: vi.fn().mockResolvedValue([]),
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     const result = await loop.check();
@@ -533,7 +570,7 @@ describe("ReconcileLoop", () => {
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -567,7 +604,7 @@ describe("ReconcileLoop", () => {
       getPositions: vi.fn().mockResolvedValue(hlPositions),
       getAccountEquity: vi.fn().mockResolvedValue(1020),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -606,7 +643,7 @@ describe("ReconcileLoop", () => {
       getOpenOrders: vi.fn().mockResolvedValue(openOrders),
       getAccountEquity: vi.fn().mockResolvedValue(1020),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
     const onReconciled = vi.fn();
 
     const loop = new ReconcileLoop({
@@ -639,7 +676,7 @@ describe("ReconcileLoop", () => {
       getHistoricalOrders: vi.fn().mockResolvedValue([]), // not found
     });
     const positionBook = new PositionBook(); // no position for BTC
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -670,7 +707,7 @@ describe("ReconcileLoop", () => {
       getHistoricalOrders: vi.fn().mockResolvedValue([]), // not found
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -697,7 +734,7 @@ describe("ReconcileLoop", () => {
       getHistoricalOrders: vi.fn().mockRejectedValue(new Error("HL API down")),
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     // check() should propagate the error (current behavior — no try-catch around getHistoricalOrders)
@@ -730,7 +767,7 @@ describe("ReconcileLoop", () => {
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -745,7 +782,7 @@ describe("ReconcileLoop", () => {
     const hlClient = createMockHlClient({
       getAccountEquity: vi.fn().mockResolvedValue(Infinity),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -759,7 +796,7 @@ describe("ReconcileLoop", () => {
     const hlClient = createMockHlClient({
       getAccountEquity: vi.fn().mockResolvedValue(NaN),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -773,7 +810,7 @@ describe("ReconcileLoop", () => {
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockRejectedValue(new Error("HL API down")),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
     const onApiDown = vi.fn();
 
     const loop = new ReconcileLoop({
@@ -804,7 +841,7 @@ describe("ReconcileLoop", () => {
         return Promise.resolve([]);
       }),
     });
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
     const onApiDown = vi.fn();
 
     const loop = new ReconcileLoop({
@@ -841,7 +878,7 @@ describe("ReconcileLoop", () => {
       getOrderStatus: vi.fn().mockResolvedValue({ oid: 333484485388, status: "triggered" }),
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -874,7 +911,7 @@ describe("ReconcileLoop", () => {
       ] as HlHistoricalOrder[]),
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
@@ -906,7 +943,7 @@ describe("ReconcileLoop", () => {
       ] as HlHistoricalOrder[]),
     });
     const positionBook = new PositionBook();
-    const eventLog = { append: vi.fn() };
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
 
     const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
     await loop.check();
