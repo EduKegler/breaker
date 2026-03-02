@@ -21,6 +21,7 @@ import { CoinChartToolbar } from "./components/coin-chart-toolbar.js";
 import { CandleCountdown } from "./components/candle-countdown.js";
 import { TimeframeSwitcher } from "./components/timeframe-switcher.js";
 import { PriceDisplay } from "./components/price-display.js";
+import { ChartToggle } from "./components/chart-toggle.js";
 
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -273,30 +274,37 @@ export function App() {
               )}
             </div>
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setShowSessions(!showSessions)}
-                className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all cursor-pointer ${
-                  showSessions
-                    ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
-                    : "bg-terminal-border/30 text-txt-secondary/50 border border-transparent hover:text-txt-secondary/80"
-                }`}
-                title="Toggle session highlights (Asia/Europe/America)"
-              >
-                Sessions
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowVpvr(!showVpvr)}
-                className={`px-2 py-0.5 text-[10px] font-mono rounded transition-all cursor-pointer ${
-                  showVpvr
-                    ? "bg-amber/15 text-amber border border-amber/30"
-                    : "bg-terminal-border/30 text-txt-secondary/50 border border-transparent hover:text-txt-secondary/80"
-                }`}
-                title="Toggle Volume Profile (VPVR)"
-              >
-                VPVR
-              </button>
+              <ChartToggle
+                label="Sessions"
+                active={showSessions}
+                onToggle={() => setShowSessions(!showSessions)}
+                activeClass="bg-blue-500/15 text-blue-400 border border-blue-500/30"
+                tooltip={{
+                  title: "Trading Sessions",
+                  description: "Highlights market session windows (UTC). Sessions overlap — blended zones have higher liquidity.",
+                  legend: [
+                    { color: "rgba(59,130,246,0.35)", label: "Asia — 00:00–08:00 UTC" },
+                    { color: "rgba(0,255,136,0.35)", label: "Europe — 07:00–16:00 UTC" },
+                    { color: "rgba(255,170,0,0.35)", label: "America — 13:00–22:00 UTC" },
+                    { color: "rgba(30,195,190,0.4)", label: "Asia+Europe overlap — 07:00–08:00" },
+                    { color: "rgba(128,212,68,0.4)", label: "Europe+America overlap — 13:00–16:00" },
+                  ],
+                }}
+              />
+              <ChartToggle
+                label="VPVR"
+                active={showVpvr}
+                onToggle={() => setShowVpvr(!showVpvr)}
+                activeClass="bg-amber/15 text-amber border border-amber/30"
+                tooltip={{
+                  title: "Volume Profile (VPVR)",
+                  description: "Shows volume distribution by price level for the visible range. Identifies support/resistance zones.",
+                  legend: [
+                    { color: "#ffaa00", label: "POC — highest volume level" },
+                    { color: "rgba(255,255,255,0.35)", label: "Volume bars — relative activity" },
+                  ],
+                }}
+              />
               <div className="w-px h-4 bg-terminal-border" />
               {selectedCoinInterval && (
                 <CandleCountdown interval={selectedCoinInterval} />

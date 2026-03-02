@@ -43,8 +43,42 @@ trading/
 - **TDD-first**: write or update tests BEFORE implementing the feature/fix.
 - Mandatory pattern: every executable module in src/ must have an `isMainModule(import.meta.url)` guard from `@breaker/kit` (do not execute when imported in tests).
 
+## Running services
+- `pnpm daemon` — exchange daemon (tsx --watch, requires `.env` with HL keys)
+- `pnpm router` — TradingView webhook receiver
+- `pnpm alerts` — WhatsApp gateway
+- `pnpm dev` — explorer Vite dev server (port 5173, proxies `/api/*` to `:3200`)
+- `pnpm dashboard` — refiner optimization dashboard
+- `pnpm validate` — full pre-submit: build + test + typecheck
+
+## Architecture & data flow
+```
+TradingView → [webhook] → Router → Alerts → WhatsApp
+                                      ↑
+Backtest ←→ Refiner (Claude AI)       |
+                                      |
+                          Exchange ----+
+                         (Hyperliquid)
+```
+
+### Workspace dependency graph (build order matters)
+```
+kit  ←  backtest  ←  refiner (also depends on kit, alerts)
+kit  ←  exchange  (also depends on backtest)
+kit  ←  alerts
+kit  ←  router
+explorer has no workspace deps (consumes exchange API via HTTP/WS)
+```
+
 ## Tech stack (shared)
 - TypeScript (strict, ES2022, NodeNext modules)
 - Zod for runtime schema validation
 - Vitest for testing
 - ES Modules (`type: "module"` in package.json)
+
+## Cross-package pitfalls
+- Must build `@breaker/backtest` before running exchange tests (workspace dep)
+- Shell commands: use `execaSync` from `execa`, not `child_process`
+- File writes: use `write-file-atomic`, not `fs.writeFileSync`
+- JSON from LLM output: parse with `safeJsonParse()` from refiner's `safe-json.ts` (uses `jsonrepair`)
+- Config files: `exchange-config.json` (exchange), `breaker-config.json` (refiner) — NOT `.env`
