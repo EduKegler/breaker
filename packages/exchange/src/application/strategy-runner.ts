@@ -331,15 +331,29 @@ export class StrategyRunner {
       (pos.direction === "long" && newLevel > pos.stopLoss) ||
       (pos.direction === "short" && newLevel < pos.stopLoss);
 
+    // Breakeven guard: only place trailing SL once it locks in profit (or at
+    // least breakeven). Without this, the trailing SL can be hit before the
+    // fixed SL, causing a guaranteed loss on the trade.
+    const isAtBreakeven =
+      (pos.direction === "long" && newLevel >= pos.entryPrice) ||
+      (pos.direction === "short" && newLevel <= pos.entryPrice);
+
     const movedFavorably = this.lastExitLevel !== null && (
       (pos.direction === "long" && newLevel > this.lastExitLevel) ||
       (pos.direction === "short" && newLevel < this.lastExitLevel)
     );
 
     const isFirstLevel = this.lastExitLevel === null;
-    const shouldPlace = isMoreProtective && (movedFavorably || isFirstLevel);
+    const shouldPlace = isMoreProtective && isAtBreakeven && (movedFavorably || isFirstLevel);
 
-    if (movedFavorably) {
+    if (!isAtBreakeven && isMoreProtective) {
+      log.debug(
+        { action: "trailingSlBelowBreakeven", coin: this.deps.coin, level: newLevel, entryPrice: pos.entryPrice },
+        "Trailing SL level below breakeven — skipping placement",
+      );
+    }
+
+    if (movedFavorably && isAtBreakeven) {
       log.info({ action: "trailingSlMoved", coin: this.deps.coin, oldLevel: this.lastExitLevel, newLevel }, "Trailing SL moved");
       Promise.resolve(
         this.deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved(

@@ -72,6 +72,7 @@ src/
 - HL position data does NOT include SL/TP — `recoverSlTp()` extracts them from open orders (trigger→SL, trigger tpsl→TP)
 - Dual SL architecture: fixed SL (never moves) + trailing SL (moves favorably). Both `reduceOnly` trigger orders on HL. If daemon crashes, trailing SL order lives on the exchange. `recoverSlTp(direction)` discriminates fixed vs trailing by price ordering
 - Trailing SL placement uses place-first/cancel-after pattern — guarantees continuous coverage even if cancel fails (briefly 3 orders, all reduceOnly)
+- Trailing SL breakeven guard: trailing SL is only placed on the exchange when the level is at or beyond breakeven (≥ entryPrice for long, ≤ entryPrice for short). Without this, the trailing SL can be hit before the fixed SL, causing a guaranteed loss
 - Trailing SL direction: `isBuy` must be the OPPOSITE of position direction (long→isBuy=false=sell, short→isBuy=true=buy) since trailing SL closes the position
 - HlEventStream hooks into SDK `ws.on('reconnect'|'close'|'maxReconnectAttemptsReached')` — fills during disconnect window are lost (isSnapshot guard skips them), so `onReconnected` triggers REST-based position sync
 - `handle-signal` fetches fresh mid-price from HL before placing IOC entry — stale candle close in fast markets causes limit misses. Falls back to candle close on failure
@@ -83,7 +84,7 @@ src/
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 377 tests across 20 files
+- `pnpm test` — 380 tests across 20 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

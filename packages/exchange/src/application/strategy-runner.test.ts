@@ -234,11 +234,11 @@ describe("StrategyRunner", () => {
     const streamer = createMockStreamer(candles);
     // Signal on bar 5
     const strategy = createTestStrategy(5);
-    // Mock getExitLevel: returns increasing values (favorable for long)
+    // Mock getExitLevel: returns increasing values above entry (favorable for long)
     let exitLevelCall = 0;
     strategy.getExitLevel = vi.fn(() => {
       exitLevelCall++;
-      return exitLevelCall === 1 ? 94000 : 94500; // moved up = favorable for long
+      return exitLevelCall === 1 ? 95300 : 95500; // moved up = favorable for long (above entry ~95250)
     });
     const deps = createDeps(strategy, streamer);
 
@@ -249,19 +249,19 @@ describe("StrategyRunner", () => {
     streamer.addCandle(makeCandle(5));
     await runner.tick();
 
-    // Tick 2: in position, getExitLevel returns 94000 (first call, sets baseline)
+    // Tick 2: in position, getExitLevel returns 95300 (first call, sets baseline)
     streamer.addCandle(makeCandle(6));
     await runner.tick();
     expect(strategy.getExitLevel).toHaveBeenCalledTimes(1);
     expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).not.toHaveBeenCalled();
 
-    // Tick 3: getExitLevel returns 94500 (moved up → notify)
+    // Tick 3: getExitLevel returns 95500 (moved up → notify)
     streamer.addCandle(makeCandle(7));
     await runner.tick();
     expect(strategy.getExitLevel).toHaveBeenCalledTimes(2);
     expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).toHaveBeenCalledOnce();
     expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).toHaveBeenCalledWith(
-      "BTC", "long", 94000, 94500, expect.any(Number), "testnet",
+      "BTC", "long", 95300, 95500, expect.any(Number), "testnet",
     );
   });
 
@@ -285,7 +285,7 @@ describe("StrategyRunner", () => {
     let exitLevelCall = 0;
     strategy.getExitLevel = vi.fn(() => {
       exitLevelCall++;
-      return exitLevelCall === 1 ? 96000 : 95500; // moved down = favorable for short
+      return exitLevelCall === 1 ? 95200 : 95000; // moved down = favorable for short (below entry ~95250)
     });
     const deps = createDeps(strategy, streamer);
 
@@ -303,7 +303,7 @@ describe("StrategyRunner", () => {
     await runner.tick();
     expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).toHaveBeenCalledOnce();
     expect(deps.signalHandlerDeps.alertsClient.notifyTrailingSlMoved).toHaveBeenCalledWith(
-      "BTC", "short", 96000, 95500, expect.any(Number), "testnet",
+      "BTC", "short", 95200, 95000, expect.any(Number), "testnet",
     );
   });
 
@@ -399,15 +399,15 @@ describe("StrategyRunner", () => {
     }));
   });
 
-  it("places trailing SL order when level is more protective than fixed SL (long)", async () => {
+  it("places trailing SL order when level is above entry price (long)", async () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);
     const strategy = createTestStrategy(5);
-    // getExitLevel returns level above fixed SL (94200 in signal is entry-1000)
+    // getExitLevel returns levels above entry (~95250) — more protective AND above breakeven
     let exitLevelCall = 0;
     strategy.getExitLevel = vi.fn(() => {
       exitLevelCall++;
-      return exitLevelCall === 1 ? 94500 : 94800;
+      return exitLevelCall === 1 ? 95300 : 95500;
     });
     const deps = createDeps(strategy, streamer);
     // placeStopOrder: first call is from handleSignal (fixed SL), subsequent from trailing
@@ -424,27 +424,27 @@ describe("StrategyRunner", () => {
     streamer.addCandle(makeCandle(5));
     await runner.tick();
     const pos = deps.positionBook.get("BTC")!;
-    expect(pos.stopLoss).toBeLessThan(94500); // fixed SL is below trailing level
+    expect(pos.stopLoss).toBeLessThan(95300); // fixed SL is below trailing level
 
-    // Tick 2: first exit level (94500) — more protective than fixed SL → place trailing
+    // Tick 2: first exit level (95300) — above entry → place trailing
     streamer.addCandle(makeCandle(6));
     await runner.tick();
     expect(placeStopOrder).toHaveBeenCalledTimes(2); // fixed + first trailing
-    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(94500);
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(95300);
 
-    // Tick 3: exit level moved up (94800) → place new, cancel old
+    // Tick 3: exit level moved up (95500) → place new, cancel old
     streamer.addCandle(makeCandle(7));
     await runner.tick();
     expect(placeStopOrder).toHaveBeenCalledTimes(3);
     expect(deps.signalHandlerDeps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 100);
-    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(94800);
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(95500);
   });
 
   it("trailing SL uses isBuy=false for long (sells to close)", async () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);
     const strategy = createTestStrategy(5);
-    strategy.getExitLevel = vi.fn(() => 94500);
+    strategy.getExitLevel = vi.fn(() => 95300);
     const deps = createDeps(strategy, streamer);
     const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
     placeStopOrder
@@ -481,7 +481,7 @@ describe("StrategyRunner", () => {
       }
       return null;
     });
-    strategy.getExitLevel = vi.fn(() => 96000);
+    strategy.getExitLevel = vi.fn(() => 95200); // below entry ~95250 = favorable for short, at breakeven
     const deps = createDeps(strategy, streamer);
     const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
     placeStopOrder
@@ -524,11 +524,106 @@ describe("StrategyRunner", () => {
     expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBeNull();
   });
 
+  it("does not place trailing SL when level is below entry price (long breakeven guard)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    // getExitLevel returns level ABOVE fixed SL (~94250) but BELOW entry (~95250)
+    // This is the exact scenario that caused a real loss: trailing SL is "more protective"
+    // than fixed SL but still below breakeven → guaranteed loss if hit.
+    strategy.getExitLevel = vi.fn(() => 95000);
+    const deps = createDeps(strategy, streamer);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    // Only 1 call: the fixed SL from handleSignal — trailing SL NOT placed
+    expect(deps.signalHandlerDeps.hlClient.placeStopOrder).toHaveBeenCalledTimes(1);
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBeNull();
+  });
+
+  it("does not place trailing SL when level is above entry price (short breakeven guard)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    vi.mocked(strategy.onCandle).mockImplementation((ctx: StrategyContext) => {
+      if (ctx.index === 5) {
+        return {
+          direction: "short",
+          entryPrice: ctx.currentCandle.c,
+          stopLoss: ctx.currentCandle.c + 1000,
+          takeProfits: [{ price: ctx.currentCandle.c - 2000, pctOfPosition: 0.5 }],
+          comment: "Test short",
+        };
+      }
+      return null;
+    });
+    // getExitLevel returns level below fixed SL (~96250) but above entry (~95250)
+    // For shorts, being above entry means a loss if triggered.
+    strategy.getExitLevel = vi.fn(() => 95500);
+    const deps = createDeps(strategy, streamer);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    // Only 1 call: the fixed SL from handleSignal — trailing SL NOT placed
+    expect(deps.signalHandlerDeps.hlClient.placeStopOrder).toHaveBeenCalledTimes(1);
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBeNull();
+  });
+
+  it("places trailing SL only once level crosses breakeven (long)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    let exitLevelCall = 0;
+    strategy.getExitLevel = vi.fn(() => {
+      exitLevelCall++;
+      // Call 1: below entry (skip), Call 2: above entry (place)
+      return exitLevelCall === 1 ? 95000 : 95300;
+    });
+    const deps = createDeps(strategy, streamer);
+    const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
+    placeStopOrder
+      .mockResolvedValueOnce({ orderId: "HL-SL-FIXED", status: "placed" })
+      .mockResolvedValueOnce({ orderId: "100", status: "placed" });
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Tick 1: open position
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // Tick 2: exit level 95000 (below entry ~95250) → trailing SL NOT placed
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+    expect(placeStopOrder).toHaveBeenCalledTimes(1); // only fixed SL
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBeNull();
+
+    // Tick 3: exit level 95300 (above entry ~95250) → trailing SL placed
+    streamer.addCandle(makeCandle(7));
+    await runner.tick();
+    expect(placeStopOrder).toHaveBeenCalledTimes(2); // fixed + trailing
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(95300);
+  });
+
   it("logs error and continues when trailing SL placement fails", async () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);
     const strategy = createTestStrategy(5);
-    strategy.getExitLevel = vi.fn(() => 94500);
+    strategy.getExitLevel = vi.fn(() => 95300);
     const deps = createDeps(strategy, streamer);
     const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
     placeStopOrder
@@ -554,7 +649,7 @@ describe("StrategyRunner", () => {
     let exitLevelCall = 0;
     strategy.getExitLevel = vi.fn(() => {
       exitLevelCall++;
-      return exitLevelCall === 1 ? 94500 : 94800;
+      return exitLevelCall === 1 ? 95300 : 95500;
     });
     const deps = createDeps(strategy, streamer);
     const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
@@ -577,7 +672,7 @@ describe("StrategyRunner", () => {
     // Even if cancel fails, new trailing SL was placed successfully
     streamer.addCandle(makeCandle(7));
     await runner.tick();
-    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(94800);
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(95500);
   });
 
   it("recovers trailingSlOid from SQLite on warmup", async () => {
@@ -587,7 +682,7 @@ describe("StrategyRunner", () => {
     let exitCall = 0;
     strategy.getExitLevel = vi.fn(() => {
       exitCall++;
-      return exitCall === 1 ? 94500 : 94800; // warmup=94500, tick=94800
+      return exitCall === 1 ? 95100 : 95300; // warmup=95100, tick=95300 (above entry 95000)
     });
     const deps = createDeps(strategy, streamer);
 
@@ -600,7 +695,7 @@ describe("StrategyRunner", () => {
       stopLoss: 94000,
       takeProfits: [],
       liquidationPx: null,
-      trailingStopLoss: 94500,
+      trailingStopLoss: 95100,
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
@@ -613,7 +708,7 @@ describe("StrategyRunner", () => {
     });
     deps.signalHandlerDeps.store.insertOrder({
       signal_id: 1, hl_order_id: "200", coin: "BTC", side: "sell",
-      size: 0.01, price: 94500, order_type: "stop", tag: "trailing-sl",
+      size: 0.01, price: 95100, order_type: "stop", tag: "trailing-sl",
       status: "pending", mode: "testnet", filled_at: null,
     });
 
