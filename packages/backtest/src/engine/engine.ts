@@ -195,8 +195,7 @@ export function runBacktest(
       const tradingAllowed = checkCanTrade({
         barsSinceExit, cooldownBars: config.cooldownBars,
         consecutiveLosses, maxConsecutiveLosses: config.maxConsecutiveLosses,
-        dailyPnl, maxDailyLossR: config.maxDailyLossR,
-        initialCapital: config.initialCapital,
+        dailyPnl, maxDailyLossUsd: config.maxDailyLossR * config.initialCapital * 0.01,
         tradesToday, maxTradesPerDay: config.maxTradesPerDay,
         maxGlobalTradesDay: config.maxGlobalTradesDay,
       });

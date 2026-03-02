@@ -20,7 +20,7 @@ const config: ExchangeConfig = {
     maxNotionalUsd: 50000,
     maxLeverage: 5,
     maxOpenPositions: 1,
-    maxDailyLossUsd: 100,
+    maxDailyLossR: 2,
     maxTradesPerDay: 5,
     cooldownBars: 0,
   },

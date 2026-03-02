@@ -4,7 +4,7 @@ export const GuardrailsSchema = z.object({
   maxNotionalUsd: z.number().positive(),
   maxLeverage: z.number().int().positive(),
   maxOpenPositions: z.number().int().positive(),
-  maxDailyLossUsd: z.number().positive(),
+  maxDailyLossR: z.number().positive(),
   // nonnegative allows 0 as a kill switch (blocks all trades)
   maxTradesPerDay: z.number().int().nonnegative(),
   cooldownBars: z.number().int().nonnegative(),

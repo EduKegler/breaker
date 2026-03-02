@@ -14,6 +14,7 @@ export interface RiskCheckInput {
   openPositions: number;
   dailyLossUsd: number;
   tradesToday: number;
+  riskPerTradeUsd: number;
   entryPrice?: number;
   currentPrice?: number;
 }
@@ -41,8 +42,9 @@ export function checkRisk(input: RiskCheckInput, guardrails: Guardrails): RiskCh
     return { passed: false, reason: `Open positions ${input.openPositions} >= max ${guardrails.maxOpenPositions}` };
   }
 
-  if (input.dailyLossUsd >= guardrails.maxDailyLossUsd) {
-    return { passed: false, reason: `Daily loss $${input.dailyLossUsd} >= max $${guardrails.maxDailyLossUsd}` };
+  const maxDailyLossUsd = guardrails.maxDailyLossR * input.riskPerTradeUsd;
+  if (input.dailyLossUsd >= maxDailyLossUsd) {
+    return { passed: false, reason: `Daily loss $${input.dailyLossUsd} >= max $${maxDailyLossUsd} (${guardrails.maxDailyLossR}R)` };
   }
 
   if (input.tradesToday >= guardrails.maxTradesPerDay) {

@@ -130,7 +130,8 @@ async function handleSignalInner(
     leverage,
     openPositions: positionBook.count(),
     dailyLossUsd: Math.abs(store.getTodayRealizedPnl()),
-    tradesToday: store.getTodayTradeCount(coin),
+    tradesToday: store.getTodayGlobalTradeCount(),
+    riskPerTradeUsd: config.sizing.riskPerTradeUsd,
     entryPrice: intent.entryPrice,
     currentPrice,
   };

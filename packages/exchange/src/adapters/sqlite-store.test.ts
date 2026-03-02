@@ -231,6 +231,36 @@ describe("SqliteStore", () => {
     });
   });
 
+  describe("getTodayGlobalTradeCount", () => {
+    it("counts all passed signals across coins for today", () => {
+      store.insertSignal({
+        alert_id: "btc-001", source: "strategy-runner", asset: "BTC",
+        side: "LONG", entry_price: 95000, stop_loss: 94000,
+        take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+        strategy_name: null,
+      });
+      store.insertSignal({
+        alert_id: "sol-001", source: "strategy-runner", asset: "SOL",
+        side: "LONG", entry_price: 150, stop_loss: 145,
+        take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+        strategy_name: null,
+      });
+      // Rejected signal should NOT count
+      store.insertSignal({
+        alert_id: "btc-002", source: "strategy-runner", asset: "BTC",
+        side: "SHORT", entry_price: 96000, stop_loss: 97000,
+        take_profits: "[]", risk_check_passed: 0, risk_check_reason: "Max positions",
+        strategy_name: null,
+      });
+
+      expect(store.getTodayGlobalTradeCount()).toBe(2);
+    });
+
+    it("returns 0 when no signals today", () => {
+      expect(store.getTodayGlobalTradeCount()).toBe(0);
+    });
+  });
+
   describe("equity snapshots", () => {
     it("inserts and retrieves equity snapshots", () => {
       store.insertEquitySnapshot({

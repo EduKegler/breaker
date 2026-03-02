@@ -10,8 +10,7 @@ const baseCanTrade = {
   consecutiveLosses: 0,
   maxConsecutiveLosses: 2,
   dailyPnl: 0,
-  maxDailyLossR: 2,
-  initialCapital: 1000,
+  maxDailyLossUsd: 20,
   tradesToday: 0,
   maxTradesPerDay: 3,
   maxGlobalTradesDay: 5,
@@ -31,7 +30,7 @@ describe("canTrade", () => {
   });
 
   it("returns false when daily loss limit exceeded", () => {
-    // maxDailyLossR=2, initialCapital=1000 → limit = -(2 * 1000 * 0.01) = -20
+    // maxDailyLossUsd=20 → blocks when dailyPnl <= -20
     expect(canTrade({ ...baseCanTrade, dailyPnl: -21 })).toBe(false);
   });
 

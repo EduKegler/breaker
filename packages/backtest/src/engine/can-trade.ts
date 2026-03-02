@@ -4,8 +4,7 @@ export interface CanTradeParams {
   consecutiveLosses: number;
   maxConsecutiveLosses: number;
   dailyPnl: number;
-  maxDailyLossR: number;
-  initialCapital: number;
+  maxDailyLossUsd: number;
   tradesToday: number;
   maxTradesPerDay: number;
   maxGlobalTradesDay: number;
@@ -15,7 +14,7 @@ export function canTrade(p: CanTradeParams): boolean {
   return (
     p.barsSinceExit >= p.cooldownBars &&
     p.consecutiveLosses < p.maxConsecutiveLosses &&
-    p.dailyPnl > -(p.maxDailyLossR * p.initialCapital * 0.01) &&
+    p.dailyPnl > -p.maxDailyLossUsd &&
     p.tradesToday < Math.min(p.maxTradesPerDay, p.maxGlobalTradesDay)
   );
 }

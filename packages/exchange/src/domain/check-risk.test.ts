@@ -6,7 +6,7 @@ const guardrails: Guardrails = {
   maxNotionalUsd: 5000,
   maxLeverage: 5,
   maxOpenPositions: 1,
-  maxDailyLossUsd: 100,
+  maxDailyLossR: 2,
   maxTradesPerDay: 5,
   cooldownBars: 4,
 };
@@ -17,6 +17,7 @@ const safeInput: RiskCheckInput = {
   openPositions: 0,
   dailyLossUsd: 0,
   tradesToday: 0,
+  riskPerTradeUsd: 10,
 };
 
 describe("checkRisk", () => {
@@ -44,10 +45,24 @@ describe("checkRisk", () => {
     expect(result.reason).toContain("Open positions");
   });
 
-  it("fails when daily loss at max", () => {
-    const result = checkRisk({ ...safeInput, dailyLossUsd: 100 }, guardrails);
+  it("fails when daily loss at max (2R = $20 with riskPerTradeUsd=10)", () => {
+    const result = checkRisk({ ...safeInput, dailyLossUsd: 20 }, guardrails);
     expect(result.passed).toBe(false);
     expect(result.reason).toContain("Daily loss");
+    expect(result.reason).toContain("2R");
+  });
+
+  it("passes when daily loss below R-based limit", () => {
+    const result = checkRisk({ ...safeInput, dailyLossUsd: 19 }, guardrails);
+    expect(result.passed).toBe(true);
+  });
+
+  it("scales daily loss limit with riskPerTradeUsd", () => {
+    // With riskPerTradeUsd=50, 2R = $100
+    const result = checkRisk({ ...safeInput, riskPerTradeUsd: 50, dailyLossUsd: 99 }, guardrails);
+    expect(result.passed).toBe(true);
+    const result2 = checkRisk({ ...safeInput, riskPerTradeUsd: 50, dailyLossUsd: 100 }, guardrails);
+    expect(result2.passed).toBe(false);
   });
 
   it("fails when trades today at max", () => {

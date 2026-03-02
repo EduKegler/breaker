@@ -54,6 +54,8 @@ src/
 - HlClient interface (types/hl-client.ts) allows full mocking in tests (no real SDK needed)
 - DryRunHlClient implements HlClient for dry-run mode (logs actions, returns fakes)
 - buildContext/canTrade extracted to @breaker/backtest engine-shared.ts for live=backtest equivalence
+- Daily loss limit uses R-multiples (`maxDailyLossR × riskPerTradeUsd`), NOT fixed USD — scales automatically with risk sizing
+- `maxTradesPerDay` is a global cross-coin limit (uses `getTodayGlobalTradeCount()`), NOT per-coin
 - Idempotency via UNIQUE alert_id in SQLite signals table
 - leverageCache: updateLeverage called once per coin per daemon session
 - `logger.createChild(module)` for per-module log levels (set via `logger.setLogConfig()`)
@@ -84,7 +86,7 @@ src/
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 380 tests across 20 files
+- `pnpm test` — 384 tests across 20 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

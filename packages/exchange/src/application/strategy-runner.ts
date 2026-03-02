@@ -449,8 +449,7 @@ export class StrategyRunner {
       // backtested results. Not configurable to prevent config drift.
       maxConsecutiveLosses: 2,
       dailyPnl: this.dailyPnl,
-      maxDailyLossR: this.deps.config.guardrails.maxDailyLossUsd,
-      initialCapital: 10000,
+      maxDailyLossUsd: this.deps.config.guardrails.maxDailyLossR * this.deps.config.sizing.riskPerTradeUsd,
       tradesToday: this.tradesToday,
       maxTradesPerDay: this.deps.config.guardrails.maxTradesPerDay,
       maxGlobalTradesDay: this.deps.config.guardrails.maxTradesPerDay,

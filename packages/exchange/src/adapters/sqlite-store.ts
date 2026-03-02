@@ -198,6 +198,15 @@ export class SqliteStore {
     return row?.cnt ?? 0;
   }
 
+  getTodayGlobalTradeCount(): number {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) as cnt FROM signals
+      WHERE risk_check_passed = 1
+      AND created_at >= datetime('now', 'start of day')
+    `).get() as { cnt: number } | undefined;
+    return row?.cnt ?? 0;
+  }
+
   getTodayRealizedPnl(): number {
     const row = this.db.prepare(`
       SELECT COALESCE(SUM(f.price * f.size - o.price * o.size), 0) as pnl
