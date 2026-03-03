@@ -24,6 +24,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 ## Experimental integrity (mandatory)
 - Before accepting an iteration result, compare `contentHash` of strategy source.
 - During an optimization loop, keep the backtest window fixed; only change in a new round.
+- Walk-forward overfit gate (KB §10.1): `validateWalkForward()` in `guardrails.ts` rejects iterations where `overfitFlag=true` (testPF < 50% of trainPF or testPF < 1.0), even if score improved. Prevents promotion of memorized strategies.
 
 ## Naming (breaker-specific)
 - Strategy `name` field: `{ASSET} {TF} {Category} — {Strategy Name}` (e.g. `BTC 15m Breakout — Donchian ADX`).

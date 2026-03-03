@@ -27,7 +27,7 @@ import { checkCriteria } from "./check-criteria.js";
 import { phaseHelpers } from "./phase-helpers.js";
 import { emitEvent } from "./stages/events.js";
 import { checkpoint } from "./stages/checkpoint.js";
-import { validateParamGuardrails } from "./stages/guardrails.js";
+import { validateParamGuardrails, validateWalkForward } from "./stages/guardrails.js";
 import { buildSessionSummary } from "./stages/summary.js";
 import { runEngineInProcess } from "./stages/run-engine-in-process.js";
 import { runEngineChild } from "./stages/spawn-engine-child.js";
@@ -437,7 +437,19 @@ export async function orchestrate(): Promise<void> {
     const scoreVerdict = machCtx.bestScore > 0
       ? compareScores(scoreResult.weighted, machCtx.bestScore)
       : (scoreResult.weighted > 0 ? "accept" : "neutral");
-    const effectiveVerdict = phaseHelpers.computeEffectiveVerdict(scoreVerdict, meetsMinTrades);
+    let effectiveVerdict = phaseHelpers.computeEffectiveVerdict(scoreVerdict, meetsMinTrades);
+
+    // Walk-forward overfit gate (KB §10.1): reject if strategy memorized training data
+    const wfViolations = validateWalkForward(analysis.walkForward);
+    if (wfViolations.length > 0 && effectiveVerdict === "accept") {
+      log(`Walk-forward overfit detected: ${wfViolations.map((v) => v.reason).join("; ")} — forcing reject`);
+      emitEvent({
+        artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+        stage: "GUARDRAIL_VIOLATION", status: "warn",
+        message: wfViolations.map((v) => v.reason).join("; "),
+      });
+      effectiveVerdict = "reject";
+    }
 
     let verdict: string;
     if (effectiveVerdict === "accept") {

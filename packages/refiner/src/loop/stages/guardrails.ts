@@ -1,5 +1,5 @@
 import type { Guardrails } from "../../types/config.js";
-import type { StrategyParam } from "@breaker/backtest";
+import type { StrategyParam, WalkForward } from "@breaker/backtest";
 
 interface GuardrailViolation {
   field: string;
@@ -66,6 +66,25 @@ export function validateParamGuardrails(
   }
 
   return violations;
+}
+
+/**
+ * Validate walk-forward results for overfitting.
+ * KB §10.1: overfitFlag → reject (strategy memorized training data).
+ */
+export function validateWalkForward(
+  walkForward: WalkForward | null,
+): GuardrailViolation[] {
+  if (!walkForward) return [];
+  if (!walkForward.overfitFlag) return [];
+
+  const pfRatioStr = walkForward.pfRatio !== null ? walkForward.pfRatio.toFixed(2) : "N/A";
+  const testPFStr = walkForward.testPF !== null ? walkForward.testPF.toFixed(2) : "N/A";
+
+  return [{
+    field: "overfitFlag",
+    reason: `Walk-forward overfit: pfRatio=${pfRatioStr}, testPF=${testPFStr}`,
+  }];
 }
 
 /**

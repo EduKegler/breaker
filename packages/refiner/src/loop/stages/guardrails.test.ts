@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { validateGuardrails, validateParamGuardrails } from "./guardrails.js";
+import { validateGuardrails, validateParamGuardrails, validateWalkForward } from "./guardrails.js";
 import type { Guardrails } from "../../types/config.js";
-import type { StrategyParam } from "@breaker/backtest";
+import type { StrategyParam, WalkForward } from "@breaker/backtest";
 
 const defaultGuardrails: Guardrails = {
   maxRiskTradeUsd: 25,
@@ -100,5 +100,52 @@ describe("validateGuardrails (legacy)", () => {
     const v = validateGuardrails(before, after, guardrails);
     expect(v).toHaveLength(1);
     expect(v[0].field).toBe("atrMult");
+  });
+});
+
+function mkWalkForward(overrides: Partial<WalkForward> = {}): WalkForward {
+  return {
+    trainTrades: 70,
+    testTrades: 30,
+    splitRatio: 0.7,
+    hourConsistency: [],
+    trainPF: 2.0,
+    testPF: 1.5,
+    pfRatio: 0.75,
+    overfitFlag: false,
+    ...overrides,
+  };
+}
+
+describe("validateWalkForward", () => {
+  it("returns empty when walk-forward is null (not enough trades)", () => {
+    expect(validateWalkForward(null)).toEqual([]);
+  });
+
+  it("returns empty when overfitFlag is false", () => {
+    expect(validateWalkForward(mkWalkForward())).toEqual([]);
+  });
+
+  it("detects overfitFlag true (pfRatio < 0.5)", () => {
+    const wf = mkWalkForward({ overfitFlag: true, pfRatio: 0.4, testPF: 0.8 });
+    const v = validateWalkForward(wf);
+    expect(v).toHaveLength(1);
+    expect(v[0].field).toBe("overfitFlag");
+    expect(v[0].reason).toContain("pfRatio=0.40");
+  });
+
+  it("detects overfitFlag true (testPF < 1.0)", () => {
+    const wf = mkWalkForward({ overfitFlag: true, pfRatio: 0.6, testPF: 0.9 });
+    const v = validateWalkForward(wf);
+    expect(v).toHaveLength(1);
+    expect(v[0].field).toBe("overfitFlag");
+    expect(v[0].reason).toContain("testPF=0.90");
+  });
+
+  it("includes pfRatio N/A when null", () => {
+    const wf = mkWalkForward({ overfitFlag: true, pfRatio: null, testPF: 0.5 });
+    const v = validateWalkForward(wf);
+    expect(v).toHaveLength(1);
+    expect(v[0].reason).toContain("pfRatio=N/A");
   });
 });
