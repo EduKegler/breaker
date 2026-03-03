@@ -95,9 +95,9 @@ export class PartialPriceLinesPrimitive implements ISeriesPrimitive<Time> {
     for (const pl of this._partialLines) {
       const startX = ts.timeToCoordinate(pl.startTime);
       const y = this._series.priceToCoordinate(pl.price);
-      if (startX !== null && y !== null) {
+      if (y !== null) {
         resolved.push({
-          startX,
+          startX: startX ?? 0,
           y,
           color: pl.color,
           lineWidth: pl.lineWidth,
