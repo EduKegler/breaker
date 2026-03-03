@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { PositionSummary, PositionEvent } from "../types/api.js";
+import { useStore } from "../store/use-store.js";
 import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
 import { parseUtc } from "../lib/parse-utc.js";
 import { formatDuration } from "../lib/format-duration.js";
@@ -15,6 +16,7 @@ const eventColors: Record<string, string> = {
   sl_filled: "bg-loss",
   tp_filled: "bg-profit",
   trailing_sl_filled: "bg-amber",
+  exit_filled: "bg-blue-400",
 };
 
 function formatDate(dt: string): string {
@@ -60,6 +62,72 @@ function EventTimeline({ events }: { events: PositionEvent[] }) {
   );
 }
 
+function useLivePnl(pos: PositionSummary): { pnl: number | null; pnlPct: number | null; currentPrice: number | null } {
+  const livePos = useStore((s) => s.positions.find((p) => p.coin === pos.coin) ?? null);
+
+  if (pos.status !== "OPEN" || !livePos) return { pnl: null, pnlPct: null, currentPrice: null };
+
+  const entryValue = pos.entryPrice * pos.size;
+  const pnlPct = entryValue > 0 ? (livePos.unrealizedPnl / entryValue) * 100 : null;
+  return { pnl: livePos.unrealizedPnl, pnlPct, currentPrice: livePos.currentPrice };
+}
+
+function PositionRow({ pos, isExpanded, onToggle }: { pos: PositionSummary; isExpanded: boolean; onToggle: () => void }) {
+  const isOpen = pos.status === "OPEN";
+  const { pnl: unrealizedPnl, pnlPct: unrealizedPct, currentPrice } = useLivePnl(pos);
+
+  const displayPnl = pos.realizedPnl ?? unrealizedPnl;
+  const displayPct = pos.pnlPercent ?? unrealizedPct;
+  const displayDuration = pos.durationMs ?? (isOpen ? Date.now() - parseUtc(pos.openedAt).getTime() : null);
+
+  const isProfit = displayPnl != null && displayPnl > 0;
+  const isLoss = displayPnl != null && displayPnl < 0;
+  const pnlColor = isProfit ? "text-profit" : isLoss ? "text-loss" : "text-txt-secondary";
+
+  const rowClass = `border-b border-terminal-border/50 hover:bg-white/[0.02] cursor-pointer ${
+    isOpen ? "border-l-2 border-l-profit bg-profit/[0.03]" : ""
+  }`;
+
+  return (
+    <Fragment>
+      <tr className={rowClass} onClick={onToggle}>
+        <td className="py-1.5 pr-2 text-txt-secondary/60 text-center">
+          <span className={`inline-block transition-transform ${isExpanded ? "rotate-90" : ""}`}>&#9656;</span>
+        </td>
+        <td className="py-1.5 pr-3 font-display font-semibold text-txt-primary">{pos.coin}</td>
+        <td className={`py-1.5 pr-3 font-semibold uppercase ${pos.direction === "LONG" ? "text-profit" : "text-loss"}`}>{pos.direction}</td>
+        <td className="py-1.5 pr-3 text-txt-secondary truncate max-w-[180px]">{pos.strategy ? strategyDisplayName(pos.strategy) : "\u2014"}</td>
+        <td className="py-1.5 pr-3 font-mono text-txt-primary text-right">{pos.size}</td>
+        <td className="py-1.5 pr-3 font-mono text-txt-primary text-right">{formatPrice(pos.entryPrice)}</td>
+        <td className="py-1.5 pr-3 font-mono text-txt-primary text-right">{isOpen ? formatPrice(currentPrice) : formatPrice(pos.exitPrice)}</td>
+        <td className={`py-1.5 pr-3 font-mono text-right font-semibold ${pnlColor}`}>
+          {displayPnl != null ? `${displayPnl >= 0 ? "+" : ""}$${displayPnl.toFixed(2)}` : "\u2014"}
+        </td>
+        <td className={`py-1.5 pr-3 font-mono text-right ${pnlColor}`}>
+          {displayPct != null ? `${displayPct >= 0 ? "+" : ""}${displayPct.toFixed(2)}%` : "\u2014"}
+        </td>
+        <td className="py-1.5 pr-3 font-mono text-txt-secondary">{formatDuration(displayDuration)}</td>
+        <td className="py-1.5 pr-3 font-mono text-txt-secondary">{formatDate(pos.openedAt)}</td>
+        <td className="py-1.5">
+          <span className={`inline-flex items-center gap-1.5 ${isOpen ? "text-profit" : "text-txt-secondary"}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? "bg-profit animate-pulse-green" : "bg-txt-secondary"}`} />
+            {pos.status}
+          </span>
+        </td>
+      </tr>
+      {isExpanded && pos.events.length > 0 && (
+        <tr className={isOpen ? "border-l-2 border-l-profit" : ""}>
+          <td colSpan={12} className="p-0 border-b border-terminal-border/50">
+            <div className="bg-terminal-bg/50">
+              <EventTimeline events={pos.events} />
+            </div>
+          </td>
+        </tr>
+      )}
+    </Fragment>
+  );
+}
+
 export function PositionHistoryTable({ positions }: { positions: PositionSummary[] }) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
 
@@ -92,7 +160,7 @@ export function PositionHistoryTable({ positions }: { positions: PositionSummary
             <th className="pb-2 pr-3 font-medium">Strategy</th>
             <th className="pb-2 pr-3 font-medium text-right">Size</th>
             <th className="pb-2 pr-3 font-medium text-right">Entry</th>
-            <th className="pb-2 pr-3 font-medium text-right">Exit</th>
+            <th className="pb-2 pr-3 font-medium text-right">Exit / Mark</th>
             <th className="pb-2 pr-3 font-medium text-right">PnL</th>
             <th className="pb-2 pr-3 font-medium text-right">PnL%</th>
             <th className="pb-2 pr-3 font-medium">Duration</th>
@@ -101,109 +169,14 @@ export function PositionHistoryTable({ positions }: { positions: PositionSummary
           </tr>
         </thead>
         <tbody>
-          {positions.map((pos) => {
-            const isExpanded = expandedIds.has(pos.signalId);
-            const isOpen = pos.status === "OPEN";
-            const isProfit = pos.realizedPnl != null && pos.realizedPnl > 0;
-            const isLoss = pos.realizedPnl != null && pos.realizedPnl < 0;
-
-            return (
-              <tr
-                key={pos.signalId}
-                className={`border-b border-terminal-border/50 hover:bg-white/[0.02] cursor-pointer ${
-                  isOpen ? "border-l-2 border-l-profit bg-profit/[0.03]" : ""
-                }`}
-                onClick={() => toggleExpand(pos.signalId)}
-              >
-                <td colSpan={12} className="p-0">
-                  {/* Main row data */}
-                  <div className="grid grid-cols-[24px_56px_56px_minmax(80px,1fr)_80px_90px_90px_80px_70px_72px_120px_72px] items-center py-1.5">
-                    {/* Chevron */}
-                    <div className="text-txt-secondary/60 text-center">
-                      <span className={`inline-block transition-transform ${isExpanded ? "rotate-90" : ""}`}>
-                        &#9656;
-                      </span>
-                    </div>
-
-                    {/* Coin */}
-                    <div className="pr-3 font-display font-semibold text-txt-primary">
-                      {pos.coin}
-                    </div>
-
-                    {/* Direction */}
-                    <div className={`pr-3 font-semibold uppercase ${pos.direction === "LONG" ? "text-profit" : "text-loss"}`}>
-                      {pos.direction}
-                    </div>
-
-                    {/* Strategy */}
-                    <div className="pr-3 text-txt-secondary truncate">
-                      {pos.strategy ? strategyDisplayName(pos.strategy) : "\u2014"}
-                    </div>
-
-                    {/* Size */}
-                    <div className="pr-3 font-mono text-txt-primary text-right">
-                      {pos.size}
-                    </div>
-
-                    {/* Entry */}
-                    <div className="pr-3 font-mono text-txt-primary text-right">
-                      {formatPrice(pos.entryPrice)}
-                    </div>
-
-                    {/* Exit */}
-                    <div className="pr-3 font-mono text-txt-primary text-right">
-                      {formatPrice(pos.exitPrice)}
-                    </div>
-
-                    {/* PnL */}
-                    <div className={`pr-3 font-mono text-right font-semibold ${
-                      isProfit ? "text-profit" : isLoss ? "text-loss" : "text-txt-secondary"
-                    }`}>
-                      {pos.realizedPnl != null
-                        ? `${pos.realizedPnl >= 0 ? "+" : ""}$${pos.realizedPnl.toFixed(2)}`
-                        : "\u2014"
-                      }
-                    </div>
-
-                    {/* PnL% */}
-                    <div className={`pr-3 font-mono text-right ${
-                      isProfit ? "text-profit" : isLoss ? "text-loss" : "text-txt-secondary"
-                    }`}>
-                      {pos.pnlPercent != null
-                        ? `${pos.pnlPercent >= 0 ? "+" : ""}${pos.pnlPercent.toFixed(2)}%`
-                        : "\u2014"
-                      }
-                    </div>
-
-                    {/* Duration */}
-                    <div className="pr-3 font-mono text-txt-secondary">
-                      {formatDuration(pos.durationMs)}
-                    </div>
-
-                    {/* Opened */}
-                    <div className="pr-3 font-mono text-txt-secondary">
-                      {formatDate(pos.openedAt)}
-                    </div>
-
-                    {/* Status */}
-                    <div>
-                      <span className={`inline-flex items-center gap-1.5 ${isOpen ? "text-profit" : "text-txt-secondary"}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? "bg-profit animate-pulse-green" : "bg-txt-secondary"}`} />
-                        {pos.status}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Expanded timeline */}
-                  {isExpanded && pos.events.length > 0 && (
-                    <div className="border-t border-terminal-border/30 bg-terminal-bg/50">
-                      <EventTimeline events={pos.events} />
-                    </div>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
+          {positions.map((pos) => (
+            <PositionRow
+              key={pos.signalId}
+              pos={pos}
+              isExpanded={expandedIds.has(pos.signalId)}
+              onToggle={() => toggleExpand(pos.signalId)}
+            />
+          ))}
         </tbody>
       </table>
     </div>

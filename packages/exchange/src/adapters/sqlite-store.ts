@@ -208,9 +208,18 @@ export class SqliteStore {
     return row?.cnt ?? 0;
   }
 
+  getStrategyForCoin(coin: string): string | null {
+    const row = this.db.prepare(`
+      SELECT strategy_name FROM signals
+      WHERE asset = ? AND risk_check_passed = 1
+      ORDER BY id DESC LIMIT 1
+    `).get(coin) as { strategy_name: string | null } | undefined;
+    return row?.strategy_name ?? null;
+  }
+
   getPositionHistoryRows(limit: number = 500): PositionHistoryRow[] {
     return this.db.prepare(`
-      SELECT s.id AS signal_id, s.asset, s.side, s.strategy_name, s.created_at,
+      SELECT s.id AS signal_id, s.asset, s.side, s.strategy_name, s.entry_price, s.created_at,
              o.id AS order_id, o.tag, o.status, o.price, o.size, o.side AS order_side,
              o.order_type, o.mode, o.created_at AS order_created_at, o.filled_at,
              f.price AS fill_price, f.size AS fill_size, f.fee, f.timestamp AS fill_ts

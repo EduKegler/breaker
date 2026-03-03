@@ -12,6 +12,7 @@ export interface LivePosition {
   unrealizedPnl: number;
   openedAt: string;
   signalId: number;
+  strategyName: string | null;
 }
 
 export class PositionBook {

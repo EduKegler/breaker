@@ -13,6 +13,7 @@ const basePos = {
   leverage: null as number | null,
   openedAt: "2024-01-01T00:00:00Z",
   signalId: 1,
+  strategyName: null as string | null,
 };
 
 describe("PositionBook", () => {

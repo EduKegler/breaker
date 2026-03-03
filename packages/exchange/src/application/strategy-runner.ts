@@ -284,13 +284,39 @@ export class StrategyRunner {
     const exitSignal = this.deps.strategy.shouldExit(ctx);
     if (exitSignal?.exit) {
       log.info({ action: "exitTriggered", coin: this.deps.coin, direction: pos.direction, unrealizedPnl: pos.unrealizedPnl, comment: exitSignal.comment }, "Strategy exit triggered");
-      const { hlClient } = this.deps.signalHandlerDeps;
+      const { hlClient, store } = this.deps.signalHandlerDeps;
       const closeSide = pos.direction === "long" ? "sell" : "buy";
-      await hlClient.placeMarketOrder(this.deps.coin, closeSide === "buy", pos.size);
+      const exitResult = await hlClient.placeMarketOrder(this.deps.coin, closeSide === "buy", pos.size);
+
+      // Record exit order + fill so position appears as CLOSED in history
+      const signalId = pos.signalId ?? -1;
+      const exitTs = new Date().toISOString();
+      const exitPrice = candles[index].c;
+      const exitOrderId = store.insertOrder({
+        signal_id: signalId,
+        hl_order_id: exitResult.orderId,
+        coin: this.deps.coin,
+        side: closeSide,
+        size: pos.size,
+        price: exitPrice,
+        order_type: "market",
+        tag: "exit",
+        status: "filled",
+        mode: this.deps.config.mode,
+        filled_at: exitTs,
+      });
+      store.insertFill({
+        order_id: exitOrderId,
+        price: exitPrice,
+        size: pos.size,
+        fee: 0,
+        timestamp: exitTs,
+      });
+
       this.deps.positionBook.close(this.deps.coin);
       this.deps.eventLog.append({
         type: "position_closed",
-        timestamp: new Date().toISOString(),
+        timestamp: exitTs,
         data: {
           coin: this.deps.coin,
           direction: pos.direction,

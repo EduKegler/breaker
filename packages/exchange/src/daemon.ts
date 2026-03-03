@@ -103,6 +103,7 @@ async function syncPositionsAndBroadcast(deps: {
         leverage: hlPos.leverage,
         openedAt: new Date().toISOString(),
         signalId: -1,
+        strategyName: store.getStrategyForCoin(hlPos.coin),
       });
     } else {
       positionBook.updateLiquidationPx(hlPos.coin, hlPos.liquidationPx);

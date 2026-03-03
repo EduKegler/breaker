@@ -75,6 +75,7 @@ export class ReconcileLoop {
           leverage: hlPos.leverage,
           openedAt: new Date().toISOString(),
           signalId: -1,
+          strategyName: store.getStrategyForCoin(coin),
         });
         actions.push(`position_hydrated:${coin}`);
         log.info({

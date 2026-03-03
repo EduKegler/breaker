@@ -324,6 +324,7 @@ async function handleSignalInner(
         leverage,
         openedAt: new Date().toISOString(),
         signalId,
+        strategyName: input.strategyName ?? null,
       });
       log.error({ action: "rollbackFailed", signalId, err: closeErr }, "CRITICAL: position stuck on HL without SL, hydrated locally");
     }
@@ -406,6 +407,7 @@ async function handleSignalInner(
     leverage,
     openedAt: new Date().toISOString(),
     signalId,
+    strategyName: input.strategyName ?? null,
   });
 
   await eventLog.append({

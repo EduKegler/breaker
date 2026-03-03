@@ -7,6 +7,7 @@ function row(overrides: Partial<PositionHistoryRow>): PositionHistoryRow {
     asset: "BTC",
     side: "LONG",
     strategy_name: "donchian-adx",
+    entry_price: 95000,
     created_at: "2024-01-10T10:00:00",
     order_id: 1,
     tag: "entry",
@@ -209,6 +210,37 @@ describe("aggregatePositionHistory", () => {
     for (let i = 1; i < events.length; i++) {
       expect(events[i].timestamp >= events[i - 1].timestamp).toBe(true);
     }
+  });
+
+  it("includes signal price in signal_received event", () => {
+    const rows: PositionHistoryRow[] = [
+      row({ order_id: 1, tag: "entry", status: "filled", entry_price: 95200, fill_price: 95000, fill_size: 0.01, fee: 0.5, filled_at: "2024-01-10T10:00:02", fill_ts: "2024-01-10T10:00:02" }),
+      row({ order_id: 2, tag: "sl", status: "pending", price: 94000, size: 0.01, order_side: "sell", fill_price: null, fill_size: null, fee: null, fill_ts: null, filled_at: null }),
+    ];
+
+    const events = aggregatePositionHistory(rows)[0].events;
+    const signalEvent = events.find((e) => e.type === "signal_received")!;
+    expect(signalEvent.details).toBe("Signal received @ 95200");
+  });
+
+  it("closes position via strategy exit order (tag=exit)", () => {
+    const rows: PositionHistoryRow[] = [
+      row({ order_id: 1, tag: "entry", status: "filled", fill_price: 95000, fill_size: 0.01, fee: 0.5, filled_at: "2024-01-10T10:00:02", fill_ts: "2024-01-10T10:00:02" }),
+      row({ order_id: 2, tag: "sl", status: "cancelled", price: 94000, size: 0.01, order_side: "sell", order_type: "stop", fill_price: null, fill_size: null, fee: null, fill_ts: null, filled_at: null }),
+      row({ order_id: 3, tag: "exit", status: "filled", price: 94500, size: 0.01, order_side: "sell", order_type: "market", fill_price: 94500, fill_size: 0.01, fee: 0.5, order_created_at: "2024-01-10T11:00:00", filled_at: "2024-01-10T11:00:00", fill_ts: "2024-01-10T11:00:00" }),
+    ];
+
+    const result = aggregatePositionHistory(rows);
+    expect(result).toHaveLength(1);
+    const pos = result[0];
+    expect(pos.status).toBe("CLOSED");
+    expect(pos.exitPrice).toBe(94500);
+    // PnL: (94500 - 95000) * 0.01 - 1.0 = -5 - 1 = -6
+    expect(pos.realizedPnl).toBeCloseTo(-6, 2);
+
+    const exitEvent = pos.events.find((e) => e.type === "exit_filled");
+    expect(exitEvent).toBeDefined();
+    expect(exitEvent!.details).toContain("94500");
   });
 
   it("extracts mode from entry order", () => {

@@ -316,29 +316,7 @@ export function App() {
         </section>
 
         {/* ── Positions + Equity row ───── */}
-        {positions.length > 0 && (
-          <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
-              Positions
-              <span className="ml-2 inline-flex items-center gap-1 text-amber font-mono text-[10px] normal-case">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
-                {positions.length} open
-              </span>
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {positions.map((p) => (
-                <PositionCard
-                  key={p.coin}
-                  position={p}
-                  openOrders={openOrders}
-                  onClose={closePosition}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        <div className={`grid gap-4 ${positions.length > 0 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-[1fr_320px]"}`}>
+        <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
           <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
               Equity Curve
@@ -346,7 +324,27 @@ export function App() {
             <EquityChart snapshots={equity} />
           </section>
 
-          {positions.length === 0 && (
+          {positions.length > 0 ? (
+            <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
+                Positions
+                <span className="ml-2 inline-flex items-center gap-1 text-amber font-mono text-[10px] normal-case">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
+                  {positions.length} open
+                </span>
+              </h2>
+              <div className="space-y-3">
+                {positions.map((p) => (
+                  <PositionCard
+                    key={p.coin}
+                    position={p}
+                    openOrders={openOrders}
+                    onClose={closePosition}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : (
             <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4 flex flex-col items-center justify-center">
               <div className="text-txt-secondary/40 mb-2">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">

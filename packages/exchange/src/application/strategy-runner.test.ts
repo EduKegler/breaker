@@ -399,6 +399,36 @@ describe("StrategyRunner", () => {
     }));
   });
 
+  it("inserts exit order + fill in store on strategy exit", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    vi.mocked(strategy.shouldExit!).mockImplementation((ctx: StrategyContext) => {
+      if (ctx.index === 6) return { exit: true, comment: "timeout" };
+      return null;
+    });
+    const deps = createDeps(strategy, streamer);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Open position
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // Exit position
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    // The exit path should have created an exit order + fill in the store
+    const store = deps.signalHandlerDeps.store;
+    const rows = store.getPositionHistoryRows(100);
+    const exitRows = rows.filter((r) => r.tag === "exit" && r.status === "filled");
+    expect(exitRows.length).toBeGreaterThan(0);
+    expect(exitRows[0].fill_price).toBeDefined();
+    expect(exitRows[0].order_type).toBe("market");
+  });
+
   it("places trailing SL order when level is above entry price (long)", async () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);

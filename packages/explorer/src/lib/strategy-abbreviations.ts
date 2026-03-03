@@ -14,34 +14,36 @@ const STRATEGY_TOOLTIPS: Record<string, StrategyTooltipData> = {
   "donchian-adx": {
     title: "Breakout",
     lines: [
-      "Donchian Channel + ADX + Daily EMA regime",
-      "Entry ▸ price breaks DC when ADX < threshold",
-      "Exit ▸ trailing fast Donchian (sem TP fixo)",
-      "Risk ▸ SL ATR 1H × mult · timeout",
+      "Donchian Channel + ADX + Daily EMA 200",
+      "Entry ▸ Price breaks Donchian band with ADX < threshold",
+      "TP ▸ No fixed TP — trailing exit via fast Donchian(20)",
+      "SL ▸ ATR 1H × 2.0 (fixed stop)",
+      "Timeout ▸ 5h (20 × 15m)",
     ],
   },
   "keltner-rsi2": {
     title: "Mean Reversion",
     lines: [
-      "Keltner Channels + RSI(2)",
-      "Entry ▸ price fora das bandas KC + RSI(2) extremo",
-      "  shorts exigem volume spike > 1.5× avg",
-      "Exit ▸ TP no KC mid: 100% long / 60% short",
-      "Risk ▸ SL ATR 1H × mult · timeout",
+      "Keltner Channels + RSI(2) oversold/overbought",
+      "Entry ▸ Price outside KC bands + RSI(2) extreme",
+      "TP ▸ KC midline — 100% (long) / 60% (short)",
+      "SL ▸ ATR 1H × 3.0 (wide catastrophic stop)",
+      "Timeout ▸ 2h (8 × 15m)",
     ],
   },
   "ema-pullback": {
     title: "Trend Continuation",
     lines: [
-      "EMA Pullback + regime 4H",
-      "Entry ▸ pullback na EMA rápida, re-cross + RSI",
-      "Exit ▸ trailing EMA rápida (sem TP fixo)",
-      "Risk ▸ SL ATR 1H × mult · timeout",
+      "EMA fast/slow crossover + 4H regime filter",
+      "Entry ▸ Pullback to EMA(9), re-cross + RSI confirmation",
+      "TP ▸ No fixed TP — trailing exit via EMA(9)",
+      "SL ▸ ATR 1H × 2.0 (fixed stop)",
+      "Timeout ▸ 7.5h (30 × 15m)",
     ],
   },
   "manual": {
     title: "Manual",
-    lines: ["Signal enviado via popover"],
+    lines: ["Signal enviado manualmente via popover"],
   },
 };
 

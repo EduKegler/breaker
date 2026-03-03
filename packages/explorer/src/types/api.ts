@@ -21,6 +21,7 @@ export interface LivePosition {
   currentPrice: number;
   unrealizedPnl: number;
   openedAt: string;
+  strategyName: string | null;
 }
 
 export interface OrderRow {

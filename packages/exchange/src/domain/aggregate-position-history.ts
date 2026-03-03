@@ -3,6 +3,7 @@ export interface PositionHistoryRow {
   asset: string;
   side: string;
   strategy_name: string | null;
+  entry_price: number | null;
   created_at: string;
   order_id: number;
   tag: string;
@@ -66,13 +67,13 @@ function toUtcMs(dt: string): number {
   return new Date(dt.endsWith("Z") ? dt : dt + "Z").getTime();
 }
 
-function buildEvents(signalCreatedAt: string, orders: OrderGroup[]): PositionEvent[] {
+function buildEvents(signalCreatedAt: string, signalPrice: number | null, orders: OrderGroup[]): PositionEvent[] {
   const events: PositionEvent[] = [];
 
   events.push({
     type: "signal_received",
     timestamp: signalCreatedAt,
-    details: "Signal received",
+    details: signalPrice != null ? `Signal received @ ${signalPrice}` : "Signal received",
   });
 
   // Track trailing-sl cancelled orders for "moved" detection
@@ -94,6 +95,10 @@ function buildEvents(signalCreatedAt: string, orders: OrderGroup[]): PositionEve
       events.push({ type: "tp_placed", timestamp: o.orderCreatedAt, details: `TP placed @ ${o.price}` });
       if (o.status === "filled" && o.filledAt) {
         events.push({ type: "tp_filled", timestamp: o.filledAt, details: `TP filled @ ${o.fillPrice}` });
+      }
+    } else if (o.tag === "exit") {
+      if (o.status === "filled" && o.filledAt) {
+        events.push({ type: "exit_filled", timestamp: o.filledAt, details: `Exit filled @ ${o.fillPrice ?? o.price}` });
       }
     } else if (o.tag === "trailing-sl") {
       if (o.status === "cancelled") {
@@ -129,13 +134,14 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
   if (rows.length === 0) return [];
 
   // Group rows by signal_id
-  const groups = new Map<number, { signalCreatedAt: string; asset: string; side: string; strategyName: string | null; orders: Map<number, OrderGroup> }>();
+  const groups = new Map<number, { signalCreatedAt: string; signalPrice: number | null; asset: string; side: string; strategyName: string | null; orders: Map<number, OrderGroup> }>();
 
   for (const r of rows) {
     let group = groups.get(r.signal_id);
     if (!group) {
       group = {
         signalCreatedAt: r.created_at,
+        signalPrice: r.entry_price,
         asset: r.asset,
         side: r.side,
         strategyName: r.strategy_name,
@@ -220,7 +226,7 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
       }
     }
 
-    const events = buildEvents(group.signalCreatedAt, orders);
+    const events = buildEvents(group.signalCreatedAt, group.signalPrice, orders);
 
     positions.push({
       signalId,

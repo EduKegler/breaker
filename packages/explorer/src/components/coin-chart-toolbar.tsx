@@ -77,16 +77,20 @@ export function CoinChartToolbar({
                   </button>
                   {/* Tooltip */}
                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none z-50">
-                    <div className="bg-[#141420] border border-terminal-border rounded px-3 py-2 shadow-lg w-max max-w-[280px]">
-                      <div className="text-[10px] font-bold text-amber tracking-wider uppercase mb-1">
+                    <div className="bg-[#141420] border border-terminal-border rounded px-3 py-2.5 shadow-lg w-max max-w-[320px]">
+                      <div className="text-[10px] font-bold text-amber tracking-wider uppercase mb-1.5">
                         {tip.title}
                       </div>
-                      {tip.lines.map((line, i) => (
+                      <div className="text-[10px] font-mono text-txt-secondary/80 mb-1.5">
+                        {tip.lines[0]}
+                      </div>
+                      {tip.lines.slice(1).map((line, i) => (
                         <div
                           key={i}
-                          className={`text-[10px] font-mono leading-relaxed ${line.startsWith("  ") ? "text-txt-secondary/60 pl-2" : "text-txt-secondary"}`}
+                          className="text-[10px] font-mono leading-relaxed text-txt-secondary"
                         >
-                          {line}
+                          <span className="text-txt-secondary/50">{line.split("▸")[0]}▸</span>
+                          {line.split("▸").slice(1).join("▸")}
                         </div>
                       ))}
                     </div>

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { LivePosition, OpenOrder } from "../types/api.js";
+import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
 import { orderTypeLabel } from "./order-type-label.js";
 
 function fmt(n: number): string {
@@ -76,6 +77,11 @@ export function PositionCard({
           >
             {position.direction}
           </span>
+          {position.strategyName && (
+            <span className="text-[10px] font-mono text-txt-secondary/70">
+              {strategyDisplayName(position.strategyName)}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {onClose && (
