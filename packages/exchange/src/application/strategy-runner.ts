@@ -163,26 +163,34 @@ export class StrategyRunner {
     }
 
     // Initialize trailing exit level for existing positions (cold-start).
+    // Use the actual trailing SL price from the exchange (if available) rather than
+    // the current EMA value. This prevents a gap where the daemon thinks the level
+    // is at the latest EMA but the exchange order is at an older, lower level —
+    // causing the TSL to stay stuck until the EMA moves even higher.
     if (pos && this.deps.strategy.getExitLevel && candles.length > 0) {
-      const ctx = buildContext({
-        candles,
-        index: candles.length - 1,
-        position: {
-          direction: pos.direction,
-          entryPrice: pos.entryPrice,
-          size: pos.size,
-          entryTimestamp: new Date(pos.openedAt).getTime(),
-          entryBarIndex: this.entryBarIndex ?? this.findEntryBarIndex(candles, pos.openedAt),
-          unrealizedPnl: pos.unrealizedPnl,
-          fills: [],
-        },
-        higherTimeframes,
-        dailyPnl: this.dailyPnl,
-        tradesToday: this.tradesToday,
-        barsSinceExit: this.barsSinceExit,
-        consecutiveLosses: this.consecutiveLosses,
-      });
-      this.lastExitLevel = this.deps.strategy.getExitLevel(ctx);
+      if (pos.trailingStopLoss != null && pos.trailingStopLoss > 0) {
+        this.lastExitLevel = pos.trailingStopLoss;
+      } else {
+        const ctx = buildContext({
+          candles,
+          index: candles.length - 1,
+          position: {
+            direction: pos.direction,
+            entryPrice: pos.entryPrice,
+            size: pos.size,
+            entryTimestamp: new Date(pos.openedAt).getTime(),
+            entryBarIndex: this.entryBarIndex ?? this.findEntryBarIndex(candles, pos.openedAt),
+            unrealizedPnl: pos.unrealizedPnl,
+            fills: [],
+          },
+          higherTimeframes,
+          dailyPnl: this.dailyPnl,
+          tradesToday: this.tradesToday,
+          barsSinceExit: this.barsSinceExit,
+          consecutiveLosses: this.consecutiveLosses,
+        });
+        this.lastExitLevel = this.deps.strategy.getExitLevel(ctx);
+      }
     }
 
     await this.deps.eventLog.append({

@@ -709,11 +709,9 @@ describe("StrategyRunner", () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);
     const strategy = createTestStrategy();
-    let exitCall = 0;
-    strategy.getExitLevel = vi.fn(() => {
-      exitCall++;
-      return exitCall === 1 ? 95100 : 95300; // warmup=95100, tick=95300 (above entry 95000)
-    });
+    // Warmup skips getExitLevel when trailingStopLoss is set (uses pos.trailingStopLoss=95100).
+    // So the first call is during tick → must return a level above 95100 to trigger movement.
+    strategy.getExitLevel = vi.fn(() => 95300);
     const deps = createDeps(strategy, streamer);
 
     // Pre-populate a position and a trailing-sl order in SQLite
@@ -754,6 +752,58 @@ describe("StrategyRunner", () => {
 
     // The old trailing SL (oid 200) should be cancelled
     expect(deps.signalHandlerDeps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 200);
+  });
+
+  it("warmup uses pos.trailingStopLoss as lastExitLevel to close gap with exchange", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy();
+    // getExitLevel returns 95300 (above the trailing SL at 95100, above entry 95000)
+    strategy.getExitLevel = vi.fn(() => 95300);
+    const deps = createDeps(strategy, streamer);
+
+    // Position with trailing SL at 95100 (as recovered from HL)
+    deps.positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000,
+      takeProfits: [],
+      liquidationPx: null,
+      trailingStopLoss: 95100,
+      leverage: null,
+      openedAt: "2024-01-01T00:00:00Z",
+      signalId: 1,
+      strategyName: "donchian-adx",
+    });
+    deps.signalHandlerDeps.store.insertSignal({
+      alert_id: "warm-002", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 95000, stop_loss: 94000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: "donchian-adx",
+    });
+    deps.signalHandlerDeps.store.insertOrder({
+      signal_id: 1, hl_order_id: "300", coin: "BTC", side: "sell",
+      size: 0.01, price: 95100, order_type: "stop", tag: "trailing-sl",
+      status: "pending", mode: "testnet", filled_at: null,
+    });
+
+    const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
+    placeStopOrder.mockResolvedValueOnce({ orderId: "301", status: "placed" });
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // First candle: EMA(9) returns 95300, which is above pos.trailingStopLoss (95100)
+    // → movedFavorably should be true and TSL should be updated
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    expect(placeStopOrder).toHaveBeenCalledTimes(1);
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(95300);
+    // Old order (oid 300) should be cancelled
+    expect(deps.signalHandlerDeps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 300);
   });
 
   it("updates positionBook trailing SL even when SQLite insert fails (FK constraint)", async () => {
