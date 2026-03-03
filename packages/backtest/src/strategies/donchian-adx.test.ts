@@ -73,6 +73,7 @@ describe("createDonchianAdx", () => {
     expect(strategy.params.dcFast.value).toBe(20);
     expect(strategy.params.adxThreshold.value).toBe(25);
     expect(strategy.params.atrStopMult.value).toBe(2.0);
+    expect(strategy.params.volMult.value).toBe(1.5);
     expect(strategy.requiredTimeframes).toEqual(["1h", "1d"]);
   });
 
@@ -148,9 +149,11 @@ describe("createDonchianAdx", () => {
       candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
     }
 
-    // Phase 3: breakout bar — big move up
+    // Phase 3: breakout bar — big move up WITH volume spike
     price = consolidationPrice + 100;
-    candles.push(makeCandle(base + (96 * 212) * 900_000, price, 40));
+    const longBreakout = makeCandle(base + (96 * 212) * 900_000, price, 40);
+    longBreakout.v = 300; // Volume spike (> 1.5 * SMA ~100)
+    candles.push(longBreakout);
 
     const htf1h = generate1hCandles(candles);
     const htf1d = generate1dCandles(candles);
@@ -207,9 +210,11 @@ describe("createDonchianAdx", () => {
       candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
     }
 
-    // Phase 3: breakdown bar — big move down
+    // Phase 3: breakdown bar — big move down WITH volume spike
     price = consolidationPrice - 100;
-    candles.push(makeCandle(base + (96 * 212) * 900_000, price, 40));
+    const shortBreakout = makeCandle(base + (96 * 212) * 900_000, price, 40);
+    shortBreakout.v = 300; // Volume spike (> 1.5 * SMA ~100)
+    candles.push(shortBreakout);
 
     const htf1h = generate1hCandles(candles);
     const htf1d = generate1dCandles(candles);
@@ -238,6 +243,121 @@ describe("createDonchianAdx", () => {
         expect(signal.direction).toBe("short");
         expect(signal.stopLoss).toBeGreaterThan(candles[i].c);
         expect(signal.entryPrice).toBeNull();
+        foundSignal = true;
+        break;
+      }
+    }
+    expect(foundSignal).toBe(true);
+  });
+
+  it("blocks signal when breakout bar volume is below volMult × SMA(vol,20)", () => {
+    const strategy = createDonchianAdx({ dcSlow: 10, adxThreshold: 50 });
+
+    const base = new Date("2024-01-01T00:00:00Z").getTime();
+    const candles: Candle[] = [];
+    let price = 10000;
+
+    // Phase 1: ~210 days of gentle uptrend
+    for (let i = 0; i < 96 * 210; i++) {
+      price += 0.5 + (Math.random() - 0.5) * 2;
+      candles.push(makeCandle(base + i * 900_000, price, 30));
+    }
+
+    // Phase 2: tight consolidation for ~2 days (low ADX)
+    const consolidationPrice = price;
+    for (let i = 0; i < 96 * 2; i++) {
+      price = consolidationPrice + (Math.random() - 0.5) * 10;
+      candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
+    }
+
+    // Phase 3: breakout bar — big move up but NORMAL volume (no spike)
+    price = consolidationPrice + 100;
+    candles.push(makeCandle(base + (96 * 212) * 900_000, price, 40));
+    // v=100 (default) < 1.5 * SMA(vol,20)≈100 = 150 → should NOT trigger
+
+    const htf1h = generate1hCandles(candles);
+    const htf1d = generate1dCandles(candles);
+    const htf = { "1h": htf1h, "1d": htf1d };
+
+    strategy.init!(candles, htf);
+
+    // Scan last portion — should find NO signal (volume too low)
+    let foundSignal = false;
+    const startScan = Math.max(candles.length - 200, 100);
+    for (let i = startScan; i < candles.length; i++) {
+      const ctx: StrategyContext = {
+        candles,
+        index: i,
+        currentCandle: candles[i],
+        positionDirection: null,
+        positionEntryPrice: null,
+        positionEntryBarIndex: null,
+        higherTimeframes: htf,
+        dailyPnl: 0,
+        tradesToday: 0,
+        barsSinceExit: 999,
+        consecutiveLosses: 0,
+      };
+      const signal = strategy.onCandle(ctx);
+      if (signal) {
+        foundSignal = true;
+        break;
+      }
+    }
+    expect(foundSignal).toBe(false);
+  });
+
+  it("allows signal when breakout bar has volume spike", () => {
+    const strategy = createDonchianAdx({ dcSlow: 10, adxThreshold: 50, volMult: 1.5 });
+
+    const base = new Date("2024-01-01T00:00:00Z").getTime();
+    const candles: Candle[] = [];
+    let price = 10000;
+
+    // ~210 days gentle uptrend
+    for (let i = 0; i < 96 * 210; i++) {
+      price += 0.5 + (Math.random() - 0.5) * 2;
+      candles.push(makeCandle(base + i * 900_000, price, 30));
+    }
+
+    // 2 days consolidation
+    const consolidationPrice = price;
+    for (let i = 0; i < 96 * 2; i++) {
+      price = consolidationPrice + (Math.random() - 0.5) * 10;
+      candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
+    }
+
+    // Breakout bar with HIGH volume
+    price = consolidationPrice + 100;
+    const breakout = makeCandle(base + (96 * 212) * 900_000, price, 40);
+    breakout.v = 300; // 300 > 1.5 * 100 = 150 → passes
+    candles.push(breakout);
+
+    const htf1h = generate1hCandles(candles);
+    const htf1d = generate1dCandles(candles);
+    const htf = { "1h": htf1h, "1d": htf1d };
+
+    strategy.init!(candles, htf);
+
+    let foundSignal = false;
+    const startScan = Math.max(candles.length - 200, 100);
+    for (let i = startScan; i < candles.length; i++) {
+      const ctx: StrategyContext = {
+        candles,
+        index: i,
+        currentCandle: candles[i],
+        positionDirection: null,
+        positionEntryPrice: null,
+        positionEntryBarIndex: null,
+        higherTimeframes: htf,
+        dailyPnl: 0,
+        tradesToday: 0,
+        barsSinceExit: 999,
+        consecutiveLosses: 0,
+      };
+      const signal = strategy.onCandle(ctx);
+      if (signal) {
+        expect(signal.direction).toBe("long");
         foundSignal = true;
         break;
       }

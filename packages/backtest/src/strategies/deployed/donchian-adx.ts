@@ -4,6 +4,7 @@ import { donchian, type DonchianResult } from "../../indicators/donchian.js";
 import { adx, type AdxResult } from "../../indicators/adx.js";
 import { ema } from "../../indicators/ema.js";
 import { atr } from "../../indicators/atr.js";
+import { sma } from "../../indicators/sma.js";
 
 const MS_1H = 3_600_000;
 const MS_1D = 86_400_000;
@@ -13,6 +14,7 @@ interface DonchianAdxParams {
   dcFast: StrategyParam;
   adxThreshold: StrategyParam;
   atrStopMult: StrategyParam;
+  volMult: StrategyParam;
   maxTradesDay: StrategyParam;
   timeoutBars: StrategyParam;
 }
@@ -22,6 +24,7 @@ const DEFAULT_PARAMS: DonchianAdxParams = {
   dcFast: { value: 20, min: 10, max: 25, step: 5, optimizable: true, description: "Fast Donchian period for trailing exit" },
   adxThreshold: { value: 25, min: 20, max: 35, step: 5, optimizable: true, description: "ADX below this = consolidation" },
   atrStopMult: { value: 2.0, min: 1.5, max: 3.0, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop" },
+  volMult: { value: 1.5, min: 1.0, max: 3.0, step: 0.5, optimizable: true, description: "Volume spike multiplier vs SMA(vol, 20) — KB §3.1 rule 3" },
   maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
   timeoutBars: { value: 20, min: 10, max: 40, step: 5, optimizable: true, description: "Bars before timeout exit" },
 };
@@ -47,6 +50,7 @@ export function createDonchianAdx(
   let adxCache: AdxResult | null = null;
   let htfAtrCache: number[] | null = null;
   let dailyEmaCache: number[] | null = null;
+  let volSmaCache: number[] | null = null;
   let htf1hCandles: Candle[] | null = null;
   let dailyCandles: Candle[] | null = null;
 
@@ -54,12 +58,13 @@ export function createDonchianAdx(
     name: "BTC 15m Breakout — Donchian ADX",
     params,
     requiredTimeframes: ["1h", "1d"],
-    requiredWarmup: { source: 52, "1h": 15, "1d": 51 },
+    requiredWarmup: { source: 52, "1h": 15, "1d": 201 },
 
     init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
       dcSlowCache = donchian(candles, params.dcSlow.value);
       dcFastCache = donchian(candles, params.dcFast.value);
       adxCache = adx(candles, 14);
+      volSmaCache = sma(candles.map((c) => c.v), 20);
 
       htf1hCandles = higherTimeframes["1h"] ?? [];
       if (htf1hCandles.length > 0) {
@@ -69,7 +74,7 @@ export function createDonchianAdx(
       dailyCandles = higherTimeframes["1d"] ?? [];
       if (dailyCandles.length > 0) {
         const dailyCloses = dailyCandles.map((c) => c.c);
-        dailyEmaCache = ema(dailyCloses, 50);
+        dailyEmaCache = ema(dailyCloses, 200);
       }
     },
 
@@ -108,9 +113,9 @@ export function createDonchianAdx(
 
       // Daily EMA 50 regime filter — only use COMPLETED daily bars
       const dailyCandlesRef = dailyCandles ?? higherTimeframes["1d"];
-      if (!dailyCandlesRef || dailyCandlesRef.length < 51) return null;
+      if (!dailyCandlesRef || dailyCandlesRef.length < 201) return null;
 
-      const ema50Daily = dailyEmaCache ?? ema(dailyCandlesRef.map((c) => c.c), 50);
+      const ema50Daily = dailyEmaCache ?? ema(dailyCandlesRef.map((c) => c.c), 200);
       // A daily bar starting at t is complete when t + 1D <= currentCandle.t
       let dailyEma = NaN;
       for (let j = dailyCandlesRef.length - 1; j >= 0; j--) {
@@ -124,13 +129,19 @@ export function createDonchianAdx(
       const regimeBull = currentCandle.c > dailyEma;
       const regimeBear = currentCandle.c < dailyEma;
 
+      // Volume confirmation (KB §3.1 rule 3): breakout bar must exceed recent avg
+      const volSmaArr = volSmaCache ?? sma(candles.slice(0, index + 1).map((c) => c.v), 20);
+      const avgVol = volSmaArr[index - 1]; // Previous bar SMA to avoid look-ahead
+      const volConfirmed = !isNaN(avgVol) && currentCandle.v > avgVol * params.volMult.value;
+
       const stopDist = atr1h * atrStopMultVal;
 
-      // LONG signal: breakout above slow Donchian upper, low ADX, bullish regime
+      // LONG signal: breakout above slow Donchian upper, low ADX, bullish regime, volume spike
       if (
         currentCandle.c > prevSlowUpper &&
         adxVal < adxThresholdVal &&
-        regimeBull
+        regimeBull &&
+        volConfirmed
       ) {
         return {
           direction: "long",
@@ -141,11 +152,12 @@ export function createDonchianAdx(
         };
       }
 
-      // SHORT signal: breakout below slow Donchian lower, low ADX, bearish regime
+      // SHORT signal: breakout below slow Donchian lower, low ADX, bearish regime, volume spike
       if (
         currentCandle.c < prevSlowLower &&
         adxVal < adxThresholdVal &&
-        regimeBear
+        regimeBear &&
+        volConfirmed
       ) {
         return {
           direction: "short",
