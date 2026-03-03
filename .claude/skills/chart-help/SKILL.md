@@ -2,7 +2,6 @@
 name: chart-help
 description: Visual guide for the TradingView chart. Use when the user says "chart help", "what's on the chart", "explain the chart", "guia do grafico", "o que aparece no grafico", or wants to understand what they see on the TradingView chart.
 argument-hint: ""
-disable-model-invocation: true
 allowed-tools: "Read"
 ---
 

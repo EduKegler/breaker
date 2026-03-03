@@ -1,7 +1,6 @@
 ---
 name: daemon-status
 description: Full health check of the exchange daemon. Use when the user says "daemon status", "daemon ta rodando?", "como ta o daemon", "exchange health", "status completo", "full health check", or wants a comprehensive daemon status.
-disable-model-invocation: true
 allowed-tools: "Bash, Read"
 ---
 

@@ -2,7 +2,6 @@
 name: pine-check
 description: Validate a Pine Script file syntax. Use when the user says "pine-check", "validate pine", "check the script", "lint pine", "valida o pine", "checa o script", "verifica o .pine", or wants to validate a .pine strategy file.
 argument-hint: "[ASSET]"
-disable-model-invocation: true
 allowed-tools: "Read, Bash, mcp__pinescript-syntax-checker__check_syntax"
 ---
 

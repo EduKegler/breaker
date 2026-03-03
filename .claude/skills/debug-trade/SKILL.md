@@ -2,7 +2,6 @@
 name: debug-trade
 description: Trace the full lifecycle of a trade. Use when the user says "debug trade", "trace trade", "rastreia trade", "o que aconteceu com o trade", "trade history", "why didnt it fill", "por que nao entrou", or wants to investigate a specific trade.
 argument-hint: "[COIN | signal_id | alert_id]"
-disable-model-invocation: true
 allowed-tools: "Bash, Read, Grep"
 ---
 

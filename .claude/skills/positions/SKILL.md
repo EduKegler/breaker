@@ -1,7 +1,6 @@
 ---
 name: positions
 description: Show account positions and PnL. Use when the user says "positions", "posicoes", "como ta a conta", "mostra PnL", "check account", "mostra posicoes", "account status", "whats my pnl", or wants to see trading positions.
-disable-model-invocation: true
 allowed-tools: "Bash, Read, mcp__hyperliquid-info__get_user_state, mcp__hyperliquid-info__get_user_open_orders, mcp__hyperliquid-info__get_all_mids"
 ---
 

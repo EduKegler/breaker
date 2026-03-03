@@ -2,7 +2,6 @@
 name: logs
 description: Show daemon event logs and filter by type. Use when the user says "logs", "show logs", "mostra os logs", "event log", "o que aconteceu", "what happened", "errors", "mostra erros", "trades recentes", or wants to see daemon events.
 argument-hint: "[errors|trades|reconcile|COIN|N]"
-disable-model-invocation: true
 allowed-tools: "Bash, Read, Grep"
 ---
 

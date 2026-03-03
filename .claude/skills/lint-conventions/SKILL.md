@@ -1,7 +1,6 @@
 ---
 name: lint-conventions
 description: Validate project naming and code conventions. Use when the user says "lint", "checa convencoes", "check conventions", "validate naming", "lint conventions", "verifica convencoes", or wants to check codebase conventions.
-disable-model-invocation: true
 allowed-tools: "Bash, Glob, Grep, Read"
 ---
 

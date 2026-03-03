@@ -1,7 +1,6 @@
 ---
 name: health
 description: Quick health check of the exchange daemon. Use when the user says "health", "is it running?", "ta rodando?", "status do daemon", "como ta o webhook", or wants a quick daemon check.
-disable-model-invocation: true
 allowed-tools: "Bash, Read"
 ---
 
