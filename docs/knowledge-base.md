@@ -277,23 +277,21 @@ Order matters: check top to bottom. Gates 1-3 are global (affect all assets). Ga
 
 1. **Max free variables:** 8
 2. **HTF regime filter:** mandatory. Architecture locked per RESTRUCTURE, params tunable (count toward 8-var cap). See candidates in 3.2.
-3. **Volume confirmation:** mandatory. Volume on breakout bar must exceed recent average by X% (e.g. volume > X * SMA(volume, 20)). This measures **bar-level conviction** -- "is this bar unusually active vs recent bars?" Threshold X is optimizable; the requirement is not. Distinct from rule 7 (session gate). ([Murphy](https://en.wikipedia.org/wiki/Technical_analysis#Volume), [Wyckoff](https://www.wyckoffanalytics.com/wyckoff-method))
+3. **Volume confirmation:** mandatory. Volume on breakout bar must exceed recent average by X% (e.g. volume > X * SMA(volume, 20)). This measures **bar-level conviction** -- "is this bar unusually active vs recent bars?" Threshold X is optimizable; the requirement is not. This also serves as the de facto liquidity filter — during low-volume hours (e.g. 02:00-06:00 UTC), breakout bars rarely pass this threshold, naturally blocking weak signals without a separate time gate. ([Murphy](https://en.wikipedia.org/wiki/Technical_analysis#Volume), [Wyckoff](https://www.wyckoffanalytics.com/wyckoff-method))
 4. **Candle close confirmation:** mandatory. Enter only when the 15m candle **closes** beyond the breakout level. Never enter on wick alone. ([Wyckoff upthrust](https://www.wyckoffanalytics.com/wyckoff-method), [Turtle divergence note](https://oxfordstrat.com/coasdfASD32/uploads/2016/01/turtle-rules.pdf))
 5. **Timeout exit:** mandatory. Forced exit after N bars to prevent funding bleed on failed breakouts.
 6. **ATR-based stop on 1H:** mandatory (not 15m).
-7. **Low-liquidity gate:** disable entries during 02:00-06:00 UTC on weekdays. This is BTC's dead zone — lowest volume, widest spreads, most unreliable signals. Simple time check, no baseline computation needed. Weekend blocking is separate (see DNT condition #5). ([Amberdata](https://blog.amberdata.io/trading-between-hours-volatility-dispersion-across-multiple-regions), [Kaiko](https://research.kaiko.com/insights/bitcoin-booms-in-low-risk-environment))
-8. **Stopping criteria:** PF >= 1.3, DD <= 10%, trades >= 50, pfRatio >= 0.6, avgR >= 0.15. No minimum win rate. ([WR rationale](https://www.tradingview.com/chart/XAUUSD/tDeNSCEn-Breakout-Trading-How-Low-Win-Rate-Systems-Beat-the-Market/))
+7. **Stopping criteria:** PF >= 1.3, DD <= 10%, trades >= 50, pfRatio >= 0.6, avgR >= 0.15. No minimum win rate. ([WR rationale](https://www.tradingview.com/chart/XAUUSD/tDeNSCEn-Breakout-Trading-How-Low-Win-Rate-Systems-Beat-the-Market/))
 
 #### Rationale (for human review, not consumed by BREAKER loop)
 
 <details>
 <summary>Why these rules exist</summary>
 
-- **Volume confirmation (rule 3):** foundational principle of breakout trading (Murphy, Wyckoff). Compares the breakout bar's volume against a **recent moving average** (e.g. SMA(volume, 20)) to detect abnormal conviction on that specific bar. This is NOT the same as the session gate (rule 7). False breakout rates in crypto are high -- educational estimates vary widely (some cite 60-70%, but this depends on definitions, timeframe, and conditions; [source](https://www.binance.com/en/square/post/291147927451089)). The exact rate is not canonical, but the directional point is clear: most breakouts without volume follow-through fail.
+- **Volume confirmation (rule 3):** foundational principle of breakout trading (Murphy, Wyckoff). Compares the breakout bar's volume against a **recent moving average** (e.g. SMA(volume, 20)) to detect abnormal conviction on that specific bar. This also acts as a natural liquidity filter — during dead hours, volume rarely exceeds the threshold, so weak signals are blocked adaptively without a separate time gate. False breakout rates in crypto are high -- educational estimates vary widely (some cite 60-70%, but this depends on definitions, timeframe, and conditions; [source](https://www.binance.com/en/square/post/291147927451089)). The exact rate is not canonical, but the directional point is clear: most breakouts without volume follow-through fail.
 - **Candle close (rule 4):** wicks through levels without close are the most common fakeout pattern. In Wyckoff terms, an "upthrust" (price pierces resistance then closes back inside) is a distribution signal, not a breakout. This diverges from classic Turtle rules, which entered on intraday price breach without waiting for close -- that approach was for daily-TF commodities with high liquidity. On BTC 15m, close confirmation is a worthwhile filter even at cost of slightly worse entry prices.
 - **HTF regime filter (rule 2):** breakout on 15m alone produces too many false signals. The filter has two decision levels: architecture (which type -- locked per RESTRUCTURE) and parameters (tunable by REFINE, count toward 8-var cap).
-- **Low-liquidity gate (rule 7):** US hours structurally dominate ~55% of BTC volume (Kaiko 2025, up from 39% in 2020). Amberdata 2025 orderbook data shows 42% reduction in depth at 21:00 UTC vs 11:00 UTC. The 02:00-06:00 UTC window is consistently the lowest-volume period across exchanges and studies. A simple time block captures 90% of the benefit without the complexity of computing rolling baselines. Peak volume is ~13:00-20:00 UTC (EU/US overlap). Weekend volume is ~13% of total (Kaiko 2025, down from 21% in 2021). **Caveat:** these numbers are BTC-USD spot on major CEXs. HL perp distribution may differ.
-- **No WR gate (rule 8):** breakout strategies are asymmetric by nature (typical WR 20-40%). Turtle system: 39% WR, 57.8% CAGR (Curtis Faith). PF and avgR are the real quality gates; gating by WR would kill valid strategies ([BacktestBase](https://www.backtestbase.com/education/win-rate-vs-profit-factor)).
+- **No WR gate (rule 7):** breakout strategies are asymmetric by nature (typical WR 20-40%). Turtle system: 39% WR, 57.8% CAGR (Curtis Faith). PF and avgR are the real quality gates; gating by WR would kill valid strategies ([BacktestBase](https://www.backtestbase.com/education/win-rate-vs-profit-factor)).
 
 </details>
 
@@ -303,8 +301,8 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 
 **Recommended first iteration (starting point, not mandatory):**
 
-> Donchian(20) + EMA(200) Daily direction [FIXED] + Volume > 1.5x SMA(vol, 20) on breakout bar + Low-liquidity block: no entries 02:00-06:00 UTC [FIXED] + ATR(14) 1H stop x 3.0 + Timeout 48 bars (12h) + TP at 2R.
-> 5 free vars: (1) Donchian period, (2) vol multiplier, (3) ATR stop multiplier, (4) timeout bars, (5) TP R:R. EMA period fixed at 200 (canonical HTF filter), liquidity block fixed at 02:00-06:00 UTC. No partial/trail in starting point -- add only if budget allows after dropping another var.
+> Donchian(20) + EMA(200) Daily direction [FIXED] + Volume > 1.5x SMA(vol, 20) on breakout bar + ATR(14) 1H stop x 3.0 + Timeout 48 bars (12h) + TP at 2R.
+> 5 free vars: (1) Donchian period, (2) vol multiplier, (3) ATR stop multiplier, (4) timeout bars, (5) TP R:R. EMA period fixed at 200 (canonical HTF filter). No partial/trail in starting point -- add only if budget allows after dropping another var.
 
 **Variable budget (8 max):**
 
@@ -313,7 +311,6 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 | Entry signal | 1-2 | Donchian period; BB length + KC multiplier |
 | Regime filter | 0-1 | EMA period (fix at 200 = 0); ADX threshold (fix period at 14 = 1) |
 | Volume confirmation (rule 3) | 1 | multiplier vs SMA(volume, 20) |
-| Low-liquidity gate (rule 7) | 0 | Fixed time block (02:00-06:00 UTC), no tunable parameters |
 | ATR stop | 1 | multiplier |
 | Timeout | 1 | bars |
 | TP structure | 1-3 | Fixed R:R (= 1); partial % + trail ATR mult (= 3). Partial/trail costs 2 extra vars |
@@ -669,7 +666,7 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 ## 7. Module 5: Do Not Trade
 <!-- v2.1 | Updated: 2026-03-03 | Depends on: 1.6 (params), 9.5 (daily limits) -->
 
-> **When:** Uncertain regime, extreme compression, low liquidity, risk limits hit
+> **When:** Uncertain regime, extreme compression, risk limits hit
 > **Objective:** Preserve capital. This module has veto power over all others.
 
 ### 7.1 When NOT to trade
@@ -679,8 +676,7 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 | 1 | **Active squeeze** | BB(20, 2.0) inside KC(20, 1.5) on 15m AND BB width decreasing or flat for >= 4 bars. Release (BB expanding outside KC) = Breakout signal, NOT a DNT. ([TTM Squeeze methodology](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/ttm-squeeze), [PyQuantLab BBKC on BTC](https://pyquantlab.medium.com/optimizing-the-bollinger-band-keltner-channel-squeeze-strategy-volatility-breakout-trading-in-70b49101cb30)) | All modules blocked |
 | 2 | **Macro events** | Economic calendar API: block from 30 min before to 30 min after scheduled release time for CPI, FOMC rate decision, NFP, FOMC minutes. Source: forexfactory.com/calendar or investing.com/economic-calendar (filter: USD, High impact only) | All modules blocked. Close open positions 30 min before if in profit; hold if in loss (avoid locking in loss right before potential favorable move) |
 | 3 | **Daily loss limit** | Cumulative daily PnL (across all modules) >= maxDailyLossUsd | All modules blocked. Force close any open position. See 9.5 |
-| 4 | **Low liquidity hours** | Block M1 entries during 02:00-06:00 UTC on weekdays. Simple time check — no baseline computation needed. Covers the dead zone where spreads widen and signals are unreliable ([Amberdata](https://blog.amberdata.io/trading-between-hours-volatility-dispersion-across-multiple-regions), [Kaiko](https://research.kaiko.com/insights/bitcoin-booms-in-low-risk-environment)) | M1 blocked. M2 may continue (MR can work in low volume). M4 unaffected |
-| 5 | **Weekend** | Saturday 00:00 UTC to Sunday 23:59 UTC. Weekend volume is ~13% of weekday (Kaiko 2025). Spreads widen, false signals increase | Optional block. If enabled: block M1/M3 (need momentum). Allow M2 (ranges common on weekends). M4 unaffected |
+| 4 | **Weekend** | Saturday 00:00 UTC to Sunday 23:59 UTC. Weekend volume is ~13% of weekday (Kaiko 2025). Spreads widen, false signals increase | Optional block. If enabled: block M1/M3 (need momentum). Allow M2 (ranges common on weekends). M4 unaffected |
 
 ### 7.2 Macro calendar integration
 
@@ -717,7 +713,7 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 
 > **MR operates 24/7.** Session breakdown monitors whether edge holds per session. If MR PF in any session is consistently < 1.0, revisit restricting it.
 >
-> **Breakout uses a simple liquidity gate.** Entries are blocked during 02:00-06:00 UTC (dead zone). Sessions provide context for BREAKER's analysis prompt (count, WR, PF per session), but the binary on/off is a fixed time block, not a dynamic volume computation.
+> **Breakout is volume-gated, not time-gated.** The volume confirmation filter (section 3.1 rule 3) naturally blocks entries during low-volume hours — if the breakout bar doesn't have exceptional volume vs its SMA, the signal is rejected regardless of time of day. Sessions provide context for BREAKER's analysis prompt (count, WR, PF per session) but do not gate entries directly.
 
 ---
 
@@ -1337,7 +1333,6 @@ Leverage is a capital efficiency tool, not a profit multiplier. But psychologica
 - [ ] Funding rate info is not restated across modules (each references 1.6 or section 9)
 - [ ] No section claims a different WR/PF/DD target than the comparison table in 10.1
 - [ ] Session definitions in code (14.3) match session map table (section 8) timezones
-- [ ] Low-liquidity gate uses fixed UTC time block consistently (02:00-06:00 UTC)
 - [ ] Recommended iterations fit within their module's variable cap (count each var explicitly)
 - [ ] No-stop MR sizing references virtual stop fallback (9.2)
 - [ ] Backtest period covers 6+ months for M1-M3, 2+ years for M4
@@ -1360,9 +1355,6 @@ grep -n "Max.*leverage\|max.*lev" knowledge-base.md
 
 # Find funding rate numbers outside 1.6 (should be zero)
 grep -n "0.005-0.01%\|0.03-0.05%" knowledge-base.md
-
-# Find liquidity gate references
-grep -n "02:00-06:00\|low.liquidity\|dead zone" knowledge-base.md
 
 # Find session timezone consistency
 grep -n "America/New_York\|Europe/London\|Asia/Tokyo" knowledge-base.md

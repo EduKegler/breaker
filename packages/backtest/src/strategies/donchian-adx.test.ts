@@ -72,7 +72,7 @@ describe("createDonchianAdx", () => {
     expect(strategy.params.dcSlow.value).toBe(50);
     expect(strategy.params.dcFast.value).toBe(20);
     expect(strategy.params.adxThreshold.value).toBe(25);
-    expect(strategy.params.atrStopMult.value).toBe(2.0);
+    expect(strategy.params.atrStopMult.value).toBe(3.0);
     expect(strategy.params.volMult.value).toBe(1.5);
     expect(strategy.requiredTimeframes).toEqual(["1h", "1d"]);
   });
