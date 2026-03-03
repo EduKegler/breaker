@@ -282,9 +282,9 @@ describe("createEmaPullback", () => {
     }
   });
 
-  it("shouldExit triggers trailing exit for long when close < prevEmaFast", () => {
+  it("shouldExit skips EMA Trail for long when below breakeven", () => {
     const strategy = createEmaPullback({ emaFast: 3, timeoutBars: 100 });
-    // Uptrend then sharp drop
+    // Uptrend then sharp drop below entry
     const base = 1_000_000_000_000;
     const candles: Candle[] = [
       makeCandle(base, 100, 5),
@@ -292,7 +292,7 @@ describe("createEmaPullback", () => {
       makeCandle(base + 2 * MS_15M, 110, 5),
       makeCandle(base + 3 * MS_15M, 115, 5),
       makeCandle(base + 4 * MS_15M, 120, 5),
-      // Sharp drop: close well below EMA fast
+      // Sharp drop: close below EMA fast AND below entry
       makeCandle(base + 5 * MS_15M, 80, 5),
     ];
     const htf = {} as Record<string, Candle[]>;
@@ -302,15 +302,13 @@ describe("createEmaPullback", () => {
       positionEntryPrice: 100,
       positionEntryBarIndex: 1,
     });
-    const result = strategy.shouldExit!(ctx);
-    expect(result).not.toBeNull();
-    expect(result!.exit).toBe(true);
-    expect(result!.comment).toBe("EMA Trail");
+    // Below breakeven — let the fixed SL handle it
+    expect(strategy.shouldExit!(ctx)).toBeNull();
   });
 
-  it("shouldExit triggers trailing exit for short when close > prevEmaFast", () => {
+  it("shouldExit skips EMA Trail for short when below breakeven", () => {
     const strategy = createEmaPullback({ emaFast: 3, timeoutBars: 100 });
-    // Downtrend then sharp bounce
+    // Downtrend then sharp bounce above entry
     const base = 1_000_000_000_000;
     const candles: Candle[] = [
       makeCandle(base, 200, 5),
@@ -318,7 +316,7 @@ describe("createEmaPullback", () => {
       makeCandle(base + 2 * MS_15M, 190, 5),
       makeCandle(base + 3 * MS_15M, 185, 5),
       makeCandle(base + 4 * MS_15M, 180, 5),
-      // Sharp bounce: close well above EMA fast
+      // Sharp bounce: close above EMA fast AND above entry
       makeCandle(base + 5 * MS_15M, 220, 5),
     ];
     const htf = {} as Record<string, Candle[]>;
@@ -326,6 +324,56 @@ describe("createEmaPullback", () => {
     const ctx = makeCtx(candles, 5, htf, {
       positionDirection: "short",
       positionEntryPrice: 200,
+      positionEntryBarIndex: 1,
+    });
+    // Below breakeven — let the fixed SL handle it
+    expect(strategy.shouldExit!(ctx)).toBeNull();
+  });
+
+  it("shouldExit triggers EMA Trail for long when at breakeven or better", () => {
+    const strategy = createEmaPullback({ emaFast: 3, timeoutBars: 100 });
+    // Uptrend then mild pullback (still above entry)
+    const base = 1_000_000_000_000;
+    const candles: Candle[] = [
+      makeCandle(base, 100, 5),
+      makeCandle(base + MS_15M, 105, 5),
+      makeCandle(base + 2 * MS_15M, 110, 5),
+      makeCandle(base + 3 * MS_15M, 115, 5),
+      makeCandle(base + 4 * MS_15M, 120, 5),
+      // Pullback: close below EMA fast but ABOVE entry (105)
+      makeCandle(base + 5 * MS_15M, 112, 5),
+    ];
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+    const ctx = makeCtx(candles, 5, htf, {
+      positionDirection: "long",
+      positionEntryPrice: 105,
+      positionEntryBarIndex: 1,
+    });
+    const result = strategy.shouldExit!(ctx);
+    expect(result).not.toBeNull();
+    expect(result!.exit).toBe(true);
+    expect(result!.comment).toBe("EMA Trail");
+  });
+
+  it("shouldExit triggers EMA Trail for short when at breakeven or better", () => {
+    const strategy = createEmaPullback({ emaFast: 3, timeoutBars: 100 });
+    // Downtrend then mild bounce (still below entry)
+    const base = 1_000_000_000_000;
+    const candles: Candle[] = [
+      makeCandle(base, 200, 5),
+      makeCandle(base + MS_15M, 195, 5),
+      makeCandle(base + 2 * MS_15M, 190, 5),
+      makeCandle(base + 3 * MS_15M, 185, 5),
+      makeCandle(base + 4 * MS_15M, 180, 5),
+      // Bounce: close above EMA fast but BELOW entry (195)
+      makeCandle(base + 5 * MS_15M, 188, 5),
+    ];
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+    const ctx = makeCtx(candles, 5, htf, {
+      positionDirection: "short",
+      positionEntryPrice: 195,
       positionEntryBarIndex: 1,
     });
     const result = strategy.shouldExit!(ctx);

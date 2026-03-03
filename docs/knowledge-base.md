@@ -1,7 +1,7 @@
 # BTC Multi-Timeframe Trading Knowledge Base
 
-> **Version:** 4.4 (living document)
-> **Last updated:** 2026-03-02
+> **Version:** 4.5 (living document)
+> **Last updated:** 2026-03-03
 > **Sources:** Cross-research (Claude, GPT, Gemini, Grok) + papers/articles
 > **Tool:** BREAKER (loop: test -> analyze -> research -> improve -> test)
 > **Status:** Clean slate. BREAKER reset. All previous results archived.
@@ -99,9 +99,8 @@ If a module says "risk 0.5% per trade" but Canonical Parameters says "1%", Canon
 |-----------|-------|-------|
 | Risk per trade | 1% of capital | Max 2% on A+ setup only. Ramp-up: 0.25-0.5% first 2 weeks |
 | Max leverage | 5x | Hard cap. See 9.3 for details |
-| Max daily loss | 2R | Shut down all modules for the day |
-| Max daily trades | 5 | Across all modules |
-| Consecutive losses gate | 2 | Per module. Shut down that module until next session |
+| Max daily loss | USD-fixed (maxDailyLossUsd) | Shut down all modules for the day. Set to 2x riskPerTradeUsd. Adjust when scaling sizing |
+| Max daily trades | 5 | Across all modules (global, not per-coin) |
 
 **Stops (ATR-based):**
 
@@ -202,7 +201,7 @@ While a position is open:
 
 - **Owner module controls exits.** Only the module that opened the position may trigger TP, stop, trailing, or timeout exits
 - **Other modules are suppressed.** They may compute signals internally (for logging) but cannot act
-- **Global exits override module exits.** If daily loss hits 2R or a macro event blackout triggers, the orchestrator closes the position regardless of which module owns it. The module logs this as "orchestrator forced exit"
+- **Global exits override module exits.** If daily loss hits maxDailyLossUsd or a macro event blackout triggers, the orchestrator closes the position regardless of which module owns it. The module logs this as "orchestrator forced exit"
 
 #### 2.5.3 Regime transition mid-trade
 
@@ -220,18 +219,18 @@ While a position is open:
 These gates are checked BEFORE any module signal is allowed to execute:
 
 ```
-1. Is daily loss >= 2R? -> BLOCK all entries, close any open position
+1. Is daily loss >= maxDailyLossUsd? -> BLOCK all entries, close any open position
 2. Is daily trade count >= 5? -> BLOCK all entries (open positions may exit normally)
 3. Is macro blackout active? -> BLOCK all entries (CPI/FOMC/NFP, see 7.1)
 4. Is there an open position? -> BLOCK new entries (mutex)
-5. Is the signaling module paused? -> BLOCK (2 consecutive losses gate)
+5. Is cooldown active for this module? -> BLOCK (min 2-bar cooldown after stop, see 9.8)
 ```
 
 Order matters: check top to bottom. Gate 1 is the most aggressive (force close). Gates 2-5 only block new entries.
 
 #### 2.5.5 Implementation notes
 
-- **State:** The orchestrator maintains: current position (module, direction, entry time, entry price), daily PnL (R), daily trade count, per-module consecutive loss counters, macro calendar
+- **State:** The orchestrator maintains: current position (module, direction, entry time, entry price), daily PnL (USD), daily trade count, per-module cooldown timestamps, macro calendar
 - **Heartbeat:** Runs every 15m bar close (aligned with fastest module). Checks global gates, polls each module for signals, applies priority rules
 - **Logging:** Every decision (entry allowed, entry blocked + reason, forced exit) is logged with timestamp, module, and gate that triggered. This is the primary debugging tool
 - **No backtesting:** The orchestrator cannot be backtested as a unit (modules don't share state in the engine). It is tested via paper trading. See Phase 3 in roadmap (section 15)
@@ -280,7 +279,7 @@ Order matters: check top to bottom. Gate 1 is the most aggressive (force close).
 4. **Candle close confirmation:** mandatory. Enter only when the 15m candle **closes** beyond the breakout level. Never enter on wick alone. ([Wyckoff upthrust](https://www.wyckoffanalytics.com/wyckoff-method), [Turtle divergence note](https://oxfordstrat.com/coasdfASD32/uploads/2016/01/turtle-rules.pdf))
 5. **Timeout exit:** mandatory. Forced exit after N bars to prevent funding bleed on failed breakouts.
 6. **ATR-based stop on 1H:** mandatory (not 15m).
-7. **Volume-based session gate:** disable entries when trailing 1H volume < X% of the **hour-of-week baseline** (168 buckets: hour 0-23 x day 0-6, all in UTC). Compute baseline as median volume per bucket over the last N weeks. This measures **session liquidity** -- "is this hour abnormally dead vs what this hour normally looks like?" Using UTC avoids DST bugs; using hour-of-week captures day-of-week effects (weekends are ~13% of total volume). Distinct from rule 3 (bar conviction). Threshold X and lookback N are optimizable. ([Amberdata](https://blog.amberdata.io/trading-between-hours-volatility-dispersion-across-multiple-regions), [Kaiko](https://research.kaiko.com/insights/bitcoin-booms-in-low-risk-environment))
+7. **Low-liquidity gate:** disable entries during 02:00-06:00 UTC on weekdays. This is BTC's dead zone — lowest volume, widest spreads, most unreliable signals. Simple time check, no baseline computation needed. Weekend blocking is separate (see DNT condition #5). ([Amberdata](https://blog.amberdata.io/trading-between-hours-volatility-dispersion-across-multiple-regions), [Kaiko](https://research.kaiko.com/insights/bitcoin-booms-in-low-risk-environment))
 8. **Stopping criteria:** PF >= 1.3, DD <= 10%, trades >= 50, pfRatio >= 0.6, avgR >= 0.15. No minimum win rate. ([WR rationale](https://www.tradingview.com/chart/XAUUSD/tDeNSCEn-Breakout-Trading-How-Low-Win-Rate-Systems-Beat-the-Market/))
 
 #### Rationale (for human review, not consumed by BREAKER loop)
@@ -291,7 +290,7 @@ Order matters: check top to bottom. Gate 1 is the most aggressive (force close).
 - **Volume confirmation (rule 3):** foundational principle of breakout trading (Murphy, Wyckoff). Compares the breakout bar's volume against a **recent moving average** (e.g. SMA(volume, 20)) to detect abnormal conviction on that specific bar. This is NOT the same as the session gate (rule 7). False breakout rates in crypto are high -- educational estimates vary widely (some cite 60-70%, but this depends on definitions, timeframe, and conditions; [source](https://www.binance.com/en/square/post/291147927451089)). The exact rate is not canonical, but the directional point is clear: most breakouts without volume follow-through fail.
 - **Candle close (rule 4):** wicks through levels without close are the most common fakeout pattern. In Wyckoff terms, an "upthrust" (price pierces resistance then closes back inside) is a distribution signal, not a breakout. This diverges from classic Turtle rules, which entered on intraday price breach without waiting for close -- that approach was for daily-TF commodities with high liquidity. On BTC 15m, close confirmation is a worthwhile filter even at cost of slightly worse entry prices.
 - **HTF regime filter (rule 2):** breakout on 15m alone produces too many false signals. The filter has two decision levels: architecture (which type -- locked per RESTRUCTURE) and parameters (tunable by REFINE, count toward 8-var cap).
-- **Session gate (rule 7):** a flat 24H rolling average is flawed because US hours structurally dominate ~55% of volume (Kaiko 2025, BTC-USD spot across major CEXs, up from 39% in 2020). Academic confirmation: Wang et al. (2020, Finance Research Letters) found BTC volume follows a reverse V-shaped intraday pattern peaking during EU/US overlap, with weekday volume substantially higher than weekends. Amberdata 2025 minute-by-minute orderbook data shows 42% reduction in depth at 21:00 UTC vs 11:00 UTC. Comparing Asian-session volume against a 24H average would systematically block normal trades. The **hour-of-week baseline** (168 UTC buckets) normalizes for both intraday cycle and day-of-week effects. Using UTC for buckets avoids DST bugs entirely; session-level analysis (section 8, 14.3) uses local timezones for human readability, but the volume gate operates in pure UTC. Guideline: lowest volume ~02:00-06:00 UTC; ~21:00-23:00 is low but rising (climbs to 00:00 as Asian session begins); peak ~13:00-20:00 UTC. Weekend volume ~13% of total (Kaiko 2025, BTC-USD spot CEXs, down from 21% in 2021). **Venue matters:** Amberdata shows OKX is a clear outlier with flatter intraday profile; [cross-exchange analysis](https://blog.amberdata.io/trading-between-hours-volatility-dispersion-across-exchanges). **Caveat:** these numbers are BTC-USD spot on major centralized exchanges. HL perp volume distribution may differ -- validate with HL's own data before hardcoding thresholds.
+- **Low-liquidity gate (rule 7):** US hours structurally dominate ~55% of BTC volume (Kaiko 2025, up from 39% in 2020). Amberdata 2025 orderbook data shows 42% reduction in depth at 21:00 UTC vs 11:00 UTC. The 02:00-06:00 UTC window is consistently the lowest-volume period across exchanges and studies. A simple time block captures 90% of the benefit without the complexity of computing rolling baselines. Peak volume is ~13:00-20:00 UTC (EU/US overlap). Weekend volume is ~13% of total (Kaiko 2025, down from 21% in 2021). **Caveat:** these numbers are BTC-USD spot on major CEXs. HL perp distribution may differ.
 - **No WR gate (rule 8):** breakout strategies are asymmetric by nature (typical WR 20-40%). Turtle system: 39% WR, 57.8% CAGR (Curtis Faith). PF and avgR are the real quality gates; gating by WR would kill valid strategies ([BacktestBase](https://www.backtestbase.com/education/win-rate-vs-profit-factor)).
 
 </details>
@@ -302,8 +301,8 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 
 **Recommended first iteration (starting point, not mandatory):**
 
-> Donchian(20) + EMA(200) Daily direction [FIXED] + Volume > 1.5x SMA(vol, 20) on breakout bar + Session gate: 1H vol > 60% of hour-of-week median (lookback 4 weeks [FIXED]) + ATR(14) 1H stop x 3.0 + Timeout 48 bars (12h) + TP at 2R.
-> 6 free vars: (1) Donchian period, (2) vol multiplier, (3) session threshold, (4) ATR stop multiplier, (5) timeout bars, (6) TP R:R. EMA period fixed at 200 (canonical HTF filter), session lookback N fixed at 4 weeks. No partial/trail in starting point -- add only if budget allows after dropping another var.
+> Donchian(20) + EMA(200) Daily direction [FIXED] + Volume > 1.5x SMA(vol, 20) on breakout bar + Low-liquidity block: no entries 02:00-06:00 UTC [FIXED] + ATR(14) 1H stop x 3.0 + Timeout 48 bars (12h) + TP at 2R.
+> 5 free vars: (1) Donchian period, (2) vol multiplier, (3) ATR stop multiplier, (4) timeout bars, (5) TP R:R. EMA period fixed at 200 (canonical HTF filter), liquidity block fixed at 02:00-06:00 UTC. No partial/trail in starting point -- add only if budget allows after dropping another var.
 
 **Variable budget (8 max):**
 
@@ -312,7 +311,7 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 | Entry signal | 1-2 | Donchian period; BB length + KC multiplier |
 | Regime filter | 0-1 | EMA period (fix at 200 = 0); ADX threshold (fix period at 14 = 1) |
 | Volume confirmation (rule 3) | 1 | multiplier vs SMA(volume, 20) |
-| Session gate (rule 7) | 1-2 | threshold only (fix lookback = 1); threshold + lookback (= 2) |
+| Low-liquidity gate (rule 7) | 0 | Fixed time block (02:00-06:00 UTC), no tunable parameters |
 | ATR stop | 1 | multiplier |
 | Timeout | 1 | bars |
 | TP structure | 1-3 | Fixed R:R (= 1); partial % + trail ATR mult (= 3). Partial/trail costs 2 extra vars |
@@ -379,8 +378,7 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 6. **Position sizing: conservative.** MR profile = many small wins, occasional large loss. The large loss IS coming -- it's structural, not avoidable. Use canonical risk per trade (see 1.6) and never increase size to "make up" for small average profit. The edge comes from frequency and consistency, not size. ([EnlightenedStockTrading](https://enlightenedstocktrading.com/mean-reversion/))
 7. **Long/short asymmetry: acknowledged.** Academic research shows BTC negative returns revert more frequently and with greater magnitude than positive returns. Long MR (buying dips) has a structural edge over short MR (fading rallies) in crypto, where short squeezes are common and uptrends can sustain "overbought" for extended periods. Short MR requires tighter risk controls and shorter timeouts. ([Corbet & Katsiampa 2020](https://www.sciencedirect.com/science/article/abs/pii/S1057521918306136), [QuantPedia](https://quantpedia.com/trend-following-and-mean-reversion-in-bitcoin/))
 8. **Operates 24/7** across all sessions. Monitor PF per session via BREAKER analysis. If PF < 1.0 in any session consistently, restrict that session.
-9. **2 consecutive losses -> pause module until next session.**
-10. **Stopping criteria:** PF >= 1.3, DD <= 8%, WR >= 50%, trades >= 80, pfRatio >= 0.6. WR >= 50% is mandatory -- MR profits from frequent small wins. Low WR means the strategy is not reverting reliably, which is a design failure.
+9. **Stopping criteria:** PF >= 1.3, DD <= 8%, WR >= 50%, trades >= 80, pfRatio >= 0.6. WR >= 50% is mandatory -- MR profits from frequent small wins. Low WR means the strategy is not reverting reliably, which is a design failure.
 
 #### Rationale (for human review, not consumed by BREAKER loop)
 
@@ -667,9 +665,9 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 ---
 
 ## 7. Module 5: Do Not Trade
-<!-- v2.0 | Updated: 2026-03-02 | Depends on: 1.6 (params), 9.5 (daily limits), 9.9 (drawdown recovery) -->
+<!-- v2.1 | Updated: 2026-03-03 | Depends on: 1.6 (params), 9.5 (daily limits) -->
 
-> **When:** Uncertain regime, extreme compression, session transition, risk limits hit
+> **When:** Uncertain regime, extreme compression, low liquidity, risk limits hit
 > **Objective:** Preserve capital. This module has veto power over all others.
 
 ### 7.1 When NOT to trade
@@ -677,15 +675,10 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 | # | Condition | Mechanical detection | Scope |
 |---|-----------|---------------------|-------|
 | 1 | **Active squeeze** | BB(20, 2.0) inside KC(20, 1.5) on 15m AND BB width decreasing or flat for >= 4 bars. Release (BB expanding outside KC) = Breakout signal, NOT a DNT. ([TTM Squeeze methodology](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/ttm-squeeze), [PyQuantLab BBKC on BTC](https://pyquantlab.medium.com/optimizing-the-bollinger-band-keltner-channel-squeeze-strategy-volatility-breakout-trading-in-70b49101cb30)) | All modules blocked |
-| 2 | **Session transition** | Last 30min of one session + first 30min of the next (use local timezone definitions from 14.3). **EXCEPTION:** London/NY overlap (computed from section 8) is exempt -- peak volume, not choppiness | M1/M2/M3 blocked. M4 unaffected (4H timeframe) |
-| 3 | **ADX gray zone** | ADX(14) on 1H between 18-25 AND +DI and -DI within 3 points of each other (no clear direction) | M1/M3 blocked (need trend). M2 blocked (need confirmed range, ADX < 18). M4 blocked (need strong trend) |
-| 4 | **Consecutive losses** | 2 consecutive losses in a module's trade log | That module only. Others may continue (subject to global limits) |
-| 5 | **Macro events** | Economic calendar API: block from 30 min before to 30 min after scheduled release time for CPI, FOMC rate decision, NFP, FOMC minutes. Source: forexfactory.com/calendar or investing.com/economic-calendar (filter: USD, High impact only) | All modules blocked. Close open positions 30 min before if in profit; hold if in loss (avoid locking in loss right before potential favorable move) |
-| 6 | **Daily loss limit** | Cumulative daily PnL (across all modules) >= 2R loss | All modules blocked. Force close any open position. See 9.5 |
-| 7 | **Weekly loss limit** | Cumulative weekly PnL >= 4R loss | All modules blocked until next Monday UTC. See 9.9 |
-| 8 | **Drawdown ramp-down** | Account drawdown > 5% from equity peak | Risk reduction per 9.9 table. Not a full block, but reduced sizing |
-| 9 | **Low liquidity** | Volume gate (rule 7 of M1) detects current hour-of-week volume < threshold vs baseline | M1 blocked. M2 may continue (MR can work in low volume). M4 unaffected |
-| 10 | **Weekend** | Saturday 00:00 UTC to Sunday 23:59 UTC. Weekend volume is ~13% of weekday (Kaiko 2025). Spreads widen, false signals increase | Optional block. If enabled: block M1/M3 (need momentum). Allow M2 (ranges common on weekends). M4 unaffected |
+| 2 | **Macro events** | Economic calendar API: block from 30 min before to 30 min after scheduled release time for CPI, FOMC rate decision, NFP, FOMC minutes. Source: forexfactory.com/calendar or investing.com/economic-calendar (filter: USD, High impact only) | All modules blocked. Close open positions 30 min before if in profit; hold if in loss (avoid locking in loss right before potential favorable move) |
+| 3 | **Daily loss limit** | Cumulative daily PnL (across all modules) >= maxDailyLossUsd | All modules blocked. Force close any open position. See 9.5 |
+| 4 | **Low liquidity hours** | Block M1 entries during 02:00-06:00 UTC on weekdays. Simple time check — no baseline computation needed. Covers the dead zone where spreads widen and signals are unreliable ([Amberdata](https://blog.amberdata.io/trading-between-hours-volatility-dispersion-across-multiple-regions), [Kaiko](https://research.kaiko.com/insights/bitcoin-booms-in-low-risk-environment)) | M1 blocked. M2 may continue (MR can work in low volume). M4 unaffected |
+| 5 | **Weekend** | Saturday 00:00 UTC to Sunday 23:59 UTC. Weekend volume is ~13% of weekday (Kaiko 2025). Spreads widen, false signals increase | Optional block. If enabled: block M1/M3 (need momentum). Allow M2 (ranges common on weekends). M4 unaffected |
 
 ### 7.2 Macro calendar integration
 
@@ -696,7 +689,7 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 2. Store as list of { event, scheduledTime, impact }
 3. Before each signal: check if current time is within [-30min, +30min] of any event
 4. If yes: block entry, log "macro blackout: {event} at {time}"
-5. Edge case: if FOMC releases a surprise statement outside scheduled time, the system cannot detect it. This is an accepted limitation -- the 2R daily loss gate is the backstop
+5. Edge case: if FOMC releases a surprise statement outside scheduled time, the system cannot detect it. This is an accepted limitation -- the maxDailyLossUsd gate is the backstop
 ```
 
 **Events that trigger blackout:** CPI (monthly), FOMC rate decision (8x/year), NFP (monthly), FOMC minutes (8x/year). Other events (PPI, retail sales, GDP) are optional -- add only if BREAKER analysis shows they cause significant whipsaw.
@@ -722,7 +715,7 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 
 > **MR operates 24/7.** Session breakdown monitors whether edge holds per session. If MR PF in any session is consistently < 1.0, revisit restricting it.
 >
-> **Breakout is volume-gated, not session-gated.** The volume filter (section 3.1: trailing 1H volume vs hour-of-week baseline) is the actual gate. Sessions provide context for BREAKER's analysis prompt (count, WR, PF per session), but the binary on/off is driven by volume, not by a hardcoded UTC window. In practice, the volume filter will naturally block most trades during ~02:00-06:00 UTC and allow most during US/London hours, but it adapts to structural changes over time.
+> **Breakout uses a simple liquidity gate.** Entries are blocked during 02:00-06:00 UTC (dead zone). Sessions provide context for BREAKER's analysis prompt (count, WR, PF per session), but the binary on/off is a fixed time block, not a dynamic volume computation.
 
 ---
 
@@ -823,9 +816,8 @@ Maintenance margin = initial margin at max leverage / 2 = (1/40) / 2 = **1.25% o
 
 ### 9.5 Daily limits
 
-- Max daily loss: 2R -> shut down for today
-- Max daily trades: 5 across all modules (per-module caps are subordinate internal limits)
-- 2 consecutive losses in the same module -> shut down that module until next session
+- Max daily loss: maxDailyLossUsd (set to 2x riskPerTradeUsd in config) -> shut down for today
+- Max daily trades: 5 across all modules (global check, not per-coin)
 
 ### 9.6 Enforceability Matrix
 
@@ -834,12 +826,12 @@ Some rules are enforceable per-module in the BREAKER engine. Others require the 
 | Rule | Enforceable in engine? | How it works |
 |------|----------------------|-------------|
 | Per-module maxTradesDay | **Yes** -- counter resets daily in each strategy | Per-module |
-| Per-module consecutive loss gate (2) | **Yes** -- counter in each strategy | Per-module |
 | ATR-based stop | **Yes** -- per-trade in strategy | Per-trade |
 | Timeout (N bars) | **Yes** -- per-trade in strategy | Per-trade |
+| Cooldown (min 2 bars after stop) | **Yes** -- timestamp check in strategy runner | Per-module |
 | Global 5 trades/day across modules | **No** -- strategies don't share state | Orchestrator |
 | One position at a time across modules | **No** -- strategies don't see each other | Orchestrator |
-| Daily loss 2R shutdown | **No** -- strategies don't share P&L | Orchestrator |
+| Daily loss maxDailyLossUsd shutdown | **No** -- strategies don't share P&L | Orchestrator |
 | Macro event blackout (CPI/FOMC/NFP) | **No** -- requires economic calendar API, not available in backtesting engine | Orchestrator |
 | Leverage cap (5x max) | **No** -- backtests don't model leverage/margin | Orchestrator sets per-position via Hyperliquid API |
 
@@ -855,7 +847,7 @@ Every trade follows this exact sequence. No step may be skipped.
    Output: { module, direction, entryPrice, stopDistance, confidence }
 
 2. ORCHESTRATOR GATES (see 2.5.4)
-   Check: daily loss < 2R? trades < 5? no macro blackout? no open position? module not paused?
+   Check: daily loss < maxDailyLossUsd? trades < 5? no macro blackout? no open position? cooldown clear?
    If ANY gate fails -> LOG(blocked, reason) -> STOP
 
 3. SIZING
@@ -873,7 +865,7 @@ Every trade follows this exact sequence. No step may be skipped.
 
 5. POSITION MANAGEMENT
    Each bar close: module evaluates exit conditions (TP, trailing, timeout)
-   Orchestrator checks global exits (2R daily loss, macro blackout)
+   Orchestrator checks global exits (maxDailyLossUsd, macro blackout)
    No manual intervention. No averaging down. No moving stops closer to entry.
 
 6. EXIT
@@ -882,9 +874,8 @@ Every trade follows this exact sequence. No step may be skipped.
    Log: { timestamp, exitPrice, exitType, PnL_dollars, PnL_R, holdingBars, fees, funding }
 
 7. POST-TRADE
-   Update orchestrator state: daily PnL, trade count, consecutive loss counter
-   If loss: increment module consecutive loss counter
-   If 2 consecutive losses: pause module until next session
+   Update orchestrator state: daily PnL, trade count
+   Set module cooldown timestamp (min 2 bars before next entry)
    Mutex released -> other modules may now signal
 ```
 
@@ -911,34 +902,13 @@ Every trade follows this exact sequence. No step may be skipped.
 
 ### 9.9 Drawdown recovery
 
-Daily limits (9.5) protect against single-day blowups. This section covers accumulated drawdown.
-
-> **Academic basis:** Gehm (1983) showed full Kelly sizing can produce 50%+ drawdowns even with positive-expectancy strategies. Maclean et al. (2010) demonstrated fractional Kelly reduces volatility more than it proportionally reduces growth. Our 1% fixed-fractional approach approximates quarter-Kelly for typical crypto edges (WR 30-50%, R:R 2-3x), which Balsara (1992) showed produces significantly lower max drawdowns vs full Kelly. The ramp-down table below implements the CPPI (Constant Proportion Portfolio Insurance) principle described by Thorp (2006).
-
-**Circuit breakers:**
+Daily limits (9.5) protect against single-day blowups. If you're hitting the daily cap multiple days in a row, the problem is the strategy, not the risk management — re-run BREAKER, don't add more blockers.
 
 | Trigger | Action | Reset condition |
 |---------|--------|----------------|
-| Daily loss >= 2R | Shut down all modules for the day | Next calendar day (UTC) |
-| 3 consecutive losing days | Reduce risk to 0.5% per trade (from 1%) | 1 winning day at reduced risk |
-| Weekly loss >= 4R | Shut down all modules for the rest of the week | Next Monday (UTC) |
-| Monthly drawdown >= 8R | Shut down all modules. Full review required | Manual review + BREAKER re-validation on last 3 months of data before resuming |
-| Account drawdown >= 15% from equity peak | Emergency shutdown. No trading until manual review + strategy re-evaluation | Manual only. Consider whether market regime has shifted beyond the strategy's design |
+| Daily loss >= maxDailyLossUsd | Shut down all modules for the day | Next calendar day (UTC) |
 
-**Sizing ramp-down (gradual, not binary):**
-
-| Account drawdown from peak | Risk per trade |
-|---------------------------|---------------|
-| 0-5% | 1% (normal) |
-| 5-10% | 0.5% |
-| 10-15% | 0.25% |
-| > 15% | 0% (shutdown) |
-
-**Recovery rules:**
-
-- After any shutdown, resume at 0.25% risk for the first week, then 0.5%, then 1%. Same ramp-up schedule as initial deployment (see 9.2)
-- After monthly drawdown shutdown: run BREAKER on the most recent 3 months before resuming. If the strategy no longer passes stopping criteria, it needs re-optimization, not just resumption
-- Log every drawdown event with context (market conditions, which module lost, consecutive or spread across modules). This data feeds future BREAKER analysis
+**Recovery after bad streak:** Review BREAKER output. If a module consistently fails stopping criteria over 2+ weeks, disable it and re-optimize rather than adding layered shutdowns.
 
 ---
 
@@ -1049,7 +1019,7 @@ Run the final strategy on the **reserved 2-month window** after the loop end dat
 - **Max free variables:** MR = 6, Breakout = 8, PB = 8, TF = 6 (hard gate in refine -- rejects +2 per iteration)
 - **Max iterations per strategy:** defined in config (recommendation: 15)
 - **Walk-forward:** 70/30 split + pfRatio + automatic overfitFlag (>= 10 trades)
-- **Session breakdown:** Asia/London/NY with count, WR, PF, PnL in prompt. Also break down by volume quartile (low/medium/high/peak based on hour-of-week baseline)
+- **Session breakdown:** Asia/London/NY with count, WR, PF, PnL in prompt
 - **Include real costs:** commission 0.045% (Hyperliquid taker) + slippage 2 ticks in backtest config
 - **Category lock:** BREAKER cannot change strategy type (e.g. breakout -> pullback) without explicit user approval. RESTRUCTURE may change indicators/logic within the same category only
 
@@ -1366,6 +1336,7 @@ Leverage is a capital efficiency tool, not a profit multiplier. But psychologica
 **Parameter consistency:**
 - [ ] All fee values in the doc match section 1.6 (taker 0.045%, maker 0.015%, slippage 2 ticks)
 - [ ] All "risk per trade" references match section 1.6 (1% default, max 2%)
+- [ ] All daily loss limit references use maxDailyLossUsd (not 2R) per 1.6
 - [ ] All variable caps match section 1.6 (M1=8, M2=6, M3=8, M4=6)
 - [ ] ATR stop timeframes per module match section 1.6 table (M1-M3: 1H, M4: Daily)
 - [ ] Stopping criteria table (10.1) matches individual module fixed rules
@@ -1382,9 +1353,8 @@ Leverage is a capital efficiency tool, not a profit multiplier. But psychologica
 - [ ] Precedence hierarchy (1.5) is respected: 1.6 > 9 > module rules > rationale > examples
 - [ ] Funding rate info is not restated across modules (each references 1.6 or section 9)
 - [ ] No section claims a different WR/PF/DD target than the comparison table in 10.1
-- [ ] "2 consecutive losses" rule is consistently per-module everywhere (7.1, 9.5, 9.6, 1.6)
 - [ ] Session definitions in code (14.3) match session map table (section 8) timezones
-- [ ] Volume gate uses "hour-of-week" (not "hour-of-day") consistently
+- [ ] Low-liquidity gate uses fixed UTC time block consistently (02:00-06:00 UTC)
 - [ ] Recommended iterations fit within their module's variable cap (count each var explicitly)
 - [ ] No-stop MR sizing references virtual stop fallback (9.2)
 - [ ] Backtest loop ends 2 months before today (reserves data for OOS Future)
@@ -1408,8 +1378,8 @@ grep -n "Max.*leverage\|max.*lev" btc_15m_knowledge_base_en.md
 # Find funding rate numbers outside 1.6 (should be zero)
 grep -n "0.005-0.01%\|0.03-0.05%" btc_15m_knowledge_base_en.md
 
-# Find hour-of-day (should be zero -- all should be hour-of-week)
-grep -n "hour-of-day" btc_15m_knowledge_base_en.md
+# Find liquidity gate references
+grep -n "02:00-06:00\|low.liquidity\|dead zone" btc_15m_knowledge_base_en.md
 
 # Find session timezone consistency
 grep -n "America/New_York\|Europe/London\|Asia/Tokyo" btc_15m_knowledge_base_en.md

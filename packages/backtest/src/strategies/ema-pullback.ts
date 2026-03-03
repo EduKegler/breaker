@@ -207,7 +207,7 @@ export function createEmaPullback(
     },
 
     shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
-      const { candles, index, positionDirection, positionEntryBarIndex } = ctx;
+      const { candles, index, positionDirection, positionEntryBarIndex, positionEntryPrice } = ctx;
       if (!positionDirection || positionEntryBarIndex === null) return null;
 
       // Timeout check
@@ -224,13 +224,16 @@ export function createEmaPullback(
 
       const currentCandle = candles[index];
 
-      // Long exit: close below previous EMA fast
+      // Long exit: close below previous EMA fast — only at breakeven or better
+      // (below breakeven the fixed SL on the exchange protects the position)
       if (positionDirection === "long" && currentCandle.c < prevEmaFast) {
+        if (positionEntryPrice !== null && currentCandle.c < positionEntryPrice) return null;
         return { exit: true, comment: "EMA Trail" };
       }
 
-      // Short exit: close above previous EMA fast
+      // Short exit: close above previous EMA fast — only at breakeven or better
       if (positionDirection === "short" && currentCandle.c > prevEmaFast) {
+        if (positionEntryPrice !== null && currentCandle.c > positionEntryPrice) return null;
         return { exit: true, comment: "EMA Trail" };
       }
 
