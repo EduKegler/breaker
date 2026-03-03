@@ -10,6 +10,7 @@ import type {
   ConfigResponse,
   AccountResponse,
   PricesEvent,
+  PositionSummary,
 } from "../types/api.js";
 
 export type WsStatus = "connecting" | "connected" | "disconnected";
@@ -24,6 +25,7 @@ export interface ServerSlice {
   openOrders: OpenOrder[];
   equity: EquitySnapshot[];
   signals: SignalRow[];
+  positionHistory: PositionSummary[];
   account: AccountResponse | null;
   httpError: boolean;
 }

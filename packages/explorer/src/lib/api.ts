@@ -9,6 +9,7 @@ import type {
   ReplaySignal,
   ConfigResponse,
   AccountResponse,
+  PositionSummary,
 } from "../types/api.js";
 
 const BASE = "/api";
@@ -94,4 +95,6 @@ export const api = {
     deleteJson<{ status: string }>(`/open-order/${oid}`),
   setAutoTrading: (coin: string, enabled: boolean) =>
     postJson<{ autoTradingEnabled: boolean }>("/auto-trading", { coin, enabled }),
+  positionHistory: () =>
+    fetchJson<{ positions: PositionSummary[] }>("/position-history"),
 };

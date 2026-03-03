@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import type { PositionHistoryRow } from "../domain/aggregate-position-history.js";
 
 interface SignalRow {
   id?: number;
@@ -205,6 +206,22 @@ export class SqliteStore {
       AND created_at >= datetime('now', 'start of day')
     `).get() as { cnt: number } | undefined;
     return row?.cnt ?? 0;
+  }
+
+  getPositionHistoryRows(limit: number = 500): PositionHistoryRow[] {
+    return this.db.prepare(`
+      SELECT s.id AS signal_id, s.asset, s.side, s.strategy_name, s.created_at,
+             o.id AS order_id, o.tag, o.status, o.price, o.size, o.side AS order_side,
+             o.order_type, o.mode, o.created_at AS order_created_at, o.filled_at,
+             f.price AS fill_price, f.size AS fill_size, f.fee, f.timestamp AS fill_ts
+      FROM signals s
+      INNER JOIN orders o ON o.signal_id = s.id
+      LEFT JOIN fills f ON f.order_id = o.id
+      WHERE s.risk_check_passed = 1
+        AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.signal_id = s.id AND o2.tag = 'entry' AND o2.status = 'filled')
+      ORDER BY s.id DESC, o.id ASC
+      LIMIT ?
+    `).all(limit) as PositionHistoryRow[];
   }
 
   getTodayRealizedPnl(): number {

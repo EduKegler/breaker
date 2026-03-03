@@ -41,6 +41,7 @@ trading/
 - **Mandatory validation**: every code change (`src/`, `*.ts`) MUST end with `pnpm build && pnpm test`. Do not consider the task complete until tests pass.
 - **Regression rule**: every bug fix MUST include at least 1 test that reproduces the bug and verifies the fix.
 - **TDD-first**: write or update tests BEFORE implementing the feature/fix.
+- **Post-implementation test review**: after finishing the implementation and all TDD tests pass, do a second pass to add tests that TDD missed — integration tests for new endpoints/WS events, edge cases only visible after seeing the final code, cross-layer interactions (e.g. REST handler → store → aggregation), and any gaps that only become apparent once the full implementation exists.
 - Mandatory pattern: every executable module in src/ must have an `isMainModule(import.meta.url)` guard from `@breaker/kit` (do not execute when imported in tests).
 
 ## Running services

@@ -8,6 +8,7 @@ import type {
   CandleData,
   SignalRow,
   PricesEvent,
+  PositionSummary,
 } from "../types/api.js";
 
 interface WsMessage {
@@ -79,6 +80,7 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
         equity: { snapshots: EquitySnapshot[] } | EquitySnapshot[];
         health: HealthResponse;
         signals?: SignalRow[];
+        positionHistory?: PositionSummary[];
       };
       setState({
         positions: d.positions,
@@ -87,6 +89,7 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
         equity: Array.isArray(d.equity) ? d.equity : d.equity.snapshots,
         health: d.health,
         ...(d.signals ? { signals: d.signals } : {}),
+        ...(d.positionHistory ? { positionHistory: d.positionHistory } : {}),
       });
       break;
     }
@@ -129,6 +132,9 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
     }
     case "signals":
       setState({ signals: msg.data as SignalRow[] });
+      break;
+    case "position-history":
+      setState({ positionHistory: msg.data as PositionSummary[] });
       break;
     case "prices": {
       const p = msg.data as PricesEvent;

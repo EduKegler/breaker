@@ -335,6 +335,61 @@ describe("Exchange server", () => {
     expect(res.body.error).toContain("No streamer");
   });
 
+  it("GET /position-history returns empty when no positions", async () => {
+    const app = createApp(deps);
+    const res = await request(app).get("/position-history");
+
+    expect(res.status).toBe(200);
+    expect(res.body.positions).toEqual([]);
+  });
+
+  it("GET /position-history returns aggregated positions", async () => {
+    // Insert a signal with a filled entry + SL
+    store.insertSignal({
+      alert_id: "ph-test-001",
+      source: "strategy-runner",
+      asset: "BTC",
+      side: "LONG",
+      entry_price: 95000,
+      stop_loss: 94000,
+      take_profits: "[]",
+      risk_check_passed: 1,
+      risk_check_reason: null,
+      strategy_name: "donchian-adx",
+    });
+    store.insertOrder({
+      signal_id: 1, hl_order_id: "HL-E1", coin: "BTC", side: "buy",
+      size: 0.01, price: 95000, order_type: "market", tag: "entry",
+      status: "filled", mode: "testnet", filled_at: "2024-01-10T10:00:00",
+    });
+    store.insertFill({
+      order_id: 1, price: 95000, size: 0.01, fee: 0.5,
+      timestamp: "2024-01-10T10:00:00",
+    });
+    store.insertOrder({
+      signal_id: 1, hl_order_id: "HL-SL1", coin: "BTC", side: "sell",
+      size: 0.01, price: 94000, order_type: "stop", tag: "sl",
+      status: "filled", mode: "testnet", filled_at: "2024-01-10T10:30:00",
+    });
+    store.insertFill({
+      order_id: 2, price: 94000, size: 0.01, fee: 0.5,
+      timestamp: "2024-01-10T10:30:00",
+    });
+
+    const app = createApp(deps);
+    const res = await request(app).get("/position-history");
+
+    expect(res.status).toBe(200);
+    expect(res.body.positions).toHaveLength(1);
+    expect(res.body.positions[0].coin).toBe("BTC");
+    expect(res.body.positions[0].direction).toBe("LONG");
+    expect(res.body.positions[0].status).toBe("CLOSED");
+    expect(res.body.positions[0].entryPrice).toBe(95000);
+    expect(res.body.positions[0].exitPrice).toBe(94000);
+    expect(res.body.positions[0].realizedPnl).toBeLessThan(0);
+    expect(res.body.positions[0].events.length).toBeGreaterThan(0);
+  });
+
   it("GET /signals returns recent signals from store", async () => {
     store.insertSignal({
       alert_id: "sig-001",

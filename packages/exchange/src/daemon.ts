@@ -26,6 +26,7 @@ import { StrategyRunner } from "./application/strategy-runner.js";
 import { ReconcileLoop } from "./application/reconcile-loop.js";
 import { resolveHistoricalStatuses } from "./application/resolve-historical-statuses.js";
 import { createApp } from "./create-app.js";
+import { aggregatePositionHistory } from "./domain/aggregate-position-history.js";
 import { WsBroker } from "./lib/ws-broker.js";
 import type { HlClient } from "./types/hl-client.js";
 import type { SignalHandlerDeps } from "./application/handle-signal.js";
@@ -148,6 +149,7 @@ async function syncPositionsAndBroadcast(deps: {
   wsBroker.broadcastEvent("positions", positionBook.getAll());
   wsBroker.broadcastEvent("orders", store.getRecentOrders(100));
   wsBroker.broadcastEvent("open-orders", openOrders);
+  wsBroker.broadcastEvent("position-history", aggregatePositionHistory(store.getPositionHistoryRows(500)));
 }
 
 async function main() {
@@ -219,6 +221,7 @@ async function main() {
     onSignalProcessed: () => {
       wsBroker.broadcastEvent("positions", positionBook.getAll());
       wsBroker.broadcastEvent("orders", store.getRecentOrders(100));
+      wsBroker.broadcastEvent("position-history", aggregatePositionHistory(store.getPositionHistoryRows(500)));
       setTimeout(() => {
         hlClient.getOpenOrders(env.HL_ACCOUNT_ADDRESS).then((oo) => {
           wsBroker.broadcastEvent("open-orders", oo);
@@ -440,6 +443,7 @@ async function main() {
       equity: store.getEquitySnapshots(500),
       health: { status: "ok", mode: config.mode, coins: coinsSummary, dryRun: isDryRun, uptime: process.uptime() },
       signals: store.getRecentSignals(100),
+      positionHistory: aggregatePositionHistory(store.getPositionHistoryRows(500)),
     };
     ws.send(JSON.stringify({ type: "snapshot", timestamp: new Date().toISOString(), data: snapshot }));
   });

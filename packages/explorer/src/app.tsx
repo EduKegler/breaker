@@ -12,7 +12,7 @@ import { useToasts } from "./lib/use-toasts.js";
 import { EquityChart } from "./components/equity-chart.js";
 import { CandlestickChart } from "./components/candlestick-chart.js";
 import { PositionCard } from "./components/position-card.js";
-import { OrderTable } from "./components/order-table.js";
+import { PositionHistoryTable } from "./components/position-history-table.js";
 import { OpenOrdersTable } from "./components/open-orders-table.js";
 import { SignalPopover } from "./components/signal-popover.js";
 import { ToastContainer } from "./components/toast-container.js";
@@ -55,7 +55,7 @@ export function App() {
   const positions = useStore((s) => s.positions);
   const openOrders = useStore((s) => s.openOrders);
   const equity = useStore((s) => s.equity);
-  const orders = useStore((s) => s.orders);
+  const positionHistory = useStore((s) => s.positionHistory);
   const account = useStore((s) => s.account);
   const httpError = useStore((s) => s.httpError);
   const selectedCoin = useStore((s) => s.selectedCoin);
@@ -362,9 +362,9 @@ export function App() {
 
         <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
-            Order Log
+            Position History
           </h2>
-          <OrderTable orders={orders} />
+          <PositionHistoryTable positions={positionHistory} />
         </section>
       </main>
       <ToastContainer />

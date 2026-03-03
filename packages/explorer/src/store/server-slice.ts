@@ -9,6 +9,7 @@ export const createServerSlice: StateCreator<StoreState, [], [], ServerSlice> = 
   openOrders: [],
   equity: [],
   signals: [],
+  positionHistory: [],
   account: null,
   httpError: false,
 });

@@ -49,8 +49,9 @@ export const createActions: StateCreator<StoreState, [], [], Actions & { _toastF
       api.equity(),
       api.signals(),
       api.account(),
+      api.positionHistory(),
     ]);
-    const [health, config, positions, orders, openOrders, equity, signals, account] = results;
+    const [health, config, positions, orders, openOrders, equity, signals, account, positionHistory] = results;
 
     set({
       health: health.status === "fulfilled" ? health.value : null,
@@ -61,6 +62,7 @@ export const createActions: StateCreator<StoreState, [], [], Actions & { _toastF
       openOrders: openOrders.status === "fulfilled" ? openOrders.value.orders : [],
       equity: equity.status === "fulfilled" ? equity.value.snapshots : [],
       signals: signals.status === "fulfilled" ? signals.value.signals : [],
+      positionHistory: positionHistory.status === "fulfilled" ? positionHistory.value.positions : [],
       account: account.status === "fulfilled" ? account.value : null,
     });
   },

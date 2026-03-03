@@ -261,6 +261,88 @@ describe("SqliteStore", () => {
     });
   });
 
+  describe("getPositionHistoryRows", () => {
+    function insertFullPosition(opts: { alertId: string; asset: string; side: string; strategyName: string | null; riskCheckPassed: number; entryFilled: boolean }) {
+      const sigId = store.insertSignal({
+        alert_id: opts.alertId, source: "strategy-runner", asset: opts.asset,
+        side: opts.side, entry_price: 95000, stop_loss: 94000,
+        take_profits: "[]", risk_check_passed: opts.riskCheckPassed, risk_check_reason: null,
+        strategy_name: opts.strategyName,
+      });
+      store.insertOrder({
+        signal_id: sigId, hl_order_id: null, coin: opts.asset, side: "buy",
+        size: 0.01, price: 95000, order_type: "market", tag: "entry",
+        status: opts.entryFilled ? "filled" : "pending", mode: "testnet",
+        filled_at: opts.entryFilled ? "2024-01-10T10:00:00" : null,
+      });
+      if (opts.entryFilled) {
+        store.insertFill({ order_id: sigId, price: 95000, size: 0.01, fee: 0.5, timestamp: "2024-01-10T10:00:00" });
+        store.insertOrder({
+          signal_id: sigId, hl_order_id: null, coin: opts.asset, side: "sell",
+          size: 0.01, price: 94000, order_type: "stop", tag: "sl",
+          status: "pending", mode: "testnet", filled_at: null,
+        });
+      }
+      return sigId;
+    }
+
+    it("returns rows for signals with risk_check_passed=1 and entry filled", () => {
+      insertFullPosition({ alertId: "ph-1", asset: "BTC", side: "LONG", strategyName: "donchian-adx", riskCheckPassed: 1, entryFilled: true });
+      const rows = store.getPositionHistoryRows(100);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows[0].signal_id).toBe(1);
+      expect(rows[0].asset).toBe("BTC");
+    });
+
+    it("excludes signals with risk_check_passed=0", () => {
+      insertFullPosition({ alertId: "ph-rejected", asset: "BTC", side: "LONG", strategyName: null, riskCheckPassed: 0, entryFilled: true });
+      const rows = store.getPositionHistoryRows(100);
+      expect(rows).toHaveLength(0);
+    });
+
+    it("excludes signals without a filled entry order", () => {
+      insertFullPosition({ alertId: "ph-unfilled", asset: "BTC", side: "LONG", strategyName: null, riskCheckPassed: 1, entryFilled: false });
+      const rows = store.getPositionHistoryRows(100);
+      expect(rows).toHaveLength(0);
+    });
+
+    it("orders by signal_id DESC then order_id ASC", () => {
+      insertFullPosition({ alertId: "ph-first", asset: "BTC", side: "LONG", strategyName: null, riskCheckPassed: 1, entryFilled: true });
+      insertFullPosition({ alertId: "ph-second", asset: "ETH", side: "SHORT", strategyName: null, riskCheckPassed: 1, entryFilled: true });
+
+      const rows = store.getPositionHistoryRows(100);
+      // signal_id DESC: second signal (id=2) first
+      expect(rows[0].signal_id).toBe(2);
+
+      // Within same signal, order_id ASC
+      const sig2Rows = rows.filter((r) => r.signal_id === 2);
+      for (let i = 1; i < sig2Rows.length; i++) {
+        expect(sig2Rows[i].order_id).toBeGreaterThanOrEqual(sig2Rows[i - 1].order_id);
+      }
+    });
+
+    it("includes fill data via LEFT JOIN", () => {
+      insertFullPosition({ alertId: "ph-fill", asset: "BTC", side: "LONG", strategyName: "ema-pullback", riskCheckPassed: 1, entryFilled: true });
+      const rows = store.getPositionHistoryRows(100);
+      const entryRow = rows.find((r) => r.tag === "entry");
+      expect(entryRow).toBeDefined();
+      expect(entryRow!.fill_price).toBe(95000);
+      expect(entryRow!.fill_size).toBe(0.01);
+      expect(entryRow!.fee).toBe(0.5);
+    });
+
+    it("respects limit parameter", () => {
+      // Create 3 positions
+      insertFullPosition({ alertId: "ph-l1", asset: "BTC", side: "LONG", strategyName: null, riskCheckPassed: 1, entryFilled: true });
+      insertFullPosition({ alertId: "ph-l2", asset: "ETH", side: "LONG", strategyName: null, riskCheckPassed: 1, entryFilled: true });
+      insertFullPosition({ alertId: "ph-l3", asset: "SOL", side: "LONG", strategyName: null, riskCheckPassed: 1, entryFilled: true });
+
+      // With very small limit we should get fewer rows
+      const rows = store.getPositionHistoryRows(2);
+      expect(rows.length).toBeLessThanOrEqual(2);
+    });
+  });
+
   describe("equity snapshots", () => {
     it("inserts and retrieves equity snapshots", () => {
       store.insertEquitySnapshot({

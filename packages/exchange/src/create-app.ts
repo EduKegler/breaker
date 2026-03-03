@@ -9,6 +9,7 @@ import { replayStrategy } from "./application/replay-strategy.js";
 import type { CandleStreamer } from "./adapters/candle-streamer.js";
 import type { StrategyRunner } from "./application/strategy-runner.js";
 import { intervalToMs, CandleInterval, atr, computeMinWarmupBars, type Strategy, type CandleCache } from "@breaker/backtest";
+import { aggregatePositionHistory } from "./domain/aggregate-position-history.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
@@ -537,6 +538,12 @@ export function createApp(deps: ServerDeps): express.Express {
     } catch (err) {
       res.status(500).json({ status: "error", error: (err as Error).message });
     }
+  });
+
+  app.get("/position-history", (_req, res) => {
+    const rows = deps.store.getPositionHistoryRows(500);
+    const positions = aggregatePositionHistory(rows);
+    res.json({ positions });
   });
 
   return app;

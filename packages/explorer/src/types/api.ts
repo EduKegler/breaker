@@ -132,3 +132,28 @@ export interface ConfigResponse {
   dataSource?: string;
   availableStrategies: string[];
 }
+
+export interface PositionEvent {
+  type: string;
+  timestamp: string;
+  details: string;
+}
+
+export interface PositionSummary {
+  signalId: number;
+  coin: string;
+  direction: "LONG" | "SHORT";
+  strategy: string | null;
+  mode: string;
+  size: number;
+  entryPrice: number;
+  exitPrice: number | null;
+  realizedPnl: number | null;
+  pnlPercent: number | null;
+  totalFees: number;
+  durationMs: number | null;
+  openedAt: string;
+  closedAt: string | null;
+  status: "OPEN" | "CLOSED";
+  events: PositionEvent[];
+}
