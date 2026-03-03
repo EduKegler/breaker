@@ -12,6 +12,7 @@ import type { ExchangeConfig } from "../types/config.js";
 import type { PositionBook } from "../domain/position-book.js";
 import { handleSignal, type SignalHandlerDeps } from "./handle-signal.js";
 import type { EventLog } from "../adapters/event-log.js";
+import type { Orchestrator } from "../domain/orchestrator.js";
 import { truncatePrice } from "@breaker/kit";
 import { logger } from "../lib/logger.js";
 
@@ -30,6 +31,7 @@ export interface StrategyRunnerDeps {
   positionBook: PositionBook;
   signalHandlerDeps: SignalHandlerDeps;
   eventLog: EventLog;
+  orchestrator?: Orchestrator;
   onNewCandle?: (candle: Candle) => void;
   onStaleData?: (info: { lastCandleAt: number; silentMs: number }) => void;
 }
@@ -222,6 +224,7 @@ export class StrategyRunner {
       this.consecutiveLosses = 0;
       this.lastTradeDay = currentDay;
     }
+    this.deps.orchestrator?.resetDayIfNeeded(currentDay);
 
     const higherTimeframes = this.buildHigherTimeframes(candles);
 
@@ -303,6 +306,7 @@ export class StrategyRunner {
       if (pos.unrealizedPnl < 0) this.consecutiveLosses++;
       else this.consecutiveLosses = 0;
       this.dailyPnl += pos.unrealizedPnl;
+      this.deps.orchestrator?.recordClose(this.getModuleId(), pos.unrealizedPnl);
       log.info({
         action: "positionClosed",
         coin: this.deps.coin,
@@ -441,6 +445,15 @@ export class StrategyRunner {
   ): Promise<void> {
     this.barsSinceExit++;
 
+    // Orchestrator gate check (shared state: daily loss, trades/day, module pause)
+    if (this.deps.orchestrator) {
+      const gate = this.deps.orchestrator.canSignal(this.getModuleId());
+      if (!gate.allowed) {
+        log.debug({ action: "orchestratorBlocked", reason: gate.reason }, "Blocked by orchestrator");
+        return;
+      }
+    }
+
     const tradingAllowed = canTrade({
       barsSinceExit: this.barsSinceExit,
       cooldownBars: this.deps.config.guardrails.cooldownBars,
@@ -448,7 +461,7 @@ export class StrategyRunner {
       // Matches backtest engine default; keeps exchange behavior identical to
       // backtested results. Not configurable to prevent config drift.
       maxConsecutiveLosses: 2,
-      dailyPnl: this.dailyPnl,
+      dailyPnl: this.deps.orchestrator?.getDailyPnl() ?? this.dailyPnl,
       maxDailyLossUsd: this.deps.config.guardrails.maxDailyLossR * this.deps.config.sizing.riskPerTradeUsd,
       tradesToday: this.tradesToday,
       maxTradesPerDay: this.deps.config.guardrails.maxTradesPerDay,
@@ -499,6 +512,17 @@ export class StrategyRunner {
       tradesToday: this.tradesToday,
     }, "Strategy signal generated");
 
+    // Deconfliction: buffer same-bar signals across runners for the same coin
+    if (this.deps.orchestrator) {
+      const resolution = await this.deps.orchestrator.proposeSignal(
+        this.getModuleId(), this.deps.coin, candles[index].t, signal.direction,
+      );
+      if (!resolution.proceed) {
+        log.info({ action: "signalDeconflicted", reason: resolution.reason }, "Signal deconflicted");
+        return;
+      }
+    }
+
     this.signalCounter++;
     const alertId = `runner-${Date.now()}-${this.signalCounter}`;
 
@@ -518,6 +542,7 @@ export class StrategyRunner {
 
     if (result.success) {
       this.tradesToday++;
+      this.deps.orchestrator?.recordEntry(this.getModuleId());
       this.lastExitLevel = null;
       this.trailingSlOid = null;
       this.entryBarIndex = index;
@@ -609,6 +634,10 @@ export class StrategyRunner {
 
   getStrategyName(): string {
     return this.deps.strategyConfigName;
+  }
+
+  getModuleId(): string {
+    return `${this.deps.coin}:${this.deps.strategyConfigName}`;
   }
 
   setAutoTradingEnabled(enabled: boolean): void {

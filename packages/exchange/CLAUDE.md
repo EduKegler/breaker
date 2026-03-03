@@ -11,6 +11,7 @@ src/
 │   ├── signal-to-intent.ts  # Signal → OrderIntent conversion with sizing
 │   ├── position-book.ts # In-memory position state, price updates, PnL
 │   ├── recover-sl-tp.ts # Recover SL/TP from HL open orders (both are trigger orders)
+│   ├── orchestrator.ts   # Centralized daily PnL, signal deconfliction, force close gate
 │   └── order-status.ts  # HL → internal order status mapping
 ├── adapters/            # External I/O (injectable, mockable)
 │   ├── hyperliquid-client.ts  # SDK wrapper (HyperliquidClient class)
@@ -67,6 +68,17 @@ src/
 - When `autoTradingEnabled: false` blocks a strategy-runner signal, an `auto_trading_blocked` event is appended to the NDJSON event log for diagnostics
 - `/quick-signal` delegates SL/TP computation to `strategy.computeLevels(ctx, direction)` via `runner.generateManualSignal()` — produces levels for any direction without checking entry conditions. Falls back to ATR-based SL (no TPs) when strategy lacks `computeLevels` or no runner found
 - `StrategyRunner.getStrategyName()` returns the config identifier (e.g. "keltner-rsi2"), NOT the strategy's display name (e.g. "BTC 15m Mean Reversion — Keltner RSI2")
+
+## Orchestrator (domain/orchestrator.ts)
+- Pure domain object (zero I/O, synchronous except `proposeSignal` Promise)
+- `canSignal()` is the central gate: daily loss >= 2R → block all; trades/day >= max → block; module paused (2 consecutive losses) → block
+- `proposeSignal()` buffers signals for 50ms to deconflict same-bar, same-coin signals: same direction → highest priority wins; opposite direction → both rejected
+- Module types and priority: breakout(4) > pullback(3) > mean-reversion(2) > trend-following(1)
+- Heartbeat in daemon.ts (30s interval) evaluates `shouldForceClose()` to force close positions between candle closes
+- Decision callback persists every decision to EventLog NDJSON (type: `orchestrator_*`)
+- Orchestrator is **optional** in `StrategyRunnerDeps` → existing tests don't break
+- Daily PnL is centralized: all runners report via `recordClose()`, any runner reads via `getDailyPnl()`
+- `moduleType` field in CoinStrategySchema (optional) overrides the fallback map in daemon.ts
 
 ## Known pitfalls
 - Must build `@breaker/backtest` before running exchange tests (workspace dependency)

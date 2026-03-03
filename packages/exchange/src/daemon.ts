@@ -21,6 +21,7 @@ import { HttpAlertsClient } from "./adapters/alerts-client.js";
 import { PositionBook } from "./domain/position-book.js";
 import { resolveOrderStatus } from "./domain/order-status.js";
 import { recoverSlTp } from "./domain/recover-sl-tp.js";
+import { Orchestrator, type ModuleType } from "./domain/orchestrator.js";
 import { StrategyRunner } from "./application/strategy-runner.js";
 import { ReconcileLoop } from "./application/reconcile-loop.js";
 import { resolveHistoricalStatuses } from "./application/resolve-historical-statuses.js";
@@ -228,6 +229,34 @@ async function main() {
     },
   };
 
+  // Orchestrator: centralized daily PnL, trade count, signal deconfliction
+  const MODULE_TYPE_FALLBACK: Record<string, ModuleType> = {
+    "donchian-adx": "breakout",
+    "keltner-rsi2": "mean-reversion",
+    "ema-pullback": "pullback",
+  };
+
+  const orchestrator = new Orchestrator({
+    maxDailyLossR: config.guardrails.maxDailyLossR,
+    riskPerTradeUsd: config.sizing.riskPerTradeUsd,
+    maxTradesPerDay: config.guardrails.maxTradesPerDay,
+  });
+
+  for (const coinCfg of config.coins) {
+    for (const strat of coinCfg.strategies) {
+      const moduleType: ModuleType = strat.moduleType ?? MODULE_TYPE_FALLBACK[strat.name] ?? "breakout";
+      orchestrator.registerModule(`${coinCfg.coin}:${strat.name}`, moduleType);
+    }
+  }
+
+  orchestrator.setDecisionCallback((d) => {
+    eventLog.append({
+      type: `orchestrator_${d.type}`,
+      timestamp: d.timestamp,
+      data: { moduleId: d.moduleId, ...d.data },
+    }).catch(() => {});
+  });
+
   // CandleStreamer deduplication: key = "COIN:interval"
   const streamers = new Map<string, CandleStreamer>();
   for (const coinCfg of config.coins) {
@@ -290,6 +319,7 @@ async function main() {
         positionBook,
         signalHandlerDeps,
         eventLog,
+        orchestrator,
         onStaleData: ({ lastCandleAt, silentMs }) => {
           const lastAt = lastCandleAt > 0 ? new Date(lastCandleAt).toISOString() : "never";
           const silentMin = Math.round(silentMs / 60_000);
@@ -493,12 +523,43 @@ async function main() {
   reconciler.start();
   startPriceTicker();
 
+  // Orchestrator heartbeat: force close open positions when daily loss >= 2R.
+  // SL can be hit between candle closes — this timer ensures force close is
+  // evaluated every 30s, not only on candle close events.
+  const HEARTBEAT_MS = 30_000;
+  const heartbeatInterval = setInterval(async () => {
+    if (!orchestrator.shouldForceClose()) return;
+    const openPositions = positionBook.getAll();
+    if (openPositions.length === 0) return;
+
+    for (const pos of openPositions) {
+      log.warn({ coin: pos.coin, dailyPnl: orchestrator.getDailyPnl() },
+        "ORCHESTRATOR: Force closing — daily loss >= 2R");
+      try {
+        const closeSide = pos.direction === "long" ? "sell" : "buy";
+        await hlClient.placeMarketOrder(pos.coin, closeSide === "buy", pos.size);
+        positionBook.close(pos.coin);
+        eventLog.append({
+          type: "orchestrator_force_close",
+          timestamp: new Date().toISOString(),
+          data: { coin: pos.coin, direction: pos.direction, dailyPnl: orchestrator.getDailyPnl() },
+        }).catch(() => {});
+        alertsClient.sendText(
+          `FORCE CLOSE: ${pos.coin} ${pos.direction} — daily loss >= 2R ($${orchestrator.getDailyPnl().toFixed(2)})`,
+        ).catch(() => {});
+      } catch (err) {
+        log.error({ coin: pos.coin, err }, "Force close failed");
+      }
+    }
+  }, HEARTBEAT_MS);
+
   // Graceful shutdown
   const shutdown = async () => {
     logger.info("Shutting down...");
     for (const runner of runners) runner.stop();
     reconciler.stop();
     if (priceTickInterval) clearInterval(priceTickInterval);
+    clearInterval(heartbeatInterval);
     eventStream?.stop();
     wsBroker.close();
 

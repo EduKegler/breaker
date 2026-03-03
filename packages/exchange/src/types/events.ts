@@ -23,6 +23,12 @@ export type EventType =
   | "ws_reconnected"
   | "ws_disconnected"
   | "ws_max_reconnect_failed"
+  | "orchestrator_signal_allowed"
+  | "orchestrator_signal_blocked"
+  | "orchestrator_signal_deconflicted"
+  | "orchestrator_force_close_triggered"
+  | "orchestrator_force_close"
+  | "orchestrator_day_reset"
   | "error";
 
 export interface ExchangeEvent {
