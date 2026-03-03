@@ -54,7 +54,7 @@ export function createDonchianAdx(
     name: "BTC 15m Breakout — Donchian ADX",
     params,
     requiredTimeframes: ["1h", "1d"],
-    requiredWarmup: { source: 52, "1h": 15, "1d": 51 },
+    requiredWarmup: { source: 52, "1h": 15, "1d": 201 },
 
     init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
       dcSlowCache = donchian(candles, params.dcSlow.value);
@@ -69,7 +69,7 @@ export function createDonchianAdx(
       dailyCandles = higherTimeframes["1d"] ?? [];
       if (dailyCandles.length > 0) {
         const dailyCloses = dailyCandles.map((c) => c.c);
-        dailyEmaCache = ema(dailyCloses, 50);
+        dailyEmaCache = ema(dailyCloses, 200);
       }
     },
 
@@ -108,9 +108,9 @@ export function createDonchianAdx(
 
       // Daily EMA 50 regime filter — only use COMPLETED daily bars
       const dailyCandlesRef = dailyCandles ?? higherTimeframes["1d"];
-      if (!dailyCandlesRef || dailyCandlesRef.length < 51) return null;
+      if (!dailyCandlesRef || dailyCandlesRef.length < 201) return null;
 
-      const ema50Daily = dailyEmaCache ?? ema(dailyCandlesRef.map((c) => c.c), 50);
+      const ema50Daily = dailyEmaCache ?? ema(dailyCandlesRef.map((c) => c.c), 200);
       // A daily bar starting at t is complete when t + 1D <= currentCandle.t
       let dailyEma = NaN;
       for (let j = dailyCandlesRef.length - 1; j >= 0; j--) {

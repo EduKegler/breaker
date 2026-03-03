@@ -48,10 +48,10 @@ export function computeScore(
   // Component scores (0-1 range before weighting)
   const pfScore = Math.min(pf / 2.0, 1.0);
   const avgRScore = Math.min(avgR / 0.5, 1.0);
-  const wrScore = Math.min(wr / 40, 1.0);
+  const wrScore = Math.min(wr / 60, 1.0);
   const ddScore = Math.max(0, 1 - dd / 15);
-  // Complexity: fewer params = better. Baseline of 5, penalize above.
-  const complexityScore = Math.min(1, Math.max(0, 1 - (paramCount - 5) / 15));
+  // Complexity: fewer params = better. Baseline of 3, zero at 10 (KB cap is 6-8).
+  const complexityScore = Math.min(1, Math.max(0, 1 - (paramCount - 3) / 7));
   const sampleScore = Math.min(tradeCount / 150, 1.0);
 
   const raw = {

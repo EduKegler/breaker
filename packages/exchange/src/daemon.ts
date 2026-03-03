@@ -485,6 +485,24 @@ async function main() {
 
       onFill: (fills: WsUserFill[], isSnapshot: boolean) => {
         if (isSnapshot) return;
+
+        for (const fill of fills) {
+          const localOrder = store.getOrderByHlOid(String(fill.oid));
+          if (!localOrder || localOrder.id == null) continue;
+          try {
+            store.insertFill({
+              order_id: localOrder.id,
+              price: parseFloat(fill.px),
+              size: parseFloat(fill.sz),
+              fee: parseFloat(fill.fee),
+              timestamp: new Date(fill.time).toISOString(),
+            });
+            log.info({ oid: fill.oid, tag: localOrder.tag, price: fill.px, size: fill.sz }, "Fill recorded");
+          } catch (err) {
+            log.warn({ oid: fill.oid, err }, "Failed to record fill (may be duplicate)");
+          }
+        }
+
         syncPositionsAndBroadcast(syncDeps).catch((err) => {
           log.warn({ action: "syncAfterFill", err }, "syncAndBroadcast failed after fill");
         });

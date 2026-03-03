@@ -77,7 +77,7 @@ describe("createKeltnerRsi2", () => {
     expect(strategy.params.rsi2Short.value).toBe(80);
     expect(strategy.params.maxTradesDay.value).toBe(3);
     expect(strategy.params.timeoutBars.value).toBe(8);
-    expect(strategy.params.atrStopMult.value).toBe(1.5);
+    expect(strategy.params.atrStopMult.value).toBe(3.0);
     expect(strategy.requiredTimeframes).toEqual(["1h"]);
   });
 

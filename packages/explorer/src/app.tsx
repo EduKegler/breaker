@@ -315,7 +315,30 @@ export function App() {
           <CandlestickChart />
         </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
+        {/* ── Positions + Equity row ───── */}
+        {positions.length > 0 && (
+          <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
+              Positions
+              <span className="ml-2 inline-flex items-center gap-1 text-amber font-mono text-[10px] normal-case">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
+                {positions.length} open
+              </span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {positions.map((p) => (
+                <PositionCard
+                  key={p.coin}
+                  position={p}
+                  openOrders={openOrders}
+                  onClose={closePosition}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        <div className={`grid gap-4 ${positions.length > 0 ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-[1fr_320px]"}`}>
           <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
               Equity Curve
@@ -323,47 +346,45 @@ export function App() {
             <EquityChart snapshots={equity} />
           </section>
 
-          <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
-              Positions
-            </h2>
-            {positions.length ? (
-              <div className="space-y-3">
-                {positions.map((p) => (
-                  <PositionCard
-                    key={p.coin}
-                    position={p}
-                    openOrders={openOrders}
-                    onClose={closePosition}
-                  />
-                ))}
+          {positions.length === 0 && (
+            <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4 flex flex-col items-center justify-center">
+              <div className="text-txt-secondary/40 mb-2">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.281m5.94 2.28l-2.28 5.941" />
+                </svg>
               </div>
-            ) : (
-              <p className="text-txt-secondary text-sm font-mono">
-                No open positions
-              </p>
-            )}
-          </section>
+              <p className="text-txt-secondary/50 text-xs font-mono">No open positions</p>
+            </section>
+          )}
         </div>
 
-        <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
-          <div className="flex items-center gap-3 mb-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary">
-              Open Orders
-            </h2>
-            {openOrders.length > 0 && (
+        {/* ── Open Orders (only when non-empty) ── */}
+        {openOrders.length > 0 && (
+          <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary">
+                Open Orders
+              </h2>
               <span className="px-1.5 py-0.5 text-[10px] font-mono font-medium rounded-sm bg-amber/10 text-amber">
                 {openOrders.length}
               </span>
+            </div>
+            <OpenOrdersTable orders={openOrders} onCancel={cancelOrder} />
+          </section>
+        )}
+
+        {/* ── Position History ──────────── */}
+        <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
+          <div className="flex items-center gap-3 mb-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary">
+              Position History
+            </h2>
+            {positionHistory.length > 0 && (
+              <span className="px-1.5 py-0.5 text-[10px] font-mono font-medium rounded-sm bg-terminal-border text-txt-secondary">
+                {positionHistory.length}
+              </span>
             )}
           </div>
-          <OpenOrdersTable orders={openOrders} onCancel={cancelOrder} />
-        </section>
-
-        <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary mb-3">
-            Position History
-          </h2>
           <PositionHistoryTable positions={positionHistory} />
         </section>
       </main>

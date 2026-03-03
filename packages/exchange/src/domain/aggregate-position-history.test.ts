@@ -160,6 +160,29 @@ describe("aggregatePositionHistory", () => {
     expect(pos.realizedPnl).toBeCloseTo(6.5, 2);
   });
 
+  it("falls back to order price/size when fill record is missing (legacy data)", () => {
+    const rows: PositionHistoryRow[] = [
+      row({
+        order_id: 1, tag: "entry", status: "filled", price: 95000, size: 0.01,
+        fill_price: null, fill_size: null, fee: null, fill_ts: null,
+        filled_at: "2024-01-10T10:00:02",
+      }),
+      row({
+        order_id: 2, tag: "sl", status: "pending", price: 94000, size: 0.01,
+        order_side: "sell", order_type: "stop",
+        fill_price: null, fill_size: null, fee: null, fill_ts: null, filled_at: null,
+      }),
+    ];
+
+    const result = aggregatePositionHistory(rows);
+    expect(result).toHaveLength(1);
+
+    const pos = result[0];
+    expect(pos.status).toBe("OPEN");
+    expect(pos.entryPrice).toBe(95000);
+    expect(pos.size).toBe(0.01);
+  });
+
   it("returns empty array for empty input", () => {
     expect(aggregatePositionHistory([])).toEqual([]);
   });

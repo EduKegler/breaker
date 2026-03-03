@@ -1,5 +1,5 @@
 {
-  "dateRange": "last365",
+  "dateRange": "last240",
   "criteria": {
     "minTrades": 70,
     "minPF": 1.8,
@@ -22,7 +22,7 @@
   },
   "strategyProfiles": {
     "breakout": {
-      "minPF": 1.3, "maxDD": 10, "minWR": 40, "minTrades": 50,
+      "minPF": 1.3, "maxDD": 10, "minWR": 40, "minTrades": 50, "minAvgR": 0.15,
       "maxIterations": 15, "maxFreeVariables": 8,
       "coreParameters": [
         { "name": "dcSlow",       "min": 30, "max": 60, "step": 5 },
@@ -34,8 +34,11 @@
         "Donchian channel entry (dcSlow breakout)",
         "Donchian trailing exit (dcFast)",
         "ADX consolidation filter (adxThreshold < X)",
-        "EMA50 daily regime filter (regimeBull/regimeBear)",
-        "ATR-based safety stop (atrStopMult)"
+        "EMA200 daily regime filter (regimeBull/regimeBear)",
+        "Volume confirmation (volume > X * SMA(vol,20))",
+        "Low-liquidity gate (no entries 02:00-06:00 UTC)",
+        "ATR-based safety stop (atrStopMult)",
+        "Timeout exit (timeoutBars)"
       ]
     },
     "mean-reversion": {
@@ -46,13 +49,14 @@
         { "name": "rsi2Long",     "min": 10,  "max": 30,  "step": 5 },
         { "name": "rsi2Short",    "min": 70,  "max": 90,  "step": 5 },
         { "name": "timeoutBars",  "min": 4,   "max": 12,  "step": 2 },
-        { "name": "atrStopMult",  "min": 1.0, "max": 2.5, "step": 0.25 }
+        { "name": "atrStopMult",  "min": 3.0, "max": 5.0, "step": 0.5 }
       ],
       "designChecklist": [
         "Keltner channel mean-reversion entry",
         "RSI2 oversold/overbought confirmation",
-        "ATR-based stop loss",
-        "Regime filter (trend vs range)"
+        "Regime filter — ADX < threshold on 1H (mandatory KB §4 rule 3)",
+        "Wide catastrophic stop (3-5x ATR 1H) or no stop (KB §4 rule 4)",
+        "Timeout exit (timeoutBars)"
       ]
     },
     "trend-continuation": {

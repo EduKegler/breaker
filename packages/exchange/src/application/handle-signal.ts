@@ -272,9 +272,18 @@ async function handleSignalInner(
     filled_at: new Date().toISOString(),
   });
 
+  const entryFilledAt = new Date().toISOString();
+  store.insertFill({
+    order_id: entryOrderId,
+    price: actualPrice,
+    size: actualSize,
+    fee: 0,
+    timestamp: entryFilledAt,
+  });
+
   await eventLog.append({
     type: "order_placed",
-    timestamp: new Date().toISOString(),
+    timestamp: entryFilledAt,
     data: { signalId, orderId: entryOrderId, hlOrderId: entryResult.orderId, tag: "entry", filledSize: actualSize, avgPrice: actualPrice },
   });
 

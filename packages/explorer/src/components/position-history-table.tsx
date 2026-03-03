@@ -27,17 +27,16 @@ function formatDate(dt: string): string {
 }
 
 function formatPrice(price: number | null): string {
-  if (price == null) return "—";
+  if (price == null) return "\u2014";
   return price >= 100 ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : `$${price.toFixed(4)}`;
 }
 
 function EventTimeline({ events }: { events: PositionEvent[] }) {
   return (
-    <div className="py-2 px-4">
+    <div className="py-3 px-4">
       <div className="relative ml-3">
         {events.map((ev, i) => (
           <div key={i} className="flex items-start gap-3 pb-2 last:pb-0">
-            {/* Vertical line connector */}
             <div className="relative flex flex-col items-center">
               <div
                 className={`w-2 h-2 rounded-full shrink-0 mt-1 ${eventColors[ev.type] ?? "bg-txt-secondary"}`}
@@ -83,8 +82,8 @@ export function PositionHistoryTable({ positions }: { positions: PositionSummary
   }
 
   return (
-    <div className="overflow-y-auto max-h-[500px]">
-      <table className="w-full text-xs">
+    <div className="overflow-x-auto overflow-y-auto max-h-[500px]">
+      <table className="w-full text-xs min-w-[860px]">
         <thead className="sticky top-0 bg-terminal-surface z-10">
           <tr className="text-left text-txt-secondary uppercase tracking-wider border-b border-terminal-border">
             <th className="pb-2 pr-2 font-medium w-6" />
@@ -109,102 +108,98 @@ export function PositionHistoryTable({ positions }: { positions: PositionSummary
             const isLoss = pos.realizedPnl != null && pos.realizedPnl < 0;
 
             return (
-              <tr key={pos.signalId} className="contents">
-                {/* Main row */}
+              <tr
+                key={pos.signalId}
+                className={`border-b border-terminal-border/50 hover:bg-white/[0.02] cursor-pointer ${
+                  isOpen ? "border-l-2 border-l-profit bg-profit/[0.03]" : ""
+                }`}
+                onClick={() => toggleExpand(pos.signalId)}
+              >
                 <td colSpan={12} className="p-0">
-                  <div
-                    className={`border-b border-terminal-border/50 hover:bg-white/[0.02] cursor-pointer ${
-                      isOpen ? "border-l-2 border-l-profit bg-profit/[0.03]" : ""
-                    }`}
-                    onClick={() => toggleExpand(pos.signalId)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggleExpand(pos.signalId); }}
-                  >
-                    <div className="grid grid-cols-[24px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] items-center py-1.5">
-                      {/* Chevron */}
-                      <div className="text-txt-secondary/60 text-center">
-                        <span className={`inline-block transition-transform ${isExpanded ? "rotate-90" : ""}`}>
-                          &#9656;
-                        </span>
-                      </div>
-
-                      {/* Coin */}
-                      <div className="pr-3 font-display font-semibold text-txt-primary">
-                        {pos.coin}
-                      </div>
-
-                      {/* Direction */}
-                      <div className={`pr-3 font-semibold uppercase ${pos.direction === "LONG" ? "text-profit" : "text-loss"}`}>
-                        {pos.direction}
-                      </div>
-
-                      {/* Strategy */}
-                      <div className="pr-3 text-txt-secondary truncate">
-                        {pos.strategy ? strategyDisplayName(pos.strategy) : "—"}
-                      </div>
-
-                      {/* Size */}
-                      <div className="pr-3 font-mono text-txt-primary text-right">
-                        {pos.size}
-                      </div>
-
-                      {/* Entry */}
-                      <div className="pr-3 font-mono text-txt-primary text-right">
-                        {formatPrice(pos.entryPrice)}
-                      </div>
-
-                      {/* Exit */}
-                      <div className="pr-3 font-mono text-txt-primary text-right">
-                        {formatPrice(pos.exitPrice)}
-                      </div>
-
-                      {/* PnL */}
-                      <div className={`pr-3 font-mono text-right font-semibold ${
-                        isProfit ? "text-profit" : isLoss ? "text-loss" : "text-txt-secondary"
-                      }`}>
-                        {pos.realizedPnl != null
-                          ? `${pos.realizedPnl >= 0 ? "+" : ""}$${pos.realizedPnl.toFixed(2)}`
-                          : "—"
-                        }
-                      </div>
-
-                      {/* PnL% */}
-                      <div className={`pr-3 font-mono text-right ${
-                        isProfit ? "text-profit" : isLoss ? "text-loss" : "text-txt-secondary"
-                      }`}>
-                        {pos.pnlPercent != null
-                          ? `${pos.pnlPercent >= 0 ? "+" : ""}${pos.pnlPercent.toFixed(2)}%`
-                          : "—"
-                        }
-                      </div>
-
-                      {/* Duration */}
-                      <div className="pr-3 font-mono text-txt-secondary">
-                        {formatDuration(pos.durationMs)}
-                      </div>
-
-                      {/* Opened */}
-                      <div className="pr-3 font-mono text-txt-secondary">
-                        {formatDate(pos.openedAt)}
-                      </div>
-
-                      {/* Status */}
-                      <div>
-                        <span className={`inline-flex items-center gap-1.5 ${isOpen ? "text-profit" : "text-txt-secondary"}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? "bg-profit animate-pulse-green" : "bg-txt-secondary"}`} />
-                          {pos.status}
-                        </span>
-                      </div>
+                  {/* Main row data */}
+                  <div className="grid grid-cols-[24px_56px_56px_minmax(80px,1fr)_80px_90px_90px_80px_70px_72px_120px_72px] items-center py-1.5">
+                    {/* Chevron */}
+                    <div className="text-txt-secondary/60 text-center">
+                      <span className={`inline-block transition-transform ${isExpanded ? "rotate-90" : ""}`}>
+                        &#9656;
+                      </span>
                     </div>
 
-                    {/* Expanded timeline */}
-                    {isExpanded && pos.events.length > 0 && (
-                      <div className="border-t border-terminal-border/30 bg-terminal-bg/50">
-                        <EventTimeline events={pos.events} />
-                      </div>
-                    )}
+                    {/* Coin */}
+                    <div className="pr-3 font-display font-semibold text-txt-primary">
+                      {pos.coin}
+                    </div>
+
+                    {/* Direction */}
+                    <div className={`pr-3 font-semibold uppercase ${pos.direction === "LONG" ? "text-profit" : "text-loss"}`}>
+                      {pos.direction}
+                    </div>
+
+                    {/* Strategy */}
+                    <div className="pr-3 text-txt-secondary truncate">
+                      {pos.strategy ? strategyDisplayName(pos.strategy) : "\u2014"}
+                    </div>
+
+                    {/* Size */}
+                    <div className="pr-3 font-mono text-txt-primary text-right">
+                      {pos.size}
+                    </div>
+
+                    {/* Entry */}
+                    <div className="pr-3 font-mono text-txt-primary text-right">
+                      {formatPrice(pos.entryPrice)}
+                    </div>
+
+                    {/* Exit */}
+                    <div className="pr-3 font-mono text-txt-primary text-right">
+                      {formatPrice(pos.exitPrice)}
+                    </div>
+
+                    {/* PnL */}
+                    <div className={`pr-3 font-mono text-right font-semibold ${
+                      isProfit ? "text-profit" : isLoss ? "text-loss" : "text-txt-secondary"
+                    }`}>
+                      {pos.realizedPnl != null
+                        ? `${pos.realizedPnl >= 0 ? "+" : ""}$${pos.realizedPnl.toFixed(2)}`
+                        : "\u2014"
+                      }
+                    </div>
+
+                    {/* PnL% */}
+                    <div className={`pr-3 font-mono text-right ${
+                      isProfit ? "text-profit" : isLoss ? "text-loss" : "text-txt-secondary"
+                    }`}>
+                      {pos.pnlPercent != null
+                        ? `${pos.pnlPercent >= 0 ? "+" : ""}${pos.pnlPercent.toFixed(2)}%`
+                        : "\u2014"
+                      }
+                    </div>
+
+                    {/* Duration */}
+                    <div className="pr-3 font-mono text-txt-secondary">
+                      {formatDuration(pos.durationMs)}
+                    </div>
+
+                    {/* Opened */}
+                    <div className="pr-3 font-mono text-txt-secondary">
+                      {formatDate(pos.openedAt)}
+                    </div>
+
+                    {/* Status */}
+                    <div>
+                      <span className={`inline-flex items-center gap-1.5 ${isOpen ? "text-profit" : "text-txt-secondary"}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? "bg-profit animate-pulse-green" : "bg-txt-secondary"}`} />
+                        {pos.status}
+                      </span>
+                    </div>
                   </div>
+
+                  {/* Expanded timeline */}
+                  {isExpanded && pos.events.length > 0 && (
+                    <div className="border-t border-terminal-border/30 bg-terminal-bg/50">
+                      <EventTimeline events={pos.events} />
+                    </div>
+                  )}
                 </td>
               </tr>
             );

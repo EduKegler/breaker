@@ -537,6 +537,22 @@ describe("handleSignal", () => {
     expect(pos.signalId).toBe(1);            // updated from 0
   });
 
+  it("inserts entry fill record in fills table on success", async () => {
+    const input = createInput({ alertId: "fill-001" });
+
+    const result = await handleSignal(input, deps);
+
+    expect(result.success).toBe(true);
+
+    // The entry fill should be stored in the fills table so
+    // aggregatePositionHistory() can find the position
+    const rows = deps.store.getPositionHistoryRows(100);
+    const entryRows = rows.filter((r) => r.tag === "entry" && r.status === "filled");
+    expect(entryRows.length).toBeGreaterThan(0);
+    expect(entryRows[0].fill_price).toBe(95000); // avgPrice from placeEntryOrder
+    expect(entryRows[0].fill_size).toBe(0.01052); // filledSize
+  });
+
   it("continues even when notification fails", async () => {
     (deps.alertsClient.notifyPositionOpened as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("WhatsApp down"));
 

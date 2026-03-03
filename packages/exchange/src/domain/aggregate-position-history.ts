@@ -171,17 +171,19 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
     const orders = Array.from(group.orders.values()).sort((a, b) => a.orderId - b.orderId);
     const direction = group.side.toUpperCase() as "LONG" | "SHORT";
 
-    // Find entry fill
+    // Find entry fill (fallback to order price for legacy data without fill records)
     const entryOrder = orders.find((o) => o.tag === "entry" && o.status === "filled");
-    if (!entryOrder || entryOrder.fillPrice == null) continue;
+    if (!entryOrder) continue;
 
-    const entryPrice = entryOrder.fillPrice;
+    const entryPrice = entryOrder.fillPrice ?? entryOrder.price;
+    if (entryPrice == null) continue;
+
     const size = entryOrder.fillSize ?? entryOrder.size;
     const mode = entryOrder.mode;
     const openedAt = entryOrder.filledAt ?? entryOrder.orderCreatedAt;
 
-    // Collect exit fills (all non-entry filled orders)
-    const exitFills = orders.filter((o) => o.tag !== "entry" && o.status === "filled" && o.fillPrice != null && o.fillSize != null);
+    // Collect exit fills (all non-entry filled orders; fallback to order price/size for legacy data)
+    const exitFills = orders.filter((o) => o.tag !== "entry" && o.status === "filled" && (o.fillPrice ?? o.price) != null);
 
     // Total fees from all fills (entry + exits)
     let totalFees = entryOrder.fee ?? 0;
@@ -198,8 +200,8 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
     let durationMs: number | null = null;
 
     if (!isOpen) {
-      const totalExitValue = exitFills.reduce((sum, f) => sum + f.fillPrice! * f.fillSize!, 0);
-      const totalExitSize = exitFills.reduce((sum, f) => sum + f.fillSize!, 0);
+      const totalExitValue = exitFills.reduce((sum, f) => sum + (f.fillPrice ?? f.price)! * (f.fillSize ?? f.size), 0);
+      const totalExitSize = exitFills.reduce((sum, f) => sum + (f.fillSize ?? f.size), 0);
       exitPrice = totalExitSize > 0 ? totalExitValue / totalExitSize : null;
 
       const entryValue = entryPrice * size;

@@ -6,8 +6,8 @@ describe("compareScores", () => {
     expect(compareScores(55, 50)).toBe("accept");
   });
 
-  it("rejects when new < old * 0.85", () => {
-    expect(compareScores(40, 50)).toBe("reject");
+  it("rejects when new < old * 0.92", () => {
+    expect(compareScores(45, 50)).toBe("reject");
   });
 
   it("neutral when in between", () => {

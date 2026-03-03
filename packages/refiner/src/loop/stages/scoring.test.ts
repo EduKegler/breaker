@@ -60,7 +60,7 @@ describe("computeScore", () => {
     expect(score.weighted).toBeGreaterThanOrEqual(0);
   });
 
-  it("clamps complexityScore to 1.0 when params < 5", () => {
+  it("clamps complexityScore to 1.0 when params <= 3", () => {
     const score = computeScore(goodMetrics, 0, 180);
     expect(score.raw.complexity).toBeLessThanOrEqual(1.0);
     expect(score.raw.complexity).toBe(1.0);

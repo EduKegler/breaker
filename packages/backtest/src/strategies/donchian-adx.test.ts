@@ -134,8 +134,8 @@ describe("createDonchianAdx", () => {
     const candles: Candle[] = [];
     let price = 10000;
 
-    // Phase 1: ~60 days of gentle uptrend (enough for daily EMA50)
-    for (let i = 0; i < 96 * 60; i++) {
+    // Phase 1: ~210 days of gentle uptrend (enough for daily EMA200)
+    for (let i = 0; i < 96 * 210; i++) {
       // Slow drift up with noise
       price += 0.5 + (Math.random() - 0.5) * 2;
       candles.push(makeCandle(base + i * 900_000, price, 30));
@@ -145,12 +145,12 @@ describe("createDonchianAdx", () => {
     const consolidationPrice = price;
     for (let i = 0; i < 96 * 2; i++) {
       price = consolidationPrice + (Math.random() - 0.5) * 10;
-      candles.push(makeCandle(base + (96 * 60 + i) * 900_000, price, 8));
+      candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
     }
 
     // Phase 3: breakout bar — big move up
     price = consolidationPrice + 100;
-    candles.push(makeCandle(base + (96 * 62) * 900_000, price, 40));
+    candles.push(makeCandle(base + (96 * 212) * 900_000, price, 40));
 
     const htf1h = generate1hCandles(candles);
     const htf1d = generate1dCandles(candles);
@@ -194,8 +194,8 @@ describe("createDonchianAdx", () => {
     const candles: Candle[] = [];
     let price = 20000;
 
-    // Phase 1: ~60 days of gentle downtrend (bearish regime: close < daily EMA50)
-    for (let i = 0; i < 96 * 60; i++) {
+    // Phase 1: ~210 days of gentle downtrend (bearish regime: close < daily EMA200)
+    for (let i = 0; i < 96 * 210; i++) {
       price -= 0.5 + (Math.random() - 0.5) * 2;
       candles.push(makeCandle(base + i * 900_000, price, 30));
     }
@@ -204,12 +204,12 @@ describe("createDonchianAdx", () => {
     const consolidationPrice = price;
     for (let i = 0; i < 96 * 2; i++) {
       price = consolidationPrice + (Math.random() - 0.5) * 10;
-      candles.push(makeCandle(base + (96 * 60 + i) * 900_000, price, 8));
+      candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
     }
 
     // Phase 3: breakdown bar — big move down
     price = consolidationPrice - 100;
-    candles.push(makeCandle(base + (96 * 62) * 900_000, price, 40));
+    candles.push(makeCandle(base + (96 * 212) * 900_000, price, 40));
 
     const htf1h = generate1hCandles(candles);
     const htf1d = generate1dCandles(candles);

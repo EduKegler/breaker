@@ -1,4 +1,4 @@
-import { createDonchianAdx, createKeltnerRsi2 } from "@breaker/backtest";
+import { createDonchianAdx, createKeltnerRsi2, createEmaPullback } from "@breaker/backtest";
 import type { Strategy } from "@breaker/backtest";
 
 type StrategyFactory = (paramOverrides?: Partial<Record<string, number>>) => Strategy;
@@ -6,6 +6,7 @@ type StrategyFactory = (paramOverrides?: Partial<Record<string, number>>) => Str
 const REGISTRY: Record<string, StrategyFactory> = {
   createDonchianAdx,
   createKeltnerRsi2,
+  createEmaPullback,
 };
 
 /**

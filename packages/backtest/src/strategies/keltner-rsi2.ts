@@ -22,7 +22,7 @@ const DEFAULT_PARAMS: KeltnerRsi2Params = {
   rsi2Short: { value: 80, min: 70, max: 90, step: 5, optimizable: true, description: "RSI2 overbought threshold for shorts" },
   maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
   timeoutBars: { value: 8, min: 4, max: 16, step: 2, optimizable: true, description: "Bars before timeout exit" },
-  atrStopMult: { value: 1.5, min: 1.0, max: 2.5, step: 0.25, optimizable: true, description: "ATR multiplier for safety stop" },
+  atrStopMult: { value: 3.0, min: 3.0, max: 5.0, step: 0.5, optimizable: true, description: "ATR multiplier for wide catastrophic stop (KB §4 rule 4)" },
 };
 
 /**

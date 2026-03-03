@@ -19,6 +19,14 @@ describe("strategyRegistry.get", () => {
     expect(strategy.params).toBeDefined();
   });
 
+  it("returns createEmaPullback factory", () => {
+    const factory = strategyRegistry.get("createEmaPullback");
+    expect(typeof factory).toBe("function");
+    const strategy = factory();
+    expect(strategy.name).toBe("EMA Pullback Continuation");
+    expect(strategy.params).toBeDefined();
+  });
+
   it("throws for unknown factory name", () => {
     expect(() => strategyRegistry.get("nonExistent")).toThrow(
       /Unknown strategy factory "nonExistent"/,
@@ -37,6 +45,7 @@ describe("strategyRegistry.list", () => {
     const names = strategyRegistry.list();
     expect(names).toContain("createDonchianAdx");
     expect(names).toContain("createKeltnerRsi2");
-    expect(names.length).toBe(2);
+    expect(names).toContain("createEmaPullback");
+    expect(names.length).toBe(3);
   });
 });

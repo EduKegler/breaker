@@ -61,7 +61,7 @@ describe("computeWalkForward", () => {
     expect(result.pfRatio).toBeGreaterThan(0);
   });
 
-  it("flags overfit when test PF < 50% of train PF", () => {
+  it("flags overfit when test PF < 60% of train PF", () => {
     const baseTime = new Date("2024-01-01").getTime();
     const trades = [
       // Strong train
