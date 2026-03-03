@@ -22,7 +22,7 @@ const DEFAULT_PARAMS: EmaPullbackParams = {
   emaSlow: { value: 21, min: 15, max: 30, step: 3, optimizable: true, description: "Slow EMA period for trend confirmation" },
   rsiPeriod: { value: 7, min: 5, max: 14, step: 1, optimizable: true, description: "RSI period for momentum filter" },
   rsiOversold: { value: 40, min: 30, max: 50, step: 5, optimizable: true, description: "RSI oversold threshold (overbought = 100 - this)" },
-  atrStopMult: { value: 2.0, min: 1.5, max: 3.0, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop" },
+  atrStopMult: { value: 2.5, min: 2.5, max: 5.0, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop (KB §1.6: min 2.5 for pullback)" },
   timeoutBars: { value: 30, min: 15, max: 50, step: 5, optimizable: true, description: "Bars before timeout exit" },
   maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
 };

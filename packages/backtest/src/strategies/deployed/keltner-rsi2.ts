@@ -4,6 +4,7 @@ import { keltner, type KeltnerResult } from "../../indicators/keltner.js";
 import { rsi } from "../../indicators/rsi.js";
 import { sma } from "../../indicators/sma.js";
 import { atr } from "../../indicators/atr.js";
+import { adx, type AdxResult } from "../../indicators/adx.js";
 
 const MS_1H = 3_600_000;
 
@@ -11,6 +12,7 @@ interface KeltnerRsi2Params {
   kcMultiplier: StrategyParam;
   rsi2Long: StrategyParam;
   rsi2Short: StrategyParam;
+  adxThreshold: StrategyParam;
   maxTradesDay: StrategyParam;
   timeoutBars: StrategyParam;
   atrStopMult: StrategyParam;
@@ -20,9 +22,10 @@ const DEFAULT_PARAMS: KeltnerRsi2Params = {
   kcMultiplier: { value: 2.0, min: 1.5, max: 3.0, step: 0.5, optimizable: true, description: "Keltner Channel multiplier" },
   rsi2Long: { value: 20, min: 10, max: 30, step: 5, optimizable: true, description: "RSI2 oversold threshold for longs" },
   rsi2Short: { value: 80, min: 70, max: 90, step: 5, optimizable: true, description: "RSI2 overbought threshold for shorts" },
+  adxThreshold: { value: 25, min: 20, max: 35, step: 5, optimizable: true, description: "ADX below this on 1H = ranging regime (KB §4.1 rule 3)" },
   maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
   timeoutBars: { value: 8, min: 4, max: 16, step: 2, optimizable: true, description: "Bars before timeout exit" },
-  atrStopMult: { value: 1.5, min: 1.0, max: 2.5, step: 0.25, optimizable: true, description: "ATR multiplier for safety stop" },
+  atrStopMult: { value: 3.0, min: 3.0, max: 5.0, step: 0.5, optimizable: true, description: "ATR multiplier for wide catastrophic stop (KB §4 rule 4)" },
 };
 
 /**
@@ -45,6 +48,7 @@ export function createKeltnerRsi2(
   let rsiCache: number[] | null = null;
   let volSmaCache: number[] | null = null;
   let htfAtrCache: number[] | null = null;
+  let htfAdxCache: AdxResult | null = null;
   let htf1hCandles: Candle[] | null = null;
 
   return {
@@ -66,6 +70,7 @@ export function createKeltnerRsi2(
       htf1hCandles = higherTimeframes["1h"] ?? [];
       if (htf1hCandles.length > 0) {
         htfAtrCache = atr(htf1hCandles, 14);
+        htfAdxCache = adx(htf1hCandles, 14);
       }
     },
 
@@ -98,14 +103,21 @@ export function createKeltnerRsi2(
       if (!htfCandlesRef || htfCandlesRef.length < 15) return null;
 
       const htfAtr = htfAtrCache ?? atr(htfCandlesRef, 14);
+      const htfAdx = htfAdxCache ?? adx(htfCandlesRef, 14);
 
       let atr1h = NaN;
+      let adx1h = NaN;
       for (let j = htfCandlesRef.length - 1; j >= 0; j--) {
         if (htfCandlesRef[j].t + MS_1H <= currentCandle.t) {
-          if (!isNaN(htfAtr[j])) { atr1h = htfAtr[j]; break; }
+          if (!isNaN(htfAtr[j]) && isNaN(atr1h)) atr1h = htfAtr[j];
+          if (!isNaN(htfAdx.adx[j]) && isNaN(adx1h)) adx1h = htfAdx.adx[j];
+          if (!isNaN(atr1h) && !isNaN(adx1h)) break;
         }
       }
-      if (isNaN(atr1h)) return null;
+      if (isNaN(atr1h) || isNaN(adx1h)) return null;
+
+      // ADX regime filter (KB §4.1 rule 3): only enter in ranging markets
+      if (adx1h >= params.adxThreshold.value) return null;
 
       const stopDist = atr1h * params.atrStopMult.value;
       const close = currentCandle.c;

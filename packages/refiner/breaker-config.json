@@ -49,12 +49,13 @@
         { "name": "rsi2Long",     "min": 10,  "max": 30,  "step": 5 },
         { "name": "rsi2Short",    "min": 70,  "max": 90,  "step": 5 },
         { "name": "timeoutBars",  "min": 4,   "max": 12,  "step": 2 },
-        { "name": "atrStopMult",  "min": 3.0, "max": 5.0, "step": 0.5 }
+        { "name": "atrStopMult",  "min": 3.0, "max": 5.0, "step": 0.5 },
+        { "name": "adxThreshold", "min": 20, "max": 35, "step": 5 }
       ],
       "designChecklist": [
         "Keltner channel mean-reversion entry",
         "RSI2 oversold/overbought confirmation",
-        "Regime filter — ADX < threshold on 1H (mandatory KB §4 rule 3)",
+        "Regime filter — ADX < threshold on 1H (mandatory KB §4 rule 3) ✅",
         "Wide catastrophic stop (3-5x ATR 1H) or no stop (KB §4 rule 4)",
         "Timeout exit (timeoutBars)"
       ]

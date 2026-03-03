@@ -99,7 +99,7 @@ describe("createEmaPullback", () => {
     expect(strategy.params.emaSlow.value).toBe(21);
     expect(strategy.params.rsiPeriod.value).toBe(7);
     expect(strategy.params.rsiOversold.value).toBe(40);
-    expect(strategy.params.atrStopMult.value).toBe(2.0);
+    expect(strategy.params.atrStopMult.value).toBe(2.5);
     expect(strategy.params.timeoutBars.value).toBe(30);
     expect(strategy.params.maxTradesDay.value).toBe(3);
     expect(strategy.requiredTimeframes).toEqual(["1h", "4h"]);
@@ -118,7 +118,7 @@ describe("createEmaPullback", () => {
     expect(strategy.params.emaSlow).toMatchObject({ min: 15, max: 30, step: 3, optimizable: true });
     expect(strategy.params.rsiPeriod).toMatchObject({ min: 5, max: 14, step: 1, optimizable: true });
     expect(strategy.params.rsiOversold).toMatchObject({ min: 30, max: 50, step: 5, optimizable: true });
-    expect(strategy.params.atrStopMult).toMatchObject({ min: 1.5, max: 3.0, step: 0.5, optimizable: true });
+    expect(strategy.params.atrStopMult).toMatchObject({ min: 2.5, max: 5.0, step: 0.5, optimizable: true });
     expect(strategy.params.timeoutBars).toMatchObject({ min: 15, max: 50, step: 5, optimizable: true });
     expect(strategy.params.maxTradesDay.optimizable).toBe(false);
   });

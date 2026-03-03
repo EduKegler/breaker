@@ -75,6 +75,7 @@ describe("createKeltnerRsi2", () => {
     expect(strategy.params.kcMultiplier.value).toBe(2.0);
     expect(strategy.params.rsi2Long.value).toBe(20);
     expect(strategy.params.rsi2Short.value).toBe(80);
+    expect(strategy.params.adxThreshold.value).toBe(25);
     expect(strategy.params.maxTradesDay.value).toBe(3);
     expect(strategy.params.timeoutBars.value).toBe(8);
     expect(strategy.params.atrStopMult.value).toBe(3.0);
@@ -289,6 +290,137 @@ describe("createKeltnerRsi2", () => {
     expect(result).not.toBeNull();
     expect(result!.exit).toBe(true);
     expect(result!.comment).toBe("Timeout");
+  });
+
+  it("blocks signal when ADX on 1H exceeds adxThreshold (trending market)", () => {
+    // ADX regime filter: MR must only enter in ranging markets (ADX < threshold)
+    const strategy = createKeltnerRsi2({ kcMultiplier: 1.5, rsi2Long: 30, adxThreshold: 25 });
+
+    const base = new Date("2024-01-01T00:00:00Z").getTime();
+    const candles: Candle[] = [];
+
+    // Build 1H candles with a strong trend (high ADX)
+    // Strong uptrend on 1H: each bar closes significantly higher
+    const htf1h: Candle[] = [];
+    let htfPrice = 10000;
+    for (let i = 0; i < 40; i++) {
+      htfPrice += 200; // Strong consistent trend → high ADX
+      htf1h.push({
+        t: base + i * 3_600_000,
+        o: htfPrice - 150,
+        h: htfPrice + 50,
+        l: htfPrice - 200,
+        c: htfPrice,
+        v: 500,
+        n: 100,
+      });
+    }
+
+    // Build 15m candles: stable period then sharp drop (would trigger KC long without ADX gate)
+    let price = htfPrice; // Match latest 1H price
+    for (let i = 0; i < 288; i++) {
+      price = htfPrice + (Math.random() - 0.5) * 40;
+      candles.push(makeCandle(base + 40 * 3_600_000 + i * 900_000, price, 30));
+    }
+    // Sharp drop to trigger KC long + RSI2 oversold
+    const dropBase = base + 40 * 3_600_000 + 288 * 900_000;
+    candles.push(makeCandle(dropBase, price - 200, 30));
+    candles.push(makeCandle(dropBase + 900_000, price - 400, 30));
+    candles.push(makeCandle(dropBase + 2 * 900_000, price - 600, 30));
+
+    // Add more 1H candles covering the 15m range (continuing trend)
+    let htfT = htf1h[htf1h.length - 1].t + 3_600_000;
+    for (let i = 0; i < 80; i++) {
+      htfPrice += 150;
+      htf1h.push({
+        t: htfT,
+        o: htfPrice - 100,
+        h: htfPrice + 50,
+        l: htfPrice - 150,
+        c: htfPrice,
+        v: 500,
+        n: 100,
+      });
+      htfT += 3_600_000;
+    }
+
+    const htf = { "1h": htf1h };
+    strategy.init!(candles, htf);
+
+    // Scan last bars — should find NO signal because ADX is high (trending)
+    for (let i = Math.max(candles.length - 10, 22); i < candles.length; i++) {
+      const ctx = makeCtx(candles, i, htf);
+      const signal = strategy.onCandle(ctx);
+      expect(signal).toBeNull();
+    }
+  });
+
+  it("allows signal when ADX on 1H is below adxThreshold (ranging market)", () => {
+    // Use a high threshold to make it easy to pass
+    const strategy = createKeltnerRsi2({ kcMultiplier: 1.5, rsi2Long: 30, adxThreshold: 50 });
+
+    const base = new Date("2024-01-01T00:00:00Z").getTime();
+    const candles: Candle[] = [];
+
+    // Build 1H candles with a ranging market (low ADX)
+    const htf1h: Candle[] = [];
+    let htfPrice = 10000;
+    for (let i = 0; i < 120; i++) {
+      htfPrice = 10000 + Math.sin(i * 0.3) * 100; // Oscillating → low ADX
+      htf1h.push({
+        t: base + i * 3_600_000,
+        o: htfPrice - 20,
+        h: htfPrice + 30,
+        l: htfPrice - 30,
+        c: htfPrice,
+        v: 500,
+        n: 100,
+      });
+    }
+
+    // Build 15m candles: stable period then sharp drop
+    let price = 10000;
+    for (let i = 0; i < 288; i++) {
+      price = 10000 + (Math.random() - 0.5) * 40;
+      candles.push(makeCandle(base + 120 * 3_600_000 + i * 900_000, price, 30));
+    }
+    // Sharp drop to trigger KC long + RSI2 oversold
+    const dropBase = base + 120 * 3_600_000 + 288 * 900_000;
+    candles.push(makeCandle(dropBase, price - 200, 30));
+    candles.push(makeCandle(dropBase + 900_000, price - 400, 30));
+    candles.push(makeCandle(dropBase + 2 * 900_000, price - 600, 30));
+
+    // Extend 1H candles to cover the 15m range (still ranging)
+    let htfT = htf1h[htf1h.length - 1].t + 3_600_000;
+    for (let i = 0; i < 80; i++) {
+      htfPrice = 10000 + Math.sin((120 + i) * 0.3) * 100;
+      htf1h.push({
+        t: htfT,
+        o: htfPrice - 20,
+        h: htfPrice + 30,
+        l: htfPrice - 30,
+        c: htfPrice,
+        v: 500,
+        n: 100,
+      });
+      htfT += 3_600_000;
+    }
+
+    const htf = { "1h": htf1h };
+    strategy.init!(candles, htf);
+
+    // Scan last bars — should find a long signal (ADX is low, ranging market)
+    let foundSignal = false;
+    for (let i = Math.max(candles.length - 10, 22); i < candles.length; i++) {
+      const ctx = makeCtx(candles, i, htf);
+      const signal = strategy.onCandle(ctx);
+      if (signal) {
+        expect(signal.direction).toBe("long");
+        foundSignal = true;
+        break;
+      }
+    }
+    expect(foundSignal).toBe(true);
   });
 
   it("onCandle works without init (on-the-fly computation fallback)", () => {
