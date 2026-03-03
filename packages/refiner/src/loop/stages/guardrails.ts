@@ -88,6 +88,22 @@ export function validateWalkForward(
 }
 
 /**
+ * Validate that optimizable param count doesn't exceed maxFreeVariables.
+ * KB §13.1: hard gate — reject strategies exceeding profile limit.
+ */
+export function validateFreeVariableCount(
+  paramCount: number,
+  maxFreeVariables: number | undefined,
+): GuardrailViolation[] {
+  if (maxFreeVariables === undefined) return [];
+  if (paramCount <= maxFreeVariables) return [];
+  return [{
+    field: "freeVariables",
+    reason: `Exceeds max free variables: ${paramCount} > ${maxFreeVariables}`,
+  }];
+}
+
+/**
  * Legacy Pine guardrail validation.
  * Validates Pine Script edits (for backward compat during restructure phase).
  */

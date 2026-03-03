@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateGuardrails, validateParamGuardrails, validateWalkForward } from "./guardrails.js";
+import { validateGuardrails, validateParamGuardrails, validateWalkForward, validateFreeVariableCount } from "./guardrails.js";
 import type { Guardrails } from "../../types/config.js";
 import type { StrategyParam, WalkForward } from "@breaker/backtest";
 
@@ -147,5 +147,26 @@ describe("validateWalkForward", () => {
     const v = validateWalkForward(wf);
     expect(v).toHaveLength(1);
     expect(v[0].reason).toContain("pfRatio=N/A");
+  });
+});
+
+describe("validateFreeVariableCount", () => {
+  it("returns empty when maxFreeVariables is undefined", () => {
+    expect(validateFreeVariableCount(10, undefined)).toEqual([]);
+  });
+
+  it("returns empty when within limit", () => {
+    expect(validateFreeVariableCount(6, 8)).toEqual([]);
+  });
+
+  it("returns empty when exactly at limit", () => {
+    expect(validateFreeVariableCount(8, 8)).toEqual([]);
+  });
+
+  it("detects exceeding maxFreeVariables", () => {
+    const v = validateFreeVariableCount(9, 8);
+    expect(v).toHaveLength(1);
+    expect(v[0].field).toBe("freeVariables");
+    expect(v[0].reason).toContain("9 > 8");
   });
 });

@@ -27,7 +27,7 @@ import { checkCriteria } from "./check-criteria.js";
 import { phaseHelpers } from "./phase-helpers.js";
 import { emitEvent } from "./stages/events.js";
 import { checkpoint } from "./stages/checkpoint.js";
-import { validateParamGuardrails, validateWalkForward } from "./stages/guardrails.js";
+import { validateParamGuardrails, validateWalkForward, validateFreeVariableCount } from "./stages/guardrails.js";
 import { buildSessionSummary } from "./stages/summary.js";
 import { runEngineInProcess } from "./stages/run-engine-in-process.js";
 import { runEngineChild } from "./stages/spawn-engine-child.js";
@@ -113,7 +113,7 @@ export async function orchestrate(): Promise<void> {
   // Create initial strategy to get params
   const initialStrategy = factory(paramOverrides);
   const strategyParams = initialStrategy.params;
-  const paramCount = countOptimizableParams(strategyParams);
+  let paramCount = countOptimizableParams(strategyParams);
 
   // Load existing checkpoint to seed best scores
   let initialBestPnl = 0;
@@ -395,6 +395,9 @@ export async function orchestrate(): Promise<void> {
     const { metrics, analysis, trades } = engineResult;
     const currentPnl = metrics.totalPnl ?? 0;
 
+    // Recompute param count (accurate in refine; stale in restructure due to ESM cache)
+    paramCount = countOptimizableParams(factory(paramOverrides).params);
+
     // Compute score
     const scoreResult = computeScore(
       metrics,
@@ -447,6 +450,18 @@ export async function orchestrate(): Promise<void> {
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "GUARDRAIL_VIOLATION", status: "warn",
         message: wfViolations.map((v) => v.reason).join("; "),
+      });
+      effectiveVerdict = "reject";
+    }
+
+    // Free variable count gate (KB §13.1): reject if optimizable params exceed profile limit
+    const fvViolations = validateFreeVariableCount(paramCount, cfg.criteria.maxFreeVariables);
+    if (fvViolations.length > 0 && effectiveVerdict === "accept") {
+      log(`Free variable limit exceeded: ${fvViolations.map((v) => v.reason).join("; ")} — forcing reject`);
+      emitEvent({
+        artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+        stage: "GUARDRAIL_VIOLATION", status: "warn",
+        message: fvViolations.map((v) => v.reason).join("; "),
       });
       effectiveVerdict = "reject";
     }
