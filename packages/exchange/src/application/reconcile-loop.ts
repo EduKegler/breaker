@@ -74,7 +74,7 @@ export class ReconcileLoop {
           trailingStopLoss: recovered.trailingStopLoss,
           leverage: hlPos.leverage,
           openedAt: new Date().toISOString(),
-          signalId: -1,
+          signalId: store.getOpenSignalId(coin) ?? -1,
           strategyName: store.getStrategyForCoin(coin),
         });
         actions.push(`position_hydrated:${coin}`);

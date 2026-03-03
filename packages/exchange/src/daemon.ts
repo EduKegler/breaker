@@ -102,7 +102,7 @@ async function syncPositionsAndBroadcast(deps: {
         trailingStopLoss: recovered.trailingStopLoss,
         leverage: hlPos.leverage,
         openedAt: new Date().toISOString(),
-        signalId: -1,
+        signalId: store.getOpenSignalId(hlPos.coin) ?? -1,
         strategyName: store.getStrategyForCoin(hlPos.coin),
       });
     } else {

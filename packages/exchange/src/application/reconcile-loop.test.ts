@@ -193,6 +193,36 @@ describe("ReconcileLoop", () => {
     expect(positionBook.get("BTC")!.stopLoss).toBe(0);
   });
 
+  it("hydrates position with signalId from DB when available", async () => {
+    const positionBook = new PositionBook();
+    // Pre-populate a signal and filled entry in DB (as if daemon opened it before restart)
+    const signalId = store.insertSignal({
+      alert_id: "sig-sol-001", source: "strategy-runner", asset: "SOL",
+      side: "LONG", entry_price: 85.2, stop_loss: 82.3,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: "ema-pullback",
+    });
+    store.insertOrder({
+      signal_id: signalId, hl_order_id: "100", coin: "SOL", side: "buy",
+      size: 1.01, price: 85.2, order_type: "limit", tag: "entry",
+      status: "filled", mode: "mainnet", filled_at: "2024-01-01T00:00:00",
+    });
+
+    const hlPositions: HlPosition[] = [
+      { coin: "SOL", direction: "long", size: 1.01, entryPrice: 85.2, unrealizedPnl: 1, leverage: 5, liquidationPx: null },
+    ];
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue(hlPositions),
+    });
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    // signalId should be recovered from DB, not -1
+    expect(positionBook.get("SOL")!.signalId).toBe(signalId);
+  });
+
   it("hydrates position with SL/TP recovered from open orders", async () => {
     const positionBook = new PositionBook();
     const hlPositions: HlPosition[] = [

@@ -217,6 +217,22 @@ export class SqliteStore {
     return row?.strategy_name ?? null;
   }
 
+  /** Find the signal_id for the most recent open position on a coin (has filled entry, no filled exit). */
+  getOpenSignalId(coin: string): number | null {
+    const row = this.db.prepare(`
+      SELECT s.id FROM signals s
+      JOIN orders entry ON entry.signal_id = s.id AND entry.tag = 'entry' AND entry.status = 'filled'
+      WHERE s.asset = ? AND s.risk_check_passed = 1
+        AND NOT EXISTS (
+          SELECT 1 FROM orders exit_o
+          JOIN fills exit_f ON exit_f.order_id = exit_o.id
+          WHERE exit_o.signal_id = s.id AND exit_o.tag = 'exit'
+        )
+      ORDER BY s.id DESC LIMIT 1
+    `).get(coin) as { id: number } | undefined;
+    return row?.id ?? null;
+  }
+
   getPositionHistoryRows(limit: number = 500): PositionHistoryRow[] {
     return this.db.prepare(`
       SELECT s.id AS signal_id, s.asset, s.side, s.strategy_name, s.entry_price, s.created_at,
