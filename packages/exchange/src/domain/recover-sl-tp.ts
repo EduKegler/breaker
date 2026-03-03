@@ -4,6 +4,7 @@ interface RecoveredSlTp {
   stopLoss: number;
   takeProfits: { price: number; pctOfPosition: number }[];
   trailingStopLoss: number | null;
+  trailingSlOid: number | null;
 }
 
 export function recoverSlTp(
@@ -19,6 +20,7 @@ export function recoverSlTp(
   const slOrders = coinReduceOnly.filter((o) => o.isTrigger);
   let stopLoss = 0;
   let trailingStopLoss: number | null = null;
+  let trailingSlOid: number | null = null;
 
   if (slOrders.length === 1) {
     stopLoss = slOrders[0].triggerPx;
@@ -28,10 +30,12 @@ export function recoverSlTp(
       // Long: lower triggerPx = fixed SL (further from price), higher = trailing
       stopLoss = sorted[0].triggerPx;
       trailingStopLoss = sorted[sorted.length - 1].triggerPx;
+      trailingSlOid = sorted[sorted.length - 1].oid;
     } else {
       // Short: higher triggerPx = fixed SL (further from price), lower = trailing
       stopLoss = sorted[sorted.length - 1].triggerPx;
       trailingStopLoss = sorted[0].triggerPx;
+      trailingSlOid = sorted[0].oid;
     }
   } else if (slOrders.length >= 2) {
     // No direction provided — pick first as SL, can't discriminate trailing
@@ -44,5 +48,5 @@ export function recoverSlTp(
     pctOfPosition: posSize > 0 ? o.sz / posSize : 0,
   }));
 
-  return { stopLoss, takeProfits, trailingStopLoss };
+  return { stopLoss, takeProfits, trailingStopLoss, trailingSlOid };
 }

@@ -109,6 +109,7 @@ describe("recoverSlTp", () => {
     const result = recoverSlTp("BTC", 0.01, orders, "long");
     expect(result.stopLoss).toBe(93000);
     expect(result.trailingStopLoss).toBe(94500);
+    expect(result.trailingSlOid).toBe(2);
   });
 
   it("discriminates fixed vs trailing SL for short: higher=fixed, lower=trailing", () => {
@@ -119,5 +120,14 @@ describe("recoverSlTp", () => {
     const result = recoverSlTp("BTC", 0.01, orders, "short");
     expect(result.stopLoss).toBe(97000);
     expect(result.trailingStopLoss).toBe(95500);
+    expect(result.trailingSlOid).toBe(2);
+  });
+
+  it("returns trailingSlOid=null when no trailing SL", () => {
+    const orders = [
+      makeOrder({ oid: 10, isTrigger: true, reduceOnly: true, triggerPx: 93000 }),
+    ];
+    const result = recoverSlTp("BTC", 0.01, orders, "long");
+    expect(result.trailingSlOid).toBeNull();
   });
 });

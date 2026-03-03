@@ -1,4 +1,4 @@
-import type { HlClient } from "../types/hl-client.js";
+import type { HlClient, HlPosition } from "../types/hl-client.js";
 import type { SqliteStore } from "../adapters/sqlite-store.js";
 import type { PositionBook } from "../domain/position-book.js";
 import type { EventLog } from "../adapters/event-log.js";
@@ -10,6 +10,40 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { logger } from "../lib/logger.js";
 
 const log = logger.createChild("reconcileLoop");
+
+/** Backfill a trailing-sl order into SQLite if it exists on HL but not locally. */
+function ensureTrailingSlRecord(
+  store: SqliteStore,
+  coin: string,
+  recovered: { trailingStopLoss: number | null; trailingSlOid: number | null },
+  hlPos: HlPosition,
+  signalId: number | null,
+): void {
+  if (recovered.trailingSlOid == null || recovered.trailingStopLoss == null) return;
+  const pending = store.getPendingOrders();
+  const exists = pending.some(
+    (o) => o.coin === coin && o.tag === "trailing-sl" && o.hl_order_id === String(recovered.trailingSlOid),
+  );
+  if (exists) return;
+  try {
+    store.insertOrder({
+      signal_id: signalId,
+      hl_order_id: String(recovered.trailingSlOid),
+      coin,
+      side: hlPos.direction === "long" ? "sell" : "buy",
+      size: hlPos.size,
+      price: recovered.trailingStopLoss,
+      order_type: "stop",
+      tag: "trailing-sl",
+      status: "pending",
+      mode: "mainnet",
+      filled_at: null,
+    });
+    log.info({ action: "trailingSlBackfilled", coin, oid: recovered.trailingSlOid, price: recovered.trailingStopLoss }, "Trailing SL order backfilled into SQLite");
+  } catch (err) {
+    log.warn({ action: "trailingSlBackfillFailed", coin, err }, "Failed to backfill trailing SL order");
+  }
+}
 
 export interface ReconciledData {
   positions: ReturnType<PositionBook["getAll"]>;
@@ -77,6 +111,11 @@ export class ReconcileLoop {
           signalId: store.getOpenSignalId(coin) ?? -1,
           strategyName: store.getStrategyForCoin(coin),
         });
+        // Backfill trailing SL order into SQLite if recovered from HL but missing locally
+        if (recovered.trailingSlOid !== null) {
+          ensureTrailingSlRecord(store, coin, recovered, hlPos, store.getOpenSignalId(coin));
+        }
+
         actions.push(`position_hydrated:${coin}`);
         log.info({
           action: "positionHydrated",
@@ -136,6 +175,10 @@ export class ReconcileLoop {
             takeProfits: recovered.takeProfits.length,
             trailingStopLoss: recovered.trailingStopLoss,
           }, "SL/TP recovered from HL open orders");
+        }
+        // Backfill trailing SL order into SQLite if missing
+        if (recovered.trailingSlOid !== null) {
+          ensureTrailingSlRecord(store, coin, recovered, hlPos, localPos.signalId > 0 ? localPos.signalId : null);
         }
       }
 

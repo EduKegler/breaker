@@ -223,6 +223,47 @@ describe("ReconcileLoop", () => {
     expect(positionBook.get("SOL")!.signalId).toBe(signalId);
   });
 
+  it("backfills trailing SL order into SQLite when recovered from HL but missing locally", async () => {
+    const positionBook = new PositionBook();
+    // Pre-populate signal + entry (as if daemon opened it before restart)
+    const signalId = store.insertSignal({
+      alert_id: "sig-sol-002", source: "strategy-runner", asset: "SOL",
+      side: "LONG", entry_price: 85.2, stop_loss: 82.3,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: "ema-pullback",
+    });
+    store.insertOrder({
+      signal_id: signalId, hl_order_id: "100", coin: "SOL", side: "buy",
+      size: 1.01, price: 85.2, order_type: "limit", tag: "entry",
+      status: "filled", mode: "mainnet", filled_at: "2024-01-01T00:00:00",
+    });
+
+    const hlPositions: HlPosition[] = [
+      { coin: "SOL", direction: "long", size: 1.01, entryPrice: 85.2, unrealizedPnl: 2, leverage: 5, liquidationPx: null },
+    ];
+    // Two trigger orders: fixed SL at 82.3 and trailing SL at 85.4
+    const openOrders: HlOpenOrder[] = [
+      { coin: "SOL", oid: 200, side: "A", sz: 1.01, limitPx: 0, orderType: "Stop Market", isTrigger: true, triggerPx: 82.3, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
+      { coin: "SOL", oid: 300, side: "A", sz: 1.01, limitPx: 0, orderType: "Stop Market", isTrigger: true, triggerPx: 85.4, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
+    ];
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue(hlPositions),
+      getOpenOrders: vi.fn().mockResolvedValue(openOrders),
+    });
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, eventLog, store, walletAddress: "0xtest" });
+    await loop.check();
+
+    // Trailing SL should be backfilled into SQLite
+    const pending = store.getPendingOrders();
+    const tslOrder = pending.find((o) => o.tag === "trailing-sl" && o.coin === "SOL");
+    expect(tslOrder).toBeDefined();
+    expect(tslOrder!.hl_order_id).toBe("300");
+    expect(tslOrder!.price).toBe(85.4);
+    expect(tslOrder!.signal_id).toBe(signalId);
+  });
+
   it("hydrates position with SL/TP recovered from open orders", async () => {
     const positionBook = new PositionBook();
     const hlPositions: HlPosition[] = [
