@@ -2,7 +2,6 @@
 name: backtest
 description: Run a pure backtest on a strategy and show results. Use when the user says "backtest", "run backtest", "roda backtest", "testa a estrategia", "testa o backtest", or wants to run a single backtest (NOT optimization).
 argument-hint: "[BTC] [--strategy=donchian-adx] [--days=180] [--start=2025-06-01] [--end=2026-01-01]"
-disable-model-invocation: true
 allowed-tools: "Bash, Read"
 ---
 

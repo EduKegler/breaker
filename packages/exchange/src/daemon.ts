@@ -222,6 +222,7 @@ async function main() {
       wsBroker.broadcastEvent("positions", positionBook.getAll());
       wsBroker.broadcastEvent("orders", store.getRecentOrders(100));
       wsBroker.broadcastEvent("position-history", aggregatePositionHistory(store.getPositionHistoryRows(500)));
+      wsBroker.broadcastEvent("signals", store.getRecentSignals(100));
       setTimeout(() => {
         hlClient.getOpenOrders(env.HL_ACCOUNT_ADDRESS).then((oo) => {
           wsBroker.broadcastEvent("open-orders", oo);
