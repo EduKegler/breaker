@@ -756,6 +756,47 @@ describe("StrategyRunner", () => {
     expect(deps.signalHandlerDeps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 200);
   });
 
+  it("updates positionBook trailing SL even when SQLite insert fails (FK constraint)", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    strategy.getExitLevel = vi.fn(() => 95300);
+    const deps = createDeps(strategy, streamer);
+    const placeStopOrder = deps.signalHandlerDeps.hlClient.placeStopOrder as ReturnType<typeof vi.fn>;
+    placeStopOrder
+      .mockResolvedValueOnce({ orderId: "HL-SL-FIXED", status: "placed" })
+      .mockResolvedValueOnce({ orderId: "200", status: "placed" });
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Tick 1: open position
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // Sabotage SQLite: make insertOrder throw FK error on NEXT call
+    const origInsertOrder = deps.signalHandlerDeps.store.insertOrder.bind(deps.signalHandlerDeps.store);
+    let callCount = 0;
+    vi.spyOn(deps.signalHandlerDeps.store, "insertOrder").mockImplementation((params) => {
+      callCount++;
+      // First 2 calls are from handleSignal (signal entry + fixed SL), let them through
+      // The trailing SL insert should throw
+      if (callCount > 2) {
+        throw new Error("FOREIGN KEY constraint failed");
+      }
+      return origInsertOrder(params);
+    });
+
+    // Tick 2: trailing SL level above entry → place trailing SL
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    // Despite SQLite failure, positionBook must have the trailing SL value
+    expect(deps.positionBook.get("BTC")!.trailingStopLoss).toBe(95300);
+    // And the HL order was placed
+    expect(placeStopOrder).toHaveBeenCalledTimes(2);
+  });
+
   it("position is not removed from PositionBook when exit placeMarketOrder fails", async () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);

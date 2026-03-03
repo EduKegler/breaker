@@ -18,7 +18,7 @@ interface SignalRow {
 
 interface OrderRow {
   id?: number;
-  signal_id: number;
+  signal_id: number | null;
   hl_order_id: string | null;
   coin: string;
   side: string;

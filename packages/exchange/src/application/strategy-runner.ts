@@ -289,7 +289,7 @@ export class StrategyRunner {
       const exitResult = await hlClient.placeMarketOrder(this.deps.coin, closeSide === "buy", pos.size);
 
       // Record exit order + fill so position appears as CLOSED in history
-      const signalId = pos.signalId ?? -1;
+      const signalId = pos.signalId > 0 ? pos.signalId : null;
       const exitTs = new Date().toISOString();
       const exitPrice = candles[index].c;
       const exitOrderId = store.insertOrder({
@@ -424,24 +424,30 @@ export class StrategyRunner {
         true,
       );
 
-      const signalId = pos.signalId ?? -1;
-      store.insertOrder({
-        signal_id: signalId,
-        hl_order_id: result.orderId,
-        coin,
-        side: pos.direction === "long" ? "sell" : "buy",
-        size: pos.size,
-        price: truncatedLevel,
-        order_type: "stop",
-        tag: "trailing-sl",
-        status: "pending",
-        mode: this.deps.config.mode,
-        filled_at: null,
-      });
-
+      // Update in-memory state FIRST — these must succeed even if SQLite fails,
+      // otherwise the daemon loses track of the HL order and the explorer shows no TSL line.
       this.trailingSlOid = Number(result.orderId);
       this.deps.positionBook.updateTrailingStopLoss(coin, truncatedLevel);
       log.info({ action: "trailingSlPlaced", coin, level: truncatedLevel, oid: result.orderId }, "Trailing SL order placed");
+
+      const signalId = pos.signalId > 0 ? pos.signalId : null;
+      try {
+        store.insertOrder({
+          signal_id: signalId,
+          hl_order_id: result.orderId,
+          coin,
+          side: pos.direction === "long" ? "sell" : "buy",
+          size: pos.size,
+          price: truncatedLevel,
+          order_type: "stop",
+          tag: "trailing-sl",
+          status: "pending",
+          mode: this.deps.config.mode,
+          filled_at: null,
+        });
+      } catch (dbErr) {
+        log.warn({ action: "trailingSlDbInsertFailed", coin, oid: result.orderId, err: dbErr }, "Trailing SL placed on HL but SQLite insert failed");
+      }
 
       // Cancel old trailing SL after placing new one (place-first guarantees coverage)
       if (oldOid !== null) {
