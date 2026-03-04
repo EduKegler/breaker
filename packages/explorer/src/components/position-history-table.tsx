@@ -106,6 +106,9 @@ function PositionRow({ pos, isExpanded, onToggle }: { pos: PositionSummary; isEx
         <td className={`py-1.5 pr-3 font-mono text-right ${pnlColor}`}>
           {displayPct != null ? `${displayPct >= 0 ? "+" : ""}${displayPct.toFixed(2)}%` : "\u2014"}
         </td>
+        <td className={`py-1.5 pr-3 font-mono text-right ${pos.fundingPaid >= 0 ? "text-profit" : "text-loss"}`}>
+          {pos.fundingPaid !== 0 ? `${pos.fundingPaid >= 0 ? "+" : ""}$${pos.fundingPaid.toFixed(2)}` : "\u2014"}
+        </td>
         <td className="py-1.5 pr-3 font-mono text-txt-secondary">{formatDuration(displayDuration)}</td>
         <td className="py-1.5 pr-3 font-mono text-txt-secondary">{formatDate(pos.openedAt)}</td>
         <td className="py-1.5">
@@ -117,7 +120,7 @@ function PositionRow({ pos, isExpanded, onToggle }: { pos: PositionSummary; isEx
       </tr>
       {isExpanded && pos.events.length > 0 && (
         <tr className={isOpen ? "border-l-2 border-l-profit" : ""}>
-          <td colSpan={12} className="p-0 border-b border-terminal-border/50">
+          <td colSpan={13} className="p-0 border-b border-terminal-border/50">
             <div className="bg-terminal-bg/50">
               <EventTimeline events={pos.events} />
             </div>
@@ -163,6 +166,7 @@ export function PositionHistoryTable({ positions }: { positions: PositionSummary
             <th className="pb-2 pr-3 font-medium text-right">Exit / Mark</th>
             <th className="pb-2 pr-3 font-medium text-right">PnL</th>
             <th className="pb-2 pr-3 font-medium text-right">PnL%</th>
+            <th className="pb-2 pr-3 font-medium text-right">Funding</th>
             <th className="pb-2 pr-3 font-medium">Duration</th>
             <th className="pb-2 pr-3 font-medium">Opened</th>
             <th className="pb-2 font-medium">Status</th>

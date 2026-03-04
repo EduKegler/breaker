@@ -21,7 +21,7 @@
 4. [Module 2: Mean Reversion](#4-module-2-mean-reversion)
 5. [Module 3: Pullback](#5-module-3-pullback)
 6. [Module 4: Trend Following](#6-module-4-trend-following)
-7. [Module 5: Do Not Trade](#7-module-5-do-not-trade) (includes macro calendar integration)
+7. [Module 5: Do Not Trade](#7-module-5-do-not-trade) (includes volatility spike filter)
 
 **Part 3 -- Operations**
 8. [Session Map](#8-session-map)
@@ -68,7 +68,7 @@
 Canonical Parameters (1.6) > Risk Management (9) > Module fixed rules > Module rationale/candidates > Inline examples
 ```
 
-If a module says "risk 0.5% per trade" but Canonical Parameters says "1%", Canonical Parameters wins. Modules may note exceptions but must explicitly reference the canonical value they override and why.
+If a module says "risk $5 per trade" but Canonical Parameters says "$10", Canonical Parameters wins. Modules may note exceptions but must explicitly reference the canonical value they override and why.
 
 ### Consistency rules
 
@@ -97,9 +97,9 @@ If a module says "risk 0.5% per trade" but Canonical Parameters says "1%", Canon
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Risk per trade | 1% of capital | Max 2% on A+ setup only. Ramp-up: 0.25-0.5% first 2 weeks |
+| Risk per trade | riskPerTradeUsd (fixed USD) | Default: $10. Adjust manually when scaling. No dynamic % of capital — simpler, no compounding complexity |
 | Max leverage | 5x | Hard cap. See 9.3 for details |
-| Max daily loss | USD-fixed (maxDailyLossUsd) | Shut down all modules for the day. Set to 2x riskPerTradeUsd. Adjust when scaling sizing |
+| Max daily loss | maxDailyLossR (default: 2) | Shut down all modules for the day. Value is in R-multiples of riskPerTradeUsd — adjusts automatically when sizing changes |
 | Max daily trades | 5 | Across all modules (global, not per-coin) |
 
 **Stops (ATR-based):**
@@ -181,7 +181,7 @@ The orchestrator is the only component that sees all modules and all assets simu
 
 **Core principle:** Simple, deterministic, no ML. The orchestrator is a router, not a brain.
 
-**Scope:** The daemon supports multiple assets (currently BTC only). Rules below distinguish between **per-asset** scope (mutex, cooldown) and **global** scope (daily loss, daily trades, macro blackout).
+**Scope:** The daemon supports multiple assets (currently BTC only). Rules below distinguish between **per-asset** scope (mutex, cooldown) and **global** scope (daily loss, daily trades, volatility spike).
 
 #### 2.5.1 Mutex and signal priority
 
@@ -203,7 +203,7 @@ While a position is open:
 
 - **Owner module controls exits.** Only the module that opened the position may trigger TP, stop, trailing, or timeout exits
 - **Other modules are suppressed.** They may compute signals internally (for logging) but cannot act
-- **Global exits override module exits.** If daily loss hits maxDailyLossUsd or a macro event blackout triggers, the orchestrator closes the position regardless of which module owns it. The module logs this as "orchestrator forced exit"
+- **Global exits override module exits.** If daily loss hits maxDailyLossR or a volatility spike triggers, the orchestrator blocks new entries regardless of which module signals. The module logs this as "orchestrator blocked: volatility spike"
 
 #### 2.5.3 Regime transition mid-trade
 
@@ -221,9 +221,9 @@ While a position is open:
 These gates are checked BEFORE any module signal is allowed to execute:
 
 ```
-1. Is daily loss >= maxDailyLossUsd? -> BLOCK all entries (all assets), close any open position  [GLOBAL]
+1. Is daily loss >= maxDailyLossR? -> BLOCK all entries (all assets), close any open position  [GLOBAL]
 2. Is daily trade count >= 5? -> BLOCK all entries (all assets). Open positions may exit normally  [GLOBAL]
-3. Is macro blackout active? -> BLOCK all entries (all assets). CPI/FOMC/NFP, see 7.1  [GLOBAL]
+3. Is volatility spike active? -> BLOCK all entries (all assets). See 7.1/7.2  [GLOBAL]
 4. Is there an open position on this asset? -> BLOCK new entries on this asset (mutex)  [PER-ASSET]
 5. Is cooldown active for this module on this asset? -> BLOCK (min 2-bar cooldown after stop, see 9.8)  [PER-ASSET]
 ```
@@ -232,7 +232,7 @@ Order matters: check top to bottom. Gates 1-3 are global (affect all assets). Ga
 
 #### 2.5.5 Implementation notes
 
-- **State:** The orchestrator maintains: current position per asset (module, direction, entry time, entry price), daily PnL across all assets (USD), daily trade count across all assets, per-module per-asset cooldown timestamps, macro calendar
+- **State:** The orchestrator maintains: current position per asset (module, direction, entry time, entry price), daily PnL across all assets (USD), daily trade count across all assets, per-module per-asset cooldown timestamps, volatility spike status
 - **Heartbeat:** Runs every 15m bar close (aligned with fastest module). Checks global gates, polls each module for signals, applies priority rules
 - **Logging:** Every decision (entry allowed, entry blocked + reason, forced exit) is logged with timestamp, module, and gate that triggered. This is the primary debugging tool
 - **No backtesting:** The orchestrator cannot be backtested as a unit (modules don't share state in the engine). It is tested via paper trading. See Phase 3 in roadmap (section 15)
@@ -376,7 +376,7 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 5. **Must include a timeout exit.** MR trades that don't revert within N bars must exit to prevent funding bleed and capital lock. This partially replaces the protective function of a tight stop.
 6. **Position sizing: conservative.** MR profile = many small wins, occasional large loss. The large loss IS coming -- it's structural, not avoidable. Use canonical risk per trade (see 1.6) and never increase size to "make up" for small average profit. The edge comes from frequency and consistency, not size. ([EnlightenedStockTrading](https://enlightenedstocktrading.com/mean-reversion/))
 7. **Long/short asymmetry: acknowledged.** Academic research shows BTC negative returns revert more frequently and with greater magnitude than positive returns. Long MR (buying dips) has a structural edge over short MR (fading rallies) in crypto, where short squeezes are common and uptrends can sustain "overbought" for extended periods. Short MR requires tighter risk controls and shorter timeouts. ([Corbet & Katsiampa 2020](https://www.sciencedirect.com/science/article/abs/pii/S1057521918306136), [QuantPedia](https://quantpedia.com/trend-following-and-mean-reversion-in-bitcoin/))
-8. **Operates 24/7** across all sessions. Monitor PF per session via BREAKER analysis. If PF < 1.0 in any session consistently, restrict that session.
+8. **Operates 24/7** across all sessions. Monitor PF per session via BREAKER analysis to understand where the edge is strongest — this is diagnostic, not an active gate.
 9. **Stopping criteria:** PF >= 1.3, DD <= 8%, WR >= 50%, trades >= 80, pfRatio >= 0.6. WR >= 50% is mandatory -- MR profits from frequent small wins. Low WR means the strategy is not reverting reliably, which is a design failure.
 
 #### Rationale (for human review, not consumed by BREAKER loop)
@@ -386,7 +386,7 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 
 - **Regime filter (rule 3):** MR's #1 failure mode is trading against a trend. When markets trend, "overextended" prices keep extending. ADX below 25 indicates range-bound conditions where MR works. 200-day MA flat or price within 5% of it is another common filter. SetupAlpha: "This simple filter eliminates 40-60% of catastrophic losses." Academic research (MQL5 article) confirms: "ranging markets show negative autocorrelation in returns, meaning upward movements are likely to be followed by downward movements and vice versa" -- this IS mean reversion. Trending markets show positive autocorrelation -- the opposite.
 - **Wide/no stop (rule 4):** Multiple backtested sources converge on this. Robuxio: "In almost all backtests, stop-loss orders don't work well with mean-reverting strategies." Curtis Faith (The Way of the Turtle): "stop-losses for most systems don't improve profitability." ScienceDirect (2024, naphtha crack MR): "the no-stop-loss and no-take-profit strategy remains the best performing combination [...] the stop-loss locks in losses by stopping the reversion process before it is finished." EnlightenedStockTrading: "if you put your stop loss too close, you get more substantial losses and the system's profitability breaks down [...] for mean reversion, it's at vast stop loss levels -- 10-30% wide on daily charts." On 15m BTC, equivalent wide stop = 3-5x ATR(14) on 1H. This is a catastrophic stop -- it fires only in "regime changed, this isn't a range anymore" scenarios.
-- **Position sizing (rule 6):** EnlightenedStockTrading's advice to "spread capital over 10-20 trades" applies to multi-asset stock portfolios, NOT to our system where only one net position exists per asset at a time (see mutex rule in section 2.5). In our system, the equivalent protection is: (a) canonical 1% risk per trade (see 1.6), (b) the timeout exit (rule 5) limiting exposure duration, and (c) the wide catastrophic stop (rule 4) capping max loss per trade. MR's small average profit per trade means commission, slippage, and execution speed matter enormously -- oversizing to compensate for thin edges is the fastest way to blow up.
+- **Position sizing (rule 6):** EnlightenedStockTrading's advice to "spread capital over 10-20 trades" applies to multi-asset stock portfolios, NOT to our system where only one net position exists per asset at a time (see mutex rule in section 2.5). In our system, the equivalent protection is: (a) riskPerTradeUsd (see 1.6), (b) the timeout exit (rule 5) limiting exposure duration, and (c) the wide catastrophic stop (rule 4) capping max loss per trade. MR's small average profit per trade means commission, slippage, and execution speed matter enormously -- oversizing to compensate for thin edges is the fastest way to blow up.
 - **Long/short asymmetry (rule 7):** Corbet & Katsiampa (2020) found "stronger reverting behaviour of negative price returns in terms of both reverting speed and magnitude compared to positive returns." QuantPedia: "BTC tends to trend when at its maximum and bounce back when at the minimum." QuantifiedStrategies: "Williams %R didn't work well for short trades in their tests." Robuxio: "Shorts are an exception to this rule [no stop]. You don't want to stay in a coin that makes 5X overnight." In practice: long MR has wider tolerance, short MR needs faster timeout and tighter catastrophic stop.
 - **WR gate (rule 10):** MR is the mirror of breakout: high WR, small wins, occasional big loss. If WR drops below 50%, the strategy isn't reverting -- it's losing more often than winning AND losing bigger when it loses. That's catastrophic. PF alone can mask this (a few lucky big wins inflate PF even with 40% WR), but the MR archetype requires consistent wins.
 - **Funding rate consideration:** On HL perps, funding settles hourly (see 1.6 for rates). For MR (1-2h holds), impact is minimal. Extreme positive funding often signals overcrowded longs (good for short MR). Extreme negative funding signals overcrowded shorts (good for long MR). Funding is both a cost and a signal, but BREAKER should track it as optional context, not a primary entry signal (adds complexity, noisy on 15m).
@@ -658,7 +658,7 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 - **Long-only may outperform long/short on BTC.** QuantifiedStrategies: "Bitcoin has historically been biased to the upside, and trend-following tends to work best on the long side." QuantPedia designed their entire multi-TF strategy as long-only for this reason. Shorting BTC incurs negative funding in bear markets AND fights the long-term upward drift. Consider long-only or asymmetric sizing (larger longs, smaller shorts).
 - **Funding rate is the silent killer of swing trades.** See 1.6 for rate ranges. At calm-market rates: ~0.24%/day, 1.2% over 5 days. At spike rates: 0.72-1.20%/day, 3.6-6.0% over 5 days. This is why Module 4 requires explicit funding modeling. In strong bull markets, funding is highest exactly when you want to be long.
 - **SuperTrend on 4H is the highest-signal setup for crypto.** TradingView backtest (DefinedEdge): SuperTrend ATR 10, Mult 3.0 on BTCUSDT 4H: PF 1.94, WR 46%, 154 trades over 10 years, +2091% compounded. Academic support: PMC study (2023) found SuperTrend and MACD "achieved results more than two times higher than RSI trend detection" across multiple cryptocurrencies 2018-2022. MDPI (2025) warns of period bias: SuperTrend on BTC Daily performed well in bear markets but poorly in bull markets -- regime filter (ADX) is essential. Mudrex: "Start with default (10,3) -- it's a good middle ground." FXOpen recommends multiplier 5 for crypto swing trading to reduce false flips.
-- **Wide stops are non-negotiable.** The Turtle system's edge wasn't the entry -- it was the position sizing and wide stops that let trends develop. Modern adaptation: TOS Indicators recommends 0.5% risk per trade (not 1%) to account for higher whipsaw frequency in modern markets. ATR multiplier of 3.0-6.0 on Daily for BTC.
+- **Wide stops are non-negotiable.** The Turtle system's edge wasn't the entry -- it was the position sizing and wide stops that let trends develop. Modern adaptation: TOS Indicators recommends smaller risk per trade to account for higher whipsaw frequency in modern markets. ATR multiplier of 3.0-6.0 on Daily for BTC.
 - **Multiple simple strategies > one complex strategy.** This aligns with the core KB philosophy. Module 4 should be ONE simple trend-following approach, not a Swiss Army knife. The sophistication comes from combining it with Modules 1-3 and 5, each handling a different regime.
 
 ---
@@ -674,23 +674,33 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 | # | Condition | Mechanical detection | Scope |
 |---|-----------|---------------------|-------|
 | 1 | **Active squeeze** | BB(20, 2.0) inside KC(20, 1.5) on 15m AND BB width decreasing or flat for >= 4 bars. Release (BB expanding outside KC) = Breakout signal, NOT a DNT. ([TTM Squeeze methodology](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/ttm-squeeze), [PyQuantLab BBKC on BTC](https://pyquantlab.medium.com/optimizing-the-bollinger-band-keltner-channel-squeeze-strategy-volatility-breakout-trading-in-70b49101cb30)) | All modules blocked |
-| 2 | **Macro events** | Economic calendar API: block from 30 min before to 30 min after scheduled release time for CPI, FOMC rate decision, NFP, FOMC minutes. Source: forexfactory.com/calendar or investing.com/economic-calendar (filter: USD, High impact only) | All modules blocked. Close open positions 30 min before if in profit; hold if in loss (avoid locking in loss right before potential favorable move) |
-| 3 | **Daily loss limit** | Cumulative daily PnL (across all modules) >= maxDailyLossUsd | All modules blocked. Force close any open position. See 9.5 |
+| 2 | **Volatility spike** | Price moved > X% in Y bars (e.g. > 1.5% in 4 bars on 15m = 1 hour). Pause new entries for Z bars after spike ends. Detects the *effect* of any disruptive event (CPI, FOMC, hacks, liquidation cascades) without needing to predict the *cause*. Thresholds X, Y, Z are tunable | All modules blocked for new entries. Open positions managed by their own exit rules (stop/trail/timeout) |
+| 3 | **Daily loss limit** | Cumulative daily PnL (across all modules) >= maxDailyLossR | All modules blocked. Force close any open position. See 9.5 |
 | 4 | **Weekend** | Saturday 00:00 UTC to Sunday 23:59 UTC. Weekend volume is ~13% of weekday (Kaiko 2025). Spreads widen, false signals increase | Optional block. If enabled: block M1/M3 (need momentum). Allow M2 (ranges common on weekends). M4 unaffected |
 
-### 7.2 Macro calendar integration
+### 7.2 Volatility spike filter
 
-**Minimum viable implementation:**
+Detects abnormal price movement and pauses entries until conditions normalize. This replaces a macro calendar approach — instead of predicting which events matter, detect the market impact directly. Catches scheduled events (CPI, FOMC, NFP) AND unscheduled ones (exchange hacks, regulatory announcements, liquidation cascades).
+
+**Implementation:**
 
 ```
-1. Daily at 00:00 UTC: fetch today's high-impact USD events from calendar API
-2. Store as list of { event, scheduledTime, impact }
-3. Before each signal: check if current time is within [-30min, +30min] of any event
-4. If yes: block entry, log "macro blackout: {event} at {time}"
-5. Edge case: if FOMC releases a surprise statement outside scheduled time, the system cannot detect it. This is an accepted limitation -- the maxDailyLossUsd gate is the backstop
+1. Each bar close: compute abs(price change) over last Y bars
+2. If change > X%: set volatilitySpike = true, record spikeEndBar
+3. While volatilitySpike: block all new entries
+4. After Z bars with no new spike: clear volatilitySpike, resume normal operation
+5. Log: "volatility spike: {change}% in {Y} bars, pausing entries for {Z} bars"
 ```
 
-**Events that trigger blackout:** CPI (monthly), FOMC rate decision (8x/year), NFP (monthly), FOMC minutes (8x/year). Other events (PPI, retail sales, GDP) are optional -- add only if BREAKER analysis shows they cause significant whipsaw.
+**Suggested starting parameters (tune via BREAKER):**
+
+| Parameter | Default | Range | Notes |
+|-----------|---------|-------|-------|
+| X (threshold %) | 1.5% | 1.0-3.0% | Too low = blocks normal moves. Too high = misses real spikes |
+| Y (lookback bars) | 4 (1h on 15m) | 2-8 | Shorter = more sensitive |
+| Z (cooldown bars) | 4 (1h on 15m) | 2-8 | How long to wait after spike subsides |
+
+**Advantages over calendar-based approach:** no external API dependency, no daily fetch, works in backtesting, catches unscheduled events, lives entirely inside the engine.
 
 ### 7.3 Rationale
 
@@ -711,7 +721,7 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 | NY | 09:30-16:00 ET | ~14:30-21:00 | Directional, maximum liquidity | **Breakout** + **MR** |
 | London/NY overlap | -- | ~14:30-16:30 | Peak volume + volatility | **Breakout** primary |
 
-> **MR operates 24/7.** Session breakdown monitors whether edge holds per session. If MR PF in any session is consistently < 1.0, revisit restricting it.
+> **MR operates 24/7.** Session breakdown monitors whether edge holds per session — this is diagnostic context for BREAKER analysis, not an active filter.
 >
 > **Breakout is volume-gated, not time-gated.** The volume confirmation filter (section 3.1 rule 3) naturally blocks entries during low-volume hours — if the breakout bar doesn't have exceptional volume vs its SMA, the signal is rejected regardless of time of day. Sessions provide context for BREAKER's analysis prompt (count, WR, PF per session) but do not gate entries directly.
 
@@ -754,8 +764,8 @@ slippage: 2 ticks   // conservative to cover microstructure
 
 ### 9.2 Sizing
 
-- **Risk per trade:** 1% of capital (max 2% on A+ setup). This approximates quarter-Kelly for typical crypto strategy edges (WR 30-50%, R:R 2-3x). Maclean et al. (2010): fractional Kelly reduces volatility more than it proportionally reduces growth. Balsara (1992): fixed fractional sizing produces significantly lower max drawdowns vs full Kelly or arbitrary sizing
-- **Ramp-up:** first 1-2 weeks of live trading at 0.25-0.5% risk per trade. Scale to 1% after confirming live metrics match paper
+- **Risk per trade:** riskPerTradeUsd (fixed USD, see 1.6). Adjust manually when scaling sizing. Fixed USD is simpler than % of capital — no compounding logic, no dynamic recalculation. When the account grows enough to justify a bump, change the config value
+- **Ramp-up:** first 1-2 weeks of live trading at half riskPerTradeUsd. Scale to full after confirming live metrics match paper
 - **Calculation:** position = risk / stop distance
 - **No-stop fallback (MR only):** When MR operates without a fixed stop (rule 4), stop distance is undefined and the formula above produces a division by zero. In this case, use a **virtual stop** for sizing purposes: virtual stop = catastrophic ATR distance that WOULD be used (e.g. 5x ATR on 1H). The position is sized as if this stop existed, but the actual exit is the timeout. This caps notional exposure and prevents accidental full-account allocation. The virtual stop is NOT placed as an order -- it only governs position size.
 
@@ -763,7 +773,7 @@ slippage: 2 ticks   // conservative to cover microstructure
 
 **Max available:** 40x for BTC on Hyperliquid. **Max allowed by this playbook: 5x.** Hard rule.
 
-**Why leverage exists here:** Leverage does NOT change expectancy per trade. A 1% risk trade returns the same R whether at 1x or 10x. What leverage changes is **capital efficiency** -- how much collateral is locked per position, freeing the rest for other modules or as buffer against drawdown.
+**Why leverage exists here:** Leverage does NOT change expectancy per trade. A trade risking $10 returns the same R whether at 1x or 10x. What leverage changes is **capital efficiency** -- how much collateral is locked per position, freeing the rest for other modules or as buffer against drawdown.
 
 **Margin modes:**
 
@@ -800,7 +810,7 @@ Maintenance margin = initial margin at max leverage / 2 = (1/40) / 2 = **1.25% o
 
 1. **Stop must ALWAYS be closer than liquidation price.** If your ATR stop is at 3% and your liq price is at 4.4% (10x), you have only 1.4% buffer. That is too thin. At 3x (liq ~33%), you have 30% buffer. Safe.
 2. **Leverage is set per-position on Hyperliquid.** Each isolated position can have different leverage. MR (tight stops, frequent trades) can use 3x. Breakout (wider stops, less frequent) can use 2-3x.
-3. **Never use leverage to increase position size beyond 1% risk.** Leverage reduces collateral locked, it does NOT mean "bet bigger." If your 1% risk = $100, and stop distance = $1000, position = 0.1 BTC regardless of leverage. At 3x you just lock $3,166 collateral instead of $9,500.
+3. **Never use leverage to increase position size beyond riskPerTradeUsd.** Leverage reduces collateral locked, it does NOT mean "bet bigger." If your risk = $10, and stop distance = $1000, position = 0.01 BTC regardless of leverage. At 3x you just lock less collateral.
 4. **Funding rate awareness:** At higher leverage, funding payments are proportionally larger relative to your margin. For MR (1-2h holds), negligible. For TF (multi-day holds at 3-5x), funding can erode 0.01-0.03% per hour. Monitor.
 5. **No leverage adjustment mid-trade.** Set leverage before entry. Increasing leverage on a losing position is equivalent to averaging down -- forbidden.
 
@@ -814,7 +824,7 @@ Maintenance margin = initial margin at max leverage / 2 = (1/40) / 2 = **1.25% o
 
 ### 9.5 Daily limits
 
-- Max daily loss: maxDailyLossUsd (set to 2x riskPerTradeUsd in config) -> shut down all assets for the day
+- Max daily loss: maxDailyLossR (default: 2R) -> shut down all assets for the day
 - Max daily trades: 5 across all modules and all assets (global check)
 
 ### 9.6 Enforceability Matrix
@@ -829,11 +839,11 @@ Some rules are enforceable per-module in the BREAKER engine. Others require the 
 | Cooldown (min 2 bars after stop) | **Yes** -- timestamp check in strategy runner | Per-module, per-asset |
 | Global 5 trades/day across modules | **No** -- strategies don't share state | Orchestrator -- **global** (all assets) |
 | One position at a time per asset | **No** -- strategies don't see each other | Orchestrator -- **per-asset** |
-| Daily loss maxDailyLossUsd shutdown | **No** -- strategies don't share P&L | Orchestrator -- **global** (all assets) |
-| Macro event blackout (CPI/FOMC/NFP) | **No** -- requires economic calendar API, not available in backtesting engine | Orchestrator -- **global** (all assets) |
+| Daily loss maxDailyLossR shutdown | **No** -- strategies don't share P&L | Orchestrator -- **global** (all assets) |
+| Volatility spike pause (7.1/7.2) | **Yes** -- computable from price data alone | Orchestrator -- **global** (all assets) |
 | Leverage cap (5x max) | **No** -- backtests don't model leverage/margin | Orchestrator -- per-position via Hyperliquid API |
 
-> **Implication:** The orchestrator is implemented (TypeScript). Handles mutex, daily P&L limits, macro blackout, leverage enforcement via Hyperliquid API.
+> **Implication:** The orchestrator is implemented (TypeScript). Handles mutex, daily P&L limits, volatility spike detection, leverage enforcement via Hyperliquid API.
 
 ### 9.7 Trade lifecycle (end-to-end)
 
@@ -845,11 +855,11 @@ Every trade follows this exact sequence. No step may be skipped.
    Output: { module, direction, entryPrice, stopDistance, confidence }
 
 2. ORCHESTRATOR GATES (see 2.5.4)
-   Check: daily loss < maxDailyLossUsd? trades < 5? no macro blackout? no open position? cooldown clear?
+   Check: daily loss < maxDailyLossR? trades < 5? no volatility spike? no open position on this asset? cooldown clear?
    If ANY gate fails -> LOG(blocked, reason) -> STOP
 
 3. SIZING
-   risk$ = capital * riskPct (1% default, see 1.6)
+   risk$ = riskPerTradeUsd (fixed, see 1.6)
    positionSize = risk$ / stopDistance (or virtual stop for MR no-stop, see 9.2)
    notional = positionSize * entryPrice
    leverage = notional / availableMargin
@@ -863,7 +873,7 @@ Every trade follows this exact sequence. No step may be skipped.
 
 5. POSITION MANAGEMENT
    Each bar close: module evaluates exit conditions (TP, trailing, timeout)
-   Orchestrator checks global exits (maxDailyLossUsd, macro blackout)
+   Orchestrator checks global exits (maxDailyLossR, volatility spike)
    No manual intervention. No averaging down. No moving stops closer to entry.
 
 6. EXIT
@@ -904,7 +914,7 @@ Daily limits (9.5) protect against single-day blowups. If you're hitting the dai
 
 | Trigger | Action | Reset condition |
 |---------|--------|----------------|
-| Daily loss >= maxDailyLossUsd | Shut down all modules for the day | Next calendar day (UTC) |
+| Daily loss >= maxDailyLossR | Shut down all modules for the day | Next calendar day (UTC) |
 
 **Recovery after bad streak:** Review BREAKER output. If a module consistently fails stopping criteria over 2+ weeks, disable it and re-optimize rather than adding layered shutdowns.
 
@@ -954,8 +964,8 @@ The stopping criteria above are **Research Pass** -- the minimum to keep investi
 | Gate | What it means | Criteria | Who decides |
 |------|-------------|----------|-------------|
 | **Research Pass** | Strategy has enough signal to keep optimizing. Not random noise | Meets stopping criteria table above (PF, DD, avgR or WR per module type, trades, WF) | BREAKER automatic |
-| **Paper Trade Pass** | Strategy is robust enough to test with real market conditions (no capital) | Research Pass + WF overfitFlag = false + no session where PF < 0.8 + positive expectancy after fees | Manual validation (5 min) |
-| **Capital Deployment** | Strategy is ready for real money | Paper Trade Pass + 2-4 weeks paper trading with real orders + slippage checklist: compare real fills vs 2-tick estimate (if real slippage > 2x estimate, flag for review) + no behavioral red flags (revenge trading, skipping signals) + operational discipline confirmed. **Ramp-up:** first 1-2 weeks at 0.25-0.5% risk per trade (not full 1%). Scale to 1% only after confirming live metrics match paper | Manual decision |
+| **Paper Trade Pass** | Strategy is robust enough to test with real market conditions (no capital) | Research Pass + WF overfitFlag = false + positive expectancy after fees + session breakdown reviewed (no action required, diagnostic only) | Manual validation (5 min) |
+| **Capital Deployment** | Strategy is ready for real money | Paper Trade Pass + 2-4 weeks paper trading with real orders + slippage checklist: compare real fills vs 2-tick estimate (if real slippage > 2x estimate, flag for review) + no behavioral red flags (revenge trading, skipping signals) + operational discipline confirmed. **Ramp-up:** first 1-2 weeks at half riskPerTradeUsd. Scale to full only after confirming live metrics match paper | Manual decision |
 
 ---
 
@@ -1117,7 +1127,7 @@ const sessions = {
 - Each module must pass Paper Trade Gate before moving to Phase 3
 
 ### Phase 3 -- Integrate
-- Orchestrator implemented per specification in 2.5 (TypeScript): signal priority, mutex, daily P&L check, macro blackout (7.2), leverage enforcement via Hyperliquid API
+- Orchestrator implemented per specification in 2.5 (TypeScript): signal priority, mutex, daily P&L check, volatility spike filter (7.2), leverage enforcement via Hyperliquid API
 - Trade lifecycle per 9.7, order management per 9.8
 - Drawdown recovery rules per 9.9
 - Run modules in parallel (paper trading first)
@@ -1171,7 +1181,7 @@ The argument is: "Asian session has lower volume, so BTC trades sideways, so MR 
 
 **Real risk:** The session edge may be weaker than it appears, or may be diminishing over time.
 
-**Mitigation:** Session breakdown will show whether the edge actually exists in Asia. If MR has similar PF across all sessions, the session filter is not adding value.
+**Mitigation:** Session breakdown in BREAKER analysis shows whether the edge varies by session. This is diagnostic — use it to understand the strategy, not to gate entries. The volume confirmation filter (M1 rule 3) already handles low-liquidity periods adaptively.
 
 ### 16.4 Candle-based backtesting has real limitations
 
@@ -1232,7 +1242,7 @@ Leverage is a capital efficiency tool, not a profit multiplier. But psychologica
 **Mitigation:**
 - Hard cap at 5x in the playbook (see Leverage Policy section). Even 5x is only allowed after 3+ months of profitable live trading.
 - Ramp-up: start at 2x during Capital Deployment. Increase only after confirming emotional stability under drawdown.
-- Always think in R (risk units), never in $ notional. The leverage is invisible if your risk per trade is always 1% of account.
+- Always think in R (risk units), never in $ notional. The leverage is invisible if your risk per trade is always riskPerTradeUsd.
 - Isolated margin only: prevents one module's loss from liquidating another module's position.
 
 ---
@@ -1314,8 +1324,8 @@ Leverage is a capital efficiency tool, not a profit multiplier. But psychologica
 
 **Parameter consistency:**
 - [ ] All fee values in the doc match section 1.6 (taker 0.045%, maker 0.015%, slippage 2 ticks)
-- [ ] All "risk per trade" references match section 1.6 (1% default, max 2%)
-- [ ] All daily loss limit references use maxDailyLossUsd (not 2R) per 1.6
+- [ ] All "risk per trade" references match section 1.6 (riskPerTradeUsd, fixed USD)
+- [ ] All daily loss limit references use maxDailyLossR (R-multiples of riskPerTradeUsd) per 1.6
 - [ ] All variable caps match section 1.6 (M1=8, M2=6, M3=8, M4=6)
 - [ ] ATR stop timeframes per module match section 1.6 table (M1-M3: 1H, M4: Daily)
 - [ ] Stopping criteria table (10.1) matches individual module fixed rules
@@ -1345,7 +1355,7 @@ Leverage is a capital efficiency tool, not a profit multiplier. But psychologica
 grep -n "0\.045\|taker.*fee" knowledge-base.md
 
 # Find all risk-per-trade references
-grep -n "1%.*capital\|risk.*per.*trade\|1-2%.*trade" knowledge-base.md
+grep -n "riskPerTradeUsd\|risk.*per.*trade" knowledge-base.md
 
 # Find all variable cap references
 grep -n "free variable\|var cap\|variable budget" knowledge-base.md

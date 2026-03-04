@@ -5,6 +5,7 @@ export interface PositionHistoryRow {
   strategy_name: string | null;
   entry_price: number | null;
   created_at: string;
+  funding_paid: number | null;
   order_id: number;
   tag: string;
   status: string;
@@ -39,6 +40,7 @@ export interface PositionSummary {
   realizedPnl: number | null;
   pnlPercent: number | null;
   totalFees: number;
+  fundingPaid: number;
   durationMs: number | null;
   openedAt: string;
   closedAt: string | null;
@@ -134,7 +136,7 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
   if (rows.length === 0) return [];
 
   // Group rows by signal_id
-  const groups = new Map<number, { signalCreatedAt: string; signalPrice: number | null; asset: string; side: string; strategyName: string | null; orders: Map<number, OrderGroup> }>();
+  const groups = new Map<number, { signalCreatedAt: string; signalPrice: number | null; asset: string; side: string; strategyName: string | null; fundingPaid: number; orders: Map<number, OrderGroup> }>();
 
   for (const r of rows) {
     let group = groups.get(r.signal_id);
@@ -145,6 +147,7 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
         asset: r.asset,
         side: r.side,
         strategyName: r.strategy_name,
+        fundingPaid: r.funding_paid ?? 0,
         orders: new Map(),
       };
       groups.set(r.signal_id, group);
@@ -225,9 +228,9 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
 
       const entryValue = entryPrice * size;
       if (direction === "LONG") {
-        realizedPnl = totalExitValue - entryValue - totalFees;
+        realizedPnl = totalExitValue - entryValue - totalFees + group.fundingPaid;
       } else {
-        realizedPnl = entryValue - totalExitValue - totalFees;
+        realizedPnl = entryValue - totalExitValue - totalFees + group.fundingPaid;
       }
       pnlPercent = entryValue > 0 ? (realizedPnl / entryValue) * 100 : null;
 
@@ -253,6 +256,7 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
       realizedPnl,
       pnlPercent,
       totalFees,
+      fundingPaid: group.fundingPaid,
       durationMs,
       openedAt,
       closedAt,

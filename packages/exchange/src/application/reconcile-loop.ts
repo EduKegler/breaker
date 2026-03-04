@@ -164,6 +164,7 @@ export class ReconcileLoop {
       if (!localPos) continue;
 
       positionBook.updateLiquidationPx(coin, hlPos.liquidationPx);
+      positionBook.updateFunding(coin, hlPos.cumFunding);
 
       // Recover SL/TP if lost (e.g. after daemon restart with partial state)
       if (localPos.stopLoss === 0) {
@@ -246,6 +247,7 @@ export class ReconcileLoop {
         unrealized_pnl: allPositions.reduce((sum, p) => sum + p.unrealizedPnl, 0),
         realized_pnl: store.getTodayRealizedPnl(),
         open_positions: allPositions.length,
+        cumulative_funding: allPositions.reduce((sum, p) => sum + p.cumulativeFunding, 0),
       });
     }
 

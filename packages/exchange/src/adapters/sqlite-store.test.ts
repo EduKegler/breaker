@@ -48,6 +48,52 @@ describe("SqliteStore", () => {
     });
   });
 
+  describe("updateSignalFunding", () => {
+    it("updates funding_paid on a signal row", () => {
+      const sigId = store.insertSignal({
+        alert_id: "fund-001",
+        source: "strategy-runner",
+        asset: "BTC",
+        side: "LONG",
+        entry_price: 95000,
+        stop_loss: 94000,
+        take_profits: "[]",
+        risk_check_passed: 1,
+        risk_check_reason: null,
+        strategy_name: "donchian-adx",
+      });
+
+      store.updateSignalFunding(sigId, -5.25);
+
+      // Insert an entry order + fill so the signal appears in position history
+      store.insertOrder({
+        signal_id: sigId,
+        hl_order_id: null,
+        coin: "BTC",
+        side: "buy",
+        size: 0.01,
+        price: 95000,
+        order_type: "market",
+        tag: "entry",
+        status: "filled",
+        mode: "testnet",
+        filled_at: "2024-01-10T10:00:00",
+      });
+      store.insertFill({
+        order_id: 1,
+        price: 95000,
+        size: 0.01,
+        fee: 0.5,
+        timestamp: "2024-01-10T10:00:00",
+      });
+
+      const rows = store.getPositionHistoryRows(100);
+      const sigRow = rows.find((r) => r.signal_id === sigId);
+      expect(sigRow).toBeDefined();
+      expect(sigRow!.funding_paid).toBe(-5.25);
+    });
+  });
+
   describe("orders", () => {
     it("inserts and retrieves orders", () => {
       store.insertSignal({
@@ -351,6 +397,7 @@ describe("SqliteStore", () => {
         unrealized_pnl: 5,
         realized_pnl: 0,
         open_positions: 1,
+        cumulative_funding: 0,
       });
 
       store.insertEquitySnapshot({
@@ -359,6 +406,7 @@ describe("SqliteStore", () => {
         unrealized_pnl: 15,
         realized_pnl: 0,
         open_positions: 1,
+        cumulative_funding: 0,
       });
 
       const snapshots = store.getEquitySnapshots(100);

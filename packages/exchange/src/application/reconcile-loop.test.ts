@@ -45,11 +45,13 @@ describe("reconcile", () => {
         currentPrice: 95500,
         unrealizedPnl: 5,
         openedAt: "2024-01-01T00:00:00Z",
+        cumulativeFunding: 0,
         signalId: 1,
+        strategyName: null,
       },
     ];
     const hl: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
 
     const result = reconcile(local, hl);
@@ -72,7 +74,9 @@ describe("reconcile", () => {
         currentPrice: 95000,
         unrealizedPnl: 0,
         openedAt: "2024-01-01T00:00:00Z",
+        cumulativeFunding: 0,
         signalId: 1,
+        strategyName: null,
       },
     ];
     const hl: HlPosition[] = [];
@@ -84,7 +88,7 @@ describe("reconcile", () => {
 
   it("detects HL position not tracked locally", () => {
     const hl: HlPosition[] = [
-      { coin: "ETH", direction: "long", size: 1, entryPrice: 3500, unrealizedPnl: 10, leverage: 3, liquidationPx: null },
+      { coin: "ETH", direction: "long", size: 1, entryPrice: 3500, unrealizedPnl: 10, leverage: 3, liquidationPx: null, cumFunding: 0 },
     ];
 
     const result = reconcile([], hl);
@@ -107,11 +111,13 @@ describe("reconcile", () => {
         currentPrice: 95000,
         unrealizedPnl: 0,
         openedAt: "2024-01-01T00:00:00Z",
+        cumulativeFunding: 0,
         signalId: 1,
+        strategyName: null,
       },
     ];
     const hl: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.02, entryPrice: 95000, unrealizedPnl: 0, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.02, entryPrice: 95000, unrealizedPnl: 0, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
 
     const result = reconcile(local, hl);
@@ -134,11 +140,13 @@ describe("reconcile", () => {
         currentPrice: 95000,
         unrealizedPnl: 0,
         openedAt: "2024-01-01T00:00:00Z",
+        cumulativeFunding: 0,
         signalId: 1,
+        strategyName: null,
       },
     ];
     const hl: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 1.005, entryPrice: 95000, unrealizedPnl: 0, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 1.005, entryPrice: 95000, unrealizedPnl: 0, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
 
     const result = reconcile(local, hl);
@@ -176,7 +184,7 @@ describe("ReconcileLoop", () => {
   it("hydrates position when HL has it but local does not", async () => {
     const positionBook = new PositionBook();
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
@@ -211,7 +219,7 @@ describe("ReconcileLoop", () => {
     });
 
     const hlPositions: HlPosition[] = [
-      { coin: "SOL", direction: "long", size: 1.01, entryPrice: 85.2, unrealizedPnl: 1, leverage: 5, liquidationPx: null },
+      { coin: "SOL", direction: "long", size: 1.01, entryPrice: 85.2, unrealizedPnl: 1, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
@@ -241,7 +249,7 @@ describe("ReconcileLoop", () => {
     });
 
     const hlPositions: HlPosition[] = [
-      { coin: "SOL", direction: "long", size: 1.01, entryPrice: 85.2, unrealizedPnl: 2, leverage: 5, liquidationPx: null },
+      { coin: "SOL", direction: "long", size: 1.01, entryPrice: 85.2, unrealizedPnl: 2, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     // Two trigger orders: fixed SL at 82.3 and trailing SL at 85.4
     const openOrders: HlOpenOrder[] = [
@@ -269,7 +277,7 @@ describe("ReconcileLoop", () => {
   it("hydrates position with SL/TP recovered from open orders", async () => {
     const positionBook = new PositionBook();
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const openOrders: HlOpenOrder[] = [
       { coin: "BTC", oid: 10, side: "A", sz: 0.01, limitPx: 0, orderType: "Stop Market", isTrigger: true, triggerPx: 93000, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
@@ -303,10 +311,11 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: -1,
+      strategyName: null,
     });
 
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const openOrders: HlOpenOrder[] = [
       { coin: "BTC", oid: 20, side: "A", sz: 0.01, limitPx: 0, orderType: "Stop Market", isTrigger: true, triggerPx: 93500, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
@@ -340,10 +349,11 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
+      strategyName: null,
     });
 
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     // Open orders have a different SL price, but we shouldn't overwrite
     const openOrders: HlOpenOrder[] = [
@@ -377,6 +387,7 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
+      strategyName: null,
     });
 
     const hlClient = createMockHlClient({
@@ -405,6 +416,7 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
+      strategyName: null,
     });
 
     const hlClient = createMockHlClient({
@@ -575,7 +587,7 @@ describe("ReconcileLoop", () => {
   it("hydrates position with correct currentPrice and unrealizedPnl from HL", async () => {
     const positionBook = new PositionBook();
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 50, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 50, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
@@ -634,11 +646,12 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
+      strategyName: null,
     });
 
     // HL reports updated PnL
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 30, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 30, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
@@ -668,10 +681,11 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
+      strategyName: null,
     });
 
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 20, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 20, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
@@ -703,10 +717,11 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
+      strategyName: null,
     });
 
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 20, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 20, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const openOrders: HlOpenOrder[] = [
       { coin: "BTC", oid: 100, side: "A", sz: 0.01, limitPx: 94000, orderType: "Stop Market", isTrigger: true, triggerPx: 94000, triggerCondition: "lt", reduceOnly: true, isPositionTpsl: true },
@@ -772,7 +787,7 @@ describe("ReconcileLoop", () => {
     });
 
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
@@ -832,10 +847,11 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
+      strategyName: null,
     });
 
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: NaN, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: NaN, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),
@@ -1009,7 +1025,7 @@ describe("ReconcileLoop", () => {
     });
 
     const hlPositions: HlPosition[] = [
-      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null, cumFunding: 0 },
     ];
     const hlClient = createMockHlClient({
       getPositions: vi.fn().mockResolvedValue(hlPositions),

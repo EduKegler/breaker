@@ -48,6 +48,7 @@ interface EquitySnapshotRow {
   unrealized_pnl: number;
   realized_pnl: number;
   open_positions: number;
+  cumulative_funding: number;
 }
 
 export class SqliteStore {
@@ -116,6 +117,20 @@ export class SqliteStore {
     } catch {
       // Column already exists — ignore
     }
+
+    // Additive migration: funding_paid column on signals (idempotent)
+    try {
+      this.db.exec("ALTER TABLE signals ADD COLUMN funding_paid REAL DEFAULT 0");
+    } catch {
+      // Column already exists — ignore
+    }
+
+    // Additive migration: cumulative_funding column on equity_snapshots (idempotent)
+    try {
+      this.db.exec("ALTER TABLE equity_snapshots ADD COLUMN cumulative_funding REAL DEFAULT 0");
+    } catch {
+      // Column already exists — ignore
+    }
   }
 
   insertSignal(row: Omit<SignalRow, "id" | "created_at">): number {
@@ -160,11 +175,15 @@ export class SqliteStore {
 
   insertEquitySnapshot(row: Omit<EquitySnapshotRow, "id">): number {
     const stmt = this.db.prepare(`
-      INSERT INTO equity_snapshots (timestamp, equity, unrealized_pnl, realized_pnl, open_positions)
-      VALUES (@timestamp, @equity, @unrealized_pnl, @realized_pnl, @open_positions)
+      INSERT INTO equity_snapshots (timestamp, equity, unrealized_pnl, realized_pnl, open_positions, cumulative_funding)
+      VALUES (@timestamp, @equity, @unrealized_pnl, @realized_pnl, @open_positions, @cumulative_funding)
     `);
     const result = stmt.run(row);
     return result.lastInsertRowid as number;
+  }
+
+  updateSignalFunding(signalId: number, fundingPaid: number): void {
+    this.db.prepare("UPDATE signals SET funding_paid = ? WHERE id = ?").run(fundingPaid, signalId);
   }
 
   getOrderByHlOid(hlOid: string): OrderRow | null {
@@ -236,6 +255,7 @@ export class SqliteStore {
   getPositionHistoryRows(limit: number = 500): PositionHistoryRow[] {
     return this.db.prepare(`
       SELECT s.id AS signal_id, s.asset, s.side, s.strategy_name, s.entry_price, s.created_at,
+             s.funding_paid,
              o.id AS order_id, o.tag, o.status, o.price, o.size, o.side AS order_side,
              o.order_type, o.mode, o.created_at AS order_created_at, o.filled_at,
              f.price AS fill_price, f.size AS fill_size, f.fee, f.timestamp AS fill_ts

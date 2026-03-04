@@ -20,6 +20,7 @@ export interface LivePosition {
   leverage: number | null;
   currentPrice: number;
   unrealizedPnl: number;
+  cumulativeFunding: number;
   openedAt: string;
   strategyName: string | null;
 }
@@ -167,6 +168,7 @@ export interface PositionSummary {
   realizedPnl: number | null;
   pnlPercent: number | null;
   totalFees: number;
+  fundingPaid: number;
   durationMs: number | null;
   openedAt: string;
   closedAt: string | null;

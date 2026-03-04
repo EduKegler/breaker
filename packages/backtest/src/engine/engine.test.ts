@@ -176,6 +176,65 @@ describe("runBacktest", () => {
       expect(typeof trade.entryComment).toBe("string");
     }
   });
+
+  it("deducts funding cost from trade pnl", () => {
+    const t0 = new Date("2024-06-01T12:00:00Z").getTime();
+    const ms15 = 900_000;
+    // Controlled candles: entry at bar 5, SL hit at bar 7
+    const candles: Candle[] = [
+      // 0-4: warmup — stable price
+      makeCandle(t0 + 0 * ms15, 1000, 1005, 995, 1000),
+      makeCandle(t0 + 1 * ms15, 1000, 1005, 995, 1000),
+      makeCandle(t0 + 2 * ms15, 1000, 1005, 995, 1000),
+      makeCandle(t0 + 3 * ms15, 1000, 1005, 995, 1000),
+      makeCandle(t0 + 4 * ms15, 1000, 1005, 995, 1000),
+      // 5: entry signal fires, market order fills bar 6 open
+      makeCandle(t0 + 5 * ms15, 1000, 1005, 995, 1000),
+      // 6: entry fills at open (1000). SL placed at 950 (stopLoss from strategy).
+      makeCandle(t0 + 6 * ms15, 1000, 1010, 995, 1005),
+      // 7: price crashes through SL (low=940 < SL=950)
+      makeCandle(t0 + 7 * ms15, 1005, 1010, 940, 945),
+    ];
+
+    /** Strategy that enters long at bar 5 with SL at 950. */
+    const fundingTestStrategy: Strategy = {
+      name: "funding-test",
+      params: {},
+      onCandle(ctx: StrategyContext): Signal | null {
+        if (ctx.index === 5) {
+          return {
+            direction: "long",
+            entryPrice: null,
+            stopLoss: 950,
+            takeProfits: [],
+            comment: "Funding test entry",
+          };
+        }
+        return null;
+      },
+    };
+
+    // Run with high funding rate (0.001 = 0.1% per 8h) for test visibility
+    const config: BacktestConfig = {
+      ...DEFAULT_BACKTEST_CONFIG,
+      cooldownBars: 0,
+      maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
+      maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+      maxDailyLossR: Number.MAX_SAFE_INTEGER,
+      maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
+      execution: { slippageBps: 0, commissionPct: 0, fundingRate8h: 0.001 },
+    };
+
+    const result = runBacktest(candles, fundingTestStrategy, config);
+    expect(result.trades.length).toBeGreaterThanOrEqual(1);
+
+    const trade = result.trades[0];
+    expect(trade.fundingCost).toBeGreaterThan(0);
+    // Funding = entryPrice * size * rate * (barsHeld * intervalMs / 8h_ms)
+    // The trade PnL should be reduced by the funding cost
+    const grossPnl = (trade.exitPrice - trade.entryPrice) * trade.size;
+    expect(trade.pnl).toBeCloseTo(grossPnl - trade.commission - trade.fundingCost, 5);
+  });
 });
 
 describe("no-limits config", () => {
@@ -393,7 +452,7 @@ describe("deferred exit (process_orders_on_close = false)", () => {
     maxTradesPerDay: Number.MAX_SAFE_INTEGER,
     maxDailyLossR: Number.MAX_SAFE_INTEGER,
     maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
-    execution: { slippageBps: 0, commissionPct: 0 },
+    execution: { slippageBps: 0, commissionPct: 0, fundingRate8h: 0 },
   };
 
   it("deferred exit fills at next bar open, not current bar close", () => {
@@ -538,7 +597,7 @@ describe("take-profit and partial close", () => {
     maxTradesPerDay: Number.MAX_SAFE_INTEGER,
     maxDailyLossR: Number.MAX_SAFE_INTEGER,
     maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
-    execution: { slippageBps: 0, commissionPct: 0 },
+    execution: { slippageBps: 0, commissionPct: 0, fundingRate8h: 0 },
   };
 
   it("exercises take-profit order placement and fill", () => {

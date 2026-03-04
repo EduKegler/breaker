@@ -92,6 +92,14 @@ src/
 - Daily PnL is centralized: all runners report via `recordClose()`, any runner reads via `getDailyPnl()`
 - `moduleType` field in CoinStrategySchema (optional) overrides the fallback map in daemon.ts
 
+## Funding rate tracking
+- HL `getClearinghouseState()` (already called by reconcile loop) returns `cumFunding.sinceOpen` — cumulative USDC funding since position open (negative=paid, positive=received). Zero extra API calls needed
+- `PositionBook.updateFunding(coin, cumFunding)` receives absolute cumulative value (not delta) — auto-corrective after daemon restart
+- On position close: `totalPnl = unrealizedPnl + cumulativeFunding` — affects dailyPnl, consecutiveLosses, orchestrator.recordClose
+- SQLite: `signals.funding_paid` (per-signal), `equity_snapshots.cumulative_funding` (portfolio-wide). Additive migrations with `DEFAULT 0`
+- Position history PnL: `realizedPnl = exitValue - entryValue - totalFees + fundingPaid` (fundingPaid is signed)
+- Stale funding on close: last value is from previous reconcile (~30-60s). Max error ~$0.01 per $1000 notional. Acceptable
+
 ## Known pitfalls
 - Must build `@breaker/backtest` before running exchange tests (workspace dependency)
 - PositionBook is in-memory — ReconcileLoop auto-corrects via hydration/auto-close/order sync
@@ -110,7 +118,7 @@ src/
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 467 tests across 24 files
+- `pnpm test` — 478 tests across 24 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

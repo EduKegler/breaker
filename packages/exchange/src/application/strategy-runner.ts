@@ -325,6 +325,10 @@ export class StrategyRunner {
       });
 
       this.deps.positionBook.close(this.deps.coin);
+      const totalPnl = pos.unrealizedPnl + pos.cumulativeFunding;
+      if (signalId != null && pos.cumulativeFunding !== 0) {
+        store.updateSignalFunding(signalId, pos.cumulativeFunding);
+      }
       this.deps.eventLog.append({
         type: "position_closed",
         timestamp: exitTs,
@@ -332,7 +336,8 @@ export class StrategyRunner {
           coin: this.deps.coin,
           direction: pos.direction,
           entryPrice: pos.entryPrice,
-          pnl: pos.unrealizedPnl,
+          pnl: totalPnl,
+          cumulativeFunding: pos.cumulativeFunding,
           reason: exitSignal.comment ?? "strategy_exit",
         },
       }).catch(() => {});
@@ -340,16 +345,17 @@ export class StrategyRunner {
       this.lastExitLevel = null;
       this.trailingSlOid = null;
       this.entryBarIndex = null;
-      if (pos.unrealizedPnl < 0) this.consecutiveLosses++;
+      if (totalPnl < 0) this.consecutiveLosses++;
       else this.consecutiveLosses = 0;
-      this.dailyPnl += pos.unrealizedPnl;
-      this.deps.orchestrator?.recordClose(this.getModuleId(), pos.unrealizedPnl);
+      this.dailyPnl += totalPnl;
+      this.deps.orchestrator?.recordClose(this.getModuleId(), totalPnl);
       log.info({
         action: "positionClosed",
         coin: this.deps.coin,
         direction: pos.direction,
         entryPrice: pos.entryPrice,
-        pnl: pos.unrealizedPnl,
+        pnl: totalPnl,
+        cumulativeFunding: pos.cumulativeFunding,
         exitReason: exitSignal.comment ?? "strategy_exit",
       }, "Position closed");
       return true;

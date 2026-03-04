@@ -213,4 +213,32 @@ describe("PositionBook", () => {
     const book = new PositionBook();
     book.updateTrailingStopLoss("ETH", 3000); // should not throw
   });
+
+  it("initializes cumulativeFunding to 0 on open", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+    expect(book.get("BTC")!.cumulativeFunding).toBe(0);
+  });
+
+  it("updates cumulative funding", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+
+    book.updateFunding("BTC", -5.25);
+    expect(book.get("BTC")!.cumulativeFunding).toBe(-5.25);
+  });
+
+  it("overwrites cumulative funding with latest value", () => {
+    const book = new PositionBook();
+    book.open(basePos);
+
+    book.updateFunding("BTC", -3.0);
+    book.updateFunding("BTC", -7.5);
+    expect(book.get("BTC")!.cumulativeFunding).toBe(-7.5);
+  });
+
+  it("ignores updateFunding for non-existent coin", () => {
+    const book = new PositionBook();
+    book.updateFunding("ETH", -1.0); // should not throw
+  });
 });

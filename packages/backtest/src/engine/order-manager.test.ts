@@ -27,7 +27,7 @@ describe("OrderManager", () => {
   });
 
   it("fills market orders at candle open with slippage", () => {
-    const om = new OrderManager({ slippageBps: 0, commissionPct: 0 });
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
     om.addOrder(makeOrder({ type: "market", side: "buy" }), "test");
     const candle = makeCandle(100, 110, 90, 105);
     const result = om.checkOrders(candle);
@@ -38,7 +38,7 @@ describe("OrderManager", () => {
   });
 
   it("fills sell stop when low touches stop price", () => {
-    const om = new OrderManager({ slippageBps: 0, commissionPct: 0 });
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
     om.addOrder(
       makeOrder({ type: "stop", side: "sell", price: 95, tag: "sl" }),
       "test",
@@ -52,7 +52,7 @@ describe("OrderManager", () => {
   });
 
   it("does not fill sell stop when low stays above price", () => {
-    const om = new OrderManager({ slippageBps: 0, commissionPct: 0 });
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
     om.addOrder(
       makeOrder({ type: "stop", side: "sell", price: 90, tag: "sl" }),
       "test",
@@ -65,7 +65,7 @@ describe("OrderManager", () => {
   });
 
   it("fills buy stop when high touches stop price", () => {
-    const om = new OrderManager({ slippageBps: 0, commissionPct: 0 });
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
     om.addOrder(
       makeOrder({ type: "stop", side: "buy", price: 110, tag: "entry" }),
       "test",
@@ -78,7 +78,7 @@ describe("OrderManager", () => {
   });
 
   it("fills buy limit when low touches limit price", () => {
-    const om = new OrderManager({ slippageBps: 0, commissionPct: 0 });
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
     om.addOrder(
       makeOrder({ type: "limit", side: "buy", price: 95, tag: "entry" }),
       "test",
@@ -91,7 +91,7 @@ describe("OrderManager", () => {
   });
 
   it("fills sell limit when high touches limit price", () => {
-    const om = new OrderManager({ slippageBps: 0, commissionPct: 0 });
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
     om.addOrder(
       makeOrder({ type: "limit", side: "sell", price: 110, tag: "tp1" }),
       "test",
@@ -104,7 +104,7 @@ describe("OrderManager", () => {
   });
 
   it("SL wins when both SL and TP trigger on same bar", () => {
-    const om = new OrderManager({ slippageBps: 0, commissionPct: 0 });
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
     om.addOrder(
       makeOrder({ type: "stop", side: "sell", price: 90, tag: "sl", size: 1 }),
       "test",
@@ -124,7 +124,7 @@ describe("OrderManager", () => {
   });
 
   it("applies slippage on stop fills", () => {
-    const om = new OrderManager({ slippageBps: 10, commissionPct: 0 }); // 10 bps = 0.1%
+    const om = new OrderManager({ slippageBps: 10, commissionPct: 0, fundingRate8h: 0 }); // 10 bps = 0.1%
     om.addOrder(
       makeOrder({ type: "stop", side: "sell", price: 100, tag: "sl" }),
       "test",
@@ -137,7 +137,7 @@ describe("OrderManager", () => {
   });
 
   it("calculates commission on fills", () => {
-    const om = new OrderManager({ slippageBps: 0, commissionPct: 0.1 }); // 0.1%
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0.1, fundingRate8h: 0 }); // 0.1%
     om.addOrder(
       makeOrder({ type: "market", side: "buy", size: 2 }),
       "test",

@@ -10,6 +10,7 @@ export interface LivePosition {
   leverage: number | null;
   currentPrice: number;
   unrealizedPnl: number;
+  cumulativeFunding: number;
   openedAt: string;
   signalId: number;
   strategyName: string | null;
@@ -18,7 +19,7 @@ export interface LivePosition {
 export class PositionBook {
   private positions = new Map<string, LivePosition>();
 
-  open(position: Omit<LivePosition, "currentPrice" | "unrealizedPnl">): void {
+  open(position: Omit<LivePosition, "currentPrice" | "unrealizedPnl" | "cumulativeFunding">): void {
     if (this.positions.has(position.coin)) {
       throw new Error(`Position already open for ${position.coin}`);
     }
@@ -26,6 +27,7 @@ export class PositionBook {
       ...position,
       currentPrice: position.entryPrice,
       unrealizedPnl: 0,
+      cumulativeFunding: 0,
     });
   }
 
@@ -58,6 +60,12 @@ export class PositionBook {
     const pos = this.positions.get(coin);
     if (!pos) return;
     pos.trailingStopLoss = trailingStopLoss;
+  }
+
+  updateFunding(coin: string, cumFunding: number): void {
+    const pos = this.positions.get(coin);
+    if (!pos) return;
+    pos.cumulativeFunding = cumFunding;
   }
 
   updatePrice(coin: string, price: number): void {

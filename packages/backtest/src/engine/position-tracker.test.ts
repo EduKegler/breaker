@@ -141,6 +141,31 @@ describe("PositionTracker", () => {
     expect(pt.getPosition()!.size).toBe(1);
   });
 
+  it("includes fundingCost in closePosition pnl", () => {
+    const pt = new PositionTracker();
+    pt.openPosition("long", makeFill(100, 1, "buy"), 5);
+    pt.setEntryBarIndex(0);
+
+    const exitFill = makeFill(110, 1, "sell", "sl");
+    const trade = pt.closePosition(exitFill, 10, "sl", "SL hit", "Entry", 2.0);
+
+    // PnL = (110-100)*1 = 10, minus commissions (0.5+0.5=1.0), minus funding (2.0) = 7.0
+    expect(trade.pnl).toBeCloseTo(7, 5);
+    expect(trade.fundingCost).toBe(2.0);
+  });
+
+  it("includes fundingCost in partialClose pnl", () => {
+    const pt = new PositionTracker();
+    pt.openPosition("long", makeFill(100, 2, "buy"), 5);
+    pt.setEntryBarIndex(0);
+
+    const trade = pt.partialClose(makeFill(110, 1, "sell", "tp1"), 5, "tp1", "TP1", "entry", 1.0);
+
+    // PnL = (110-100)*1 = 10, minus proportional entry fee (0.25) + exit fee (0.5), minus funding (1.0) = 8.25
+    expect(trade.pnl).toBeCloseTo(8.25, 1);
+    expect(trade.fundingCost).toBe(1.0);
+  });
+
   it("throws when closing with no position", () => {
     const pt = new PositionTracker();
     expect(() =>

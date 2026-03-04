@@ -54,6 +54,8 @@ export interface BacktestResult {
 /**
  * Run a backtest on a set of candles with a strategy.
  */
+const EIGHT_HOURS_MS = 8 * 3_600_000;
+
 export function runBacktest(
   candles: Candle[],
   strategy: Strategy,
@@ -65,6 +67,8 @@ export function runBacktest(
   const positionTracker = new PositionTracker();
   const orderManager = new OrderManager(config.execution);
   const equityCurve = new EquityCurve(config.initialCapital);
+  const intervalMs = intervalToMs(sourceInterval);
+  const fundingRate8h = config.execution.fundingRate8h;
 
   // Pre-compute higher timeframe candles
   const higherTimeframes: Record<string, Candle[]> = {};
@@ -122,8 +126,11 @@ export function runBacktest(
       } else if (fill.tag === "signal") {
         // Deferred strategy exit fill (process_orders_on_close = false)
         if (!positionTracker.isFlat()) {
+          const pos = positionTracker.getPosition()!;
+          const barsHeld = i - pos.entryBarIndex;
+          const fc = pos.entryPrice * pos.size * fundingRate8h * (barsHeld * intervalMs) / EIGHT_HOURS_MS;
           const trade = positionTracker.closePosition(
-            fill, i, "signal", pendingExitComment, lastEntryComment,
+            fill, i, "signal", pendingExitComment, lastEntryComment, fc,
           );
           dailyPnl += trade.pnl;
           equityCurve.record(candle.t, i, trade.pnl);
@@ -135,11 +142,15 @@ export function runBacktest(
       } else if (fill.tag === "sl" || fill.tag.startsWith("tp") || fill.tag === "trail") {
         // Exit fill
         if (!positionTracker.isFlat()) {
+          const pos = positionTracker.getPosition()!;
+          const barsHeld = i - pos.entryBarIndex;
+          const fc = pos.entryPrice * pos.size * fundingRate8h * (barsHeld * intervalMs) / EIGHT_HOURS_MS;
           const trade = handleExitFill(
             positionTracker,
             fill,
             i,
             lastEntryComment,
+            fc,
           );
           dailyPnl += trade.pnl;
           equityCurve.record(candle.t, i, trade.pnl);
@@ -240,8 +251,10 @@ export function runBacktest(
       timestamp: lastCandle.t,
       tag: "eod",
     };
+    const barsHeld = (candles.length - 1) - pos.entryBarIndex;
+    const fc = pos.entryPrice * pos.size * fundingRate8h * (barsHeld * intervalMs) / EIGHT_HOURS_MS;
     const trade = positionTracker.closePosition(
-      fill, candles.length - 1, "eod", "End of data", lastEntryComment,
+      fill, candles.length - 1, "eod", "End of data", lastEntryComment, fc,
     );
     equityCurve.record(lastCandle.t, candles.length - 1, trade.pnl);
   }
@@ -272,6 +285,7 @@ function handleExitFill(
   fill: Fill,
   barIndex: number,
   entryComment: string,
+  fundingCost: number = 0,
 ): CompletedTrade {
   const pos = positionTracker.getPosition()!;
   const exitComment = fill.tag === "sl" ? "Stop loss" :
@@ -279,9 +293,11 @@ function handleExitFill(
     fill.tag === "trail" ? "Trailing stop" : fill.tag;
 
   if (fill.size >= pos.size) {
-    return positionTracker.closePosition(fill, barIndex, fill.tag, exitComment, entryComment);
+    return positionTracker.closePosition(fill, barIndex, fill.tag, exitComment, entryComment, fundingCost);
   }
-  return positionTracker.partialClose(fill, barIndex, fill.tag, exitComment, entryComment);
+  // For partial close, prorate funding cost by exit fraction
+  const partialFunding = fundingCost * (fill.size / pos.size);
+  return positionTracker.partialClose(fill, barIndex, fill.tag, exitComment, entryComment, partialFunding);
 }
 
 function placeEntryOrders(

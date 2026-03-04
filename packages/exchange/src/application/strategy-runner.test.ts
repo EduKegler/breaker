@@ -402,6 +402,63 @@ describe("StrategyRunner", () => {
     }));
   });
 
+  it("includes cumulativeFunding in totalPnl on position close", async () => {
+    const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer = createMockStreamer(candles);
+    const strategy = createTestStrategy(5);
+    vi.mocked(strategy.shouldExit!).mockImplementation((ctx: StrategyContext) => {
+      if (ctx.index === 6) return { exit: true, comment: "exit" };
+      return null;
+    });
+    const deps = createDeps(strategy, streamer);
+
+    const runner = new StrategyRunner(deps);
+    await runner.warmup();
+
+    // Open position
+    streamer.addCandle(makeCandle(5));
+    await runner.tick();
+
+    // Inject cumulative funding (negative = paid)
+    deps.positionBook.updateFunding("BTC", -5.0);
+
+    // Exit position
+    streamer.addCandle(makeCandle(6));
+    await runner.tick();
+
+    const events = (deps.eventLog.append as ReturnType<typeof vi.fn>).mock.calls;
+    const closeEvent = events.find((c: unknown[]) => (c[0] as { type: string }).type === "position_closed");
+    expect(closeEvent).toBeDefined();
+    const data = (closeEvent![0] as { data: { pnl: number; cumulativeFunding: number } }).data;
+    expect(data.cumulativeFunding).toBe(-5.0);
+    // totalPnl = unrealizedPnl + cumulativeFunding, so pnl should include the -5.0 funding
+    // unrealizedPnl is some market-determined value; funding shifts it by -5.0
+    const posClosedPnl = data.pnl;
+    // Re-open and close WITHOUT funding to compare
+    clearPendingCoins();
+    const candles2 = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+    const streamer2 = createMockStreamer(candles2);
+    const strategy2 = createTestStrategy(5);
+    vi.mocked(strategy2.shouldExit!).mockImplementation((ctx: StrategyContext) => {
+      if (ctx.index === 6) return { exit: true, comment: "exit" };
+      return null;
+    });
+    const deps2 = createDeps(strategy2, streamer2);
+    const runner2 = new StrategyRunner(deps2);
+    await runner2.warmup();
+    streamer2.addCandle(makeCandle(5));
+    await runner2.tick();
+    // No funding injection
+    streamer2.addCandle(makeCandle(6));
+    await runner2.tick();
+    const events2 = (deps2.eventLog.append as ReturnType<typeof vi.fn>).mock.calls;
+    const closeEvent2 = events2.find((c: unknown[]) => (c[0] as { type: string }).type === "position_closed");
+    const pnlWithoutFunding = (closeEvent2![0] as { data: { pnl: number } }).data.pnl;
+
+    // The difference should be exactly the funding amount
+    expect(posClosedPnl - pnlWithoutFunding).toBeCloseTo(-5.0, 2);
+  });
+
   it("inserts exit order + fill in store on strategy exit", async () => {
     const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
     const streamer = createMockStreamer(candles);

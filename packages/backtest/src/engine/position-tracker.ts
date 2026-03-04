@@ -67,6 +67,7 @@ export class PositionTracker {
     exitType: string,
     exitComment: string,
     entryComment: string,
+    fundingCost: number = 0,
   ): CompletedTrade {
     if (!this.position) {
       throw new Error("Cannot close position: no position open");
@@ -85,7 +86,7 @@ export class PositionTracker {
     const totalSlippage =
       fills.reduce((s, f) => s + f.slippage, 0) + fill.slippage;
 
-    const netPnl = pnl - totalCommission;
+    const netPnl = pnl - totalCommission - fundingCost;
 
     const rMultiple =
       this.initialStopDistance > 0
@@ -110,6 +111,7 @@ export class PositionTracker {
       exitType,
       commission: totalCommission,
       slippageCost: totalSlippage,
+      fundingCost,
       entryComment,
       exitComment,
     };
@@ -130,13 +132,14 @@ export class PositionTracker {
     exitType: string,
     exitComment: string,
     entryComment: string,
+    fundingCost: number = 0,
   ): CompletedTrade {
     if (!this.position) {
       throw new Error("Cannot partial close: no position open");
     }
 
     if (fill.size >= this.position.size) {
-      return this.closePosition(fill, exitBarIndex, exitType, exitComment, entryComment);
+      return this.closePosition(fill, exitBarIndex, exitType, exitComment, entryComment, fundingCost);
     }
 
     const { direction, entryPrice, entryTimestamp, entryBarIndex } = this.position;
@@ -155,7 +158,7 @@ export class PositionTracker {
       this.position.fills.reduce((s, f) => s + f.slippage, 0) +
       fill.slippage;
 
-    const netPnl = pnl - totalCommission;
+    const netPnl = pnl - totalCommission - fundingCost;
     const rMultiple =
       this.initialStopDistance > 0
         ? netPnl / (this.initialStopDistance * fill.size)
@@ -179,6 +182,7 @@ export class PositionTracker {
       exitType,
       commission: totalCommission,
       slippageCost: totalSlippage,
+      fundingCost,
       entryComment,
       exitComment,
     };

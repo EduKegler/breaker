@@ -142,6 +142,14 @@ export function PositionCard({
             {position.leverage ? fmt(position.size * position.currentPrice / position.leverage) : "—"}
           </span>
         </div>
+        {position.cumulativeFunding !== 0 && (
+          <div className="text-txt-secondary">
+            Funding{" "}
+            <span className={`font-mono ${position.cumulativeFunding >= 0 ? "text-profit" : "text-loss"}`}>
+              {fmtPnl(position.cumulativeFunding)}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* TP / SL orders from exchange */}

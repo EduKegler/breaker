@@ -48,6 +48,7 @@ export interface CompletedTrade {
   exitType: string; // "sl" | "tp1" | "tp2" | "trail" | "signal" | etc.
   commission: number;
   slippageCost: number;
+  fundingCost: number;
   entryComment: string;
   exitComment: string;
 }
