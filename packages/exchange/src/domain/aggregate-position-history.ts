@@ -150,8 +150,9 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
       groups.set(r.signal_id, group);
     }
 
-    // Deduplicate orders (LEFT JOIN fills can produce multiple rows per order)
-    if (!group.orders.has(r.order_id)) {
+    // Aggregate fills per order (LEFT JOIN fills can produce multiple rows per order)
+    const existing = group.orders.get(r.order_id);
+    if (!existing) {
       group.orders.set(r.order_id, {
         orderId: r.order_id,
         tag: r.tag,
@@ -168,6 +169,18 @@ export function aggregatePositionHistory(rows: PositionHistoryRow[]): PositionSu
         fee: r.fee,
         fillTs: r.fill_ts,
       });
+    } else if (r.fill_price != null && r.fill_size != null) {
+      // Additional partial fill — aggregate VWAP, sum size and fee
+      const prevValue = (existing.fillPrice ?? 0) * (existing.fillSize ?? 0);
+      const newValue = r.fill_price * r.fill_size;
+      const totalSize = (existing.fillSize ?? 0) + r.fill_size;
+      existing.fillPrice = totalSize > 0 ? (prevValue + newValue) / totalSize : r.fill_price;
+      existing.fillSize = totalSize;
+      existing.fee = (existing.fee ?? 0) + (r.fee ?? 0);
+      // Keep the latest fill timestamp
+      if (r.fill_ts && (!existing.fillTs || r.fill_ts > existing.fillTs)) {
+        existing.fillTs = r.fill_ts;
+      }
     }
   }
 

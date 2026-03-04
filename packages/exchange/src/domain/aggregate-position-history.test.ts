@@ -243,6 +243,62 @@ describe("aggregatePositionHistory", () => {
     expect(exitEvent!.details).toContain("94500");
   });
 
+  it("aggregates multiple partial fills for the same order (LEFT JOIN rows)", () => {
+    // Regression: SQL LEFT JOIN produces one row per fill.
+    // An exit order with 3 partial fills must sum sizes/fees and compute VWAP.
+    const rows: PositionHistoryRow[] = [
+      // Entry: single fill
+      row({ order_id: 1, tag: "entry", status: "filled", price: 85, size: 1.01, order_side: "buy", fill_price: 85.203, fill_size: 1.01, fee: 0.04, order_created_at: "2024-01-10T10:00:01", filled_at: "2024-01-10T10:00:02", fill_ts: "2024-01-10T10:00:02" }),
+      // SL cancelled
+      row({ order_id: 2, tag: "sl", status: "cancelled", price: 83, size: 1.01, order_side: "sell", order_type: "stop", fill_price: null, fill_size: null, fee: null, fill_ts: null, order_created_at: "2024-01-10T10:00:03", filled_at: null }),
+      // Exit: 3 partial fills (same order_id = 3, different fill rows from LEFT JOIN)
+      row({ order_id: 3, tag: "exit", status: "filled", price: 86.5, size: 1.01, order_side: "sell", order_type: "market", fill_price: 86.50, fill_size: 0.40, fee: 0.02, order_created_at: "2024-01-10T15:00:00", filled_at: "2024-01-10T15:00:00", fill_ts: "2024-01-10T15:00:00" }),
+      row({ order_id: 3, tag: "exit", status: "filled", price: 86.5, size: 1.01, order_side: "sell", order_type: "market", fill_price: 86.60, fill_size: 0.50, fee: 0.02, order_created_at: "2024-01-10T15:00:00", filled_at: "2024-01-10T15:00:00", fill_ts: "2024-01-10T15:00:01" }),
+      row({ order_id: 3, tag: "exit", status: "filled", price: 86.5, size: 1.01, order_side: "sell", order_type: "market", fill_price: 86.70, fill_size: 0.11, fee: 0.01, order_created_at: "2024-01-10T15:00:00", filled_at: "2024-01-10T15:00:00", fill_ts: "2024-01-10T15:00:02" }),
+    ];
+
+    const result = aggregatePositionHistory(rows);
+    expect(result).toHaveLength(1);
+
+    const pos = result[0];
+    expect(pos.status).toBe("CLOSED");
+    expect(pos.size).toBe(1.01);
+    expect(pos.entryPrice).toBeCloseTo(85.203, 3);
+
+    // Exit VWAP: (86.50*0.40 + 86.60*0.50 + 86.70*0.11) / (0.40+0.50+0.11) = 86.5871.../1.01
+    const expectedExitValue = 86.50 * 0.40 + 86.60 * 0.50 + 86.70 * 0.11;
+    const expectedExitVwap = expectedExitValue / 1.01;
+    expect(pos.exitPrice).toBeCloseTo(expectedExitVwap, 2);
+
+    // Total fees: entry 0.04 + exit (0.02+0.02+0.01)
+    expect(pos.totalFees).toBeCloseTo(0.09, 4);
+
+    // PnL LONG: exitValue - entryValue - fees
+    const entryValue = 85.203 * 1.01;
+    const expectedPnl = expectedExitValue - entryValue - 0.09;
+    expect(pos.realizedPnl).toBeCloseTo(expectedPnl, 2);
+    // Must be POSITIVE (exit > entry for a LONG)
+    expect(pos.realizedPnl!).toBeGreaterThan(0);
+  });
+
+  it("aggregates multiple partial fills for entry order too", () => {
+    // Entry with 2 partial fills + single SL exit
+    const rows: PositionHistoryRow[] = [
+      row({ order_id: 1, tag: "entry", status: "filled", price: 95000, size: 0.01, order_side: "buy", fill_price: 95000, fill_size: 0.006, fee: 0.3, order_created_at: "2024-01-10T10:00:01", filled_at: "2024-01-10T10:00:02", fill_ts: "2024-01-10T10:00:02" }),
+      row({ order_id: 1, tag: "entry", status: "filled", price: 95000, size: 0.01, order_side: "buy", fill_price: 95100, fill_size: 0.004, fee: 0.2, order_created_at: "2024-01-10T10:00:01", filled_at: "2024-01-10T10:00:02", fill_ts: "2024-01-10T10:00:03" }),
+      row({ order_id: 2, tag: "sl", status: "filled", price: 94000, size: 0.01, order_side: "sell", order_type: "stop", fill_price: 94000, fill_size: 0.01, fee: 0.5, order_created_at: "2024-01-10T10:00:03", filled_at: "2024-01-10T10:05:00", fill_ts: "2024-01-10T10:05:00" }),
+    ];
+
+    const result = aggregatePositionHistory(rows);
+    const pos = result[0];
+
+    // Entry VWAP: (95000*0.006 + 95100*0.004) / 0.01 = (570+380.4)/0.01 = 95040
+    expect(pos.entryPrice).toBeCloseTo(95040, 0);
+    expect(pos.size).toBeCloseTo(0.01, 6);
+    // Total fees: 0.3 + 0.2 + 0.5 = 1.0
+    expect(pos.totalFees).toBeCloseTo(1.0, 2);
+  });
+
   it("extracts mode from entry order", () => {
     const rows: PositionHistoryRow[] = [
       row({ order_id: 1, tag: "entry", mode: "mainnet", status: "filled", fill_price: 95000, fill_size: 0.01, fee: 0.5, filled_at: "2024-01-10T10:00:02", fill_ts: "2024-01-10T10:00:02" }),
