@@ -57,5 +57,5 @@
   },
   "entrySlippageBps": 50,
   "dryRun": false,
-  "logLevels": {}
+  "logLevels": { "strategyRunner": "debug" }
 }
