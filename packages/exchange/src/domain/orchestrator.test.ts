@@ -108,6 +108,25 @@ describe("Orchestrator", () => {
     });
   });
 
+  describe("seedDailyPnl", () => {
+    it("initializes dailyPnl from an external source", () => {
+      orch.seedDailyPnl(-15);
+      expect(orch.getDailyPnl()).toBe(-15);
+      expect(orch.shouldForceClose()).toBe(false);
+    });
+
+    it("makes canSignal block when seeded past limit", () => {
+      orch.seedDailyPnl(-20);
+      expect(orch.canSignal("BTC:donchian-adx").allowed).toBe(false);
+    });
+
+    it("accumulates on top of seeded value", () => {
+      orch.seedDailyPnl(-10);
+      orch.recordClose("BTC:donchian-adx", -5);
+      expect(orch.getDailyPnl()).toBe(-15);
+    });
+  });
+
   describe("recordEntry", () => {
     it("increments trades today", () => {
       expect(orch.getTradesToday()).toBe(0);

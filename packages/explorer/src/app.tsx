@@ -19,7 +19,7 @@ import { queryClient } from "./lib/query-provider.js";
 import { EquityChart } from "./components/equity-chart.js";
 import { CandlestickChart } from "./components/candlestick-chart.js";
 import { PositionCard } from "./components/position-card.js";
-import { PositionHistoryTable } from "./components/position-history-table.js";
+import { HistoryTabs } from "./components/history-tabs.js";
 import { OpenOrdersTable } from "./components/open-orders-table.js";
 import { SignalPopover } from "./components/signal-popover.js";
 import { ToastContainer } from "./components/toast-container.js";
@@ -73,6 +73,7 @@ export function App() {
   const openOrders = useStore((s) => s.openOrders);
   const equity = useStore((s) => s.equity);
   const pendingEntries = useStore((s) => s.pendingEntries);
+  const signals = useStore((s) => s.signals);
   const loadingStrategies = useStore((s) => s.loadingStrategies);
   const selectedCoin = useStore((s) => s.selectedCoin);
   const selectedInterval = useStore((s) => s.selectedInterval);
@@ -384,19 +385,9 @@ export function App() {
           </section>
         )}
 
-        {/* ── Position History ──────────── */}
+        {/* ── History (Positions + Signals) ──────────── */}
         <section className="bg-terminal-surface border border-terminal-border rounded-sm p-4">
-          <div className="flex items-center gap-3 mb-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-txt-secondary">
-              Position History
-            </h2>
-            {positionHistory.length > 0 && (
-              <span className="px-1.5 py-0.5 text-[10px] font-mono font-medium rounded-sm bg-terminal-border text-txt-secondary">
-                {positionHistory.length}
-              </span>
-            )}
-          </div>
-          <PositionHistoryTable positions={positionHistory} />
+          <HistoryTabs positions={positionHistory} signals={signals} />
         </section>
       </main>
       <ToastContainer />

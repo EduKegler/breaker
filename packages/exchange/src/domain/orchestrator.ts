@@ -153,6 +153,11 @@ export class Orchestrator {
     return this.dailyPnl;
   }
 
+  /** Seed dailyPnl from an external source (e.g. SQLite) on daemon startup. */
+  seedDailyPnl(pnl: number): void {
+    this.dailyPnl = pnl;
+  }
+
   getTradesToday(): number {
     return this.tradesToday;
   }

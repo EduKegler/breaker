@@ -270,6 +270,14 @@ async function main() {
   });
   syncDeps.orchestrator = orchestrator;
 
+  // Seed orchestrator with today's realized PnL from SQLite so the daily loss
+  // gate is accurate even after daemon restarts (orchestrator starts at 0).
+  const todayPnl = store.getTodayRealizedPnl();
+  if (todayPnl !== 0) {
+    orchestrator.seedDailyPnl(todayPnl);
+    logger.info({ todayPnl }, "Orchestrator seeded with today's realized PnL from DB");
+  }
+
   for (const coinCfg of config.coins) {
     for (const strat of coinCfg.strategies) {
       const moduleType: ModuleType = strat.moduleType ?? MODULE_TYPE_FALLBACK[strat.name] ?? "breakout";

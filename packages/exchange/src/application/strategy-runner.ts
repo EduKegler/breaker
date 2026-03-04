@@ -503,6 +503,8 @@ export class StrategyRunner {
       this.deps.signalHandlerDeps.store.updateOrderStatus(orderRecord.id, "cancelled");
     }
 
+    this.deps.signalHandlerDeps.store.updateSignalOutcome(entry.signalId, "no_fill", "GTC entry expired (timeout)");
+
     await this.deps.eventLog.append({
       type: "gtc_entry_expired",
       timestamp: new Date().toISOString(),
@@ -518,36 +520,41 @@ export class StrategyRunner {
   ): Promise<void> {
     this.barsSinceExit++;
 
-    // Orchestrator gate check (shared state: daily loss, trades/day, module pause)
+    // ── Gate checks (collect block reason, don't return early) ──
+    let gateBlockReason: string | null = null;
+
     if (this.deps.orchestrator) {
       const gate = this.deps.orchestrator.canSignal(this.getModuleId());
       if (!gate.allowed) {
+        gateBlockReason = gate.reason ?? "Orchestrator blocked";
         log.debug({ action: "orchestratorBlocked", reason: gate.reason }, "Blocked by orchestrator");
-        return;
       }
     }
 
-    const tradingAllowed = canTrade({
-      barsSinceExit: this.barsSinceExit,
-      cooldownBars: this.deps.config.guardrails.cooldownBars,
-      dailyPnl: this.deps.orchestrator?.getDailyPnl() ?? this.dailyPnl,
-      maxDailyLossUsd: this.deps.config.guardrails.maxDailyLossR * this.deps.config.sizing.riskPerTradeUsd,
-      tradesToday: this.tradesToday,
-      maxTradesPerDay: this.deps.config.guardrails.maxTradesPerDay,
-      maxGlobalTradesDay: this.deps.config.guardrails.maxTradesPerDay,
-    });
-
-    if (!tradingAllowed) {
-      log.debug({
-        action: "tradingBlocked",
-        coin: this.deps.coin,
+    if (!gateBlockReason) {
+      const tradingAllowed = canTrade({
         barsSinceExit: this.barsSinceExit,
+        cooldownBars: this.deps.config.guardrails.cooldownBars,
+        dailyPnl: this.deps.orchestrator?.getDailyPnl() ?? this.dailyPnl,
+        maxDailyLossUsd: this.deps.config.guardrails.maxDailyLossR * this.deps.config.sizing.riskPerTradeUsd,
         tradesToday: this.tradesToday,
-        dailyPnl: this.dailyPnl,
-      }, "Trading blocked by guardrails");
-      return;
+        maxTradesPerDay: this.deps.config.guardrails.maxTradesPerDay,
+        maxGlobalTradesDay: this.deps.config.guardrails.maxTradesPerDay,
+      });
+
+      if (!tradingAllowed) {
+        gateBlockReason = `Trading blocked (cooldown=${this.barsSinceExit}/${this.deps.config.guardrails.cooldownBars}, trades=${this.tradesToday})`;
+        log.debug({
+          action: "tradingBlocked",
+          coin: this.deps.coin,
+          barsSinceExit: this.barsSinceExit,
+          tradesToday: this.tradesToday,
+          dailyPnl: this.dailyPnl,
+        }, "Trading blocked by guardrails");
+      }
     }
 
+    // ── Always run strategy to capture would-be signals ──
     const ctx = buildContext({
       candles,
       index,
@@ -566,6 +573,27 @@ export class StrategyRunner {
         { action: "noSignal", coin: this.deps.coin, ...diag },
         "onCandle returned null",
       );
+      return;
+    }
+
+    // If gates blocked, record the signal that would have been generated
+    if (gateBlockReason) {
+      this.signalCounter++;
+      const gateAlertId = `runner-gate-${Date.now()}-${this.signalCounter}`;
+      this.deps.signalHandlerDeps.store.insertSignal({
+        alert_id: gateAlertId,
+        source: "strategy-runner",
+        asset: this.deps.coin,
+        side: signal.direction.toUpperCase(),
+        entry_price: signal.entryPrice,
+        stop_loss: signal.stopLoss,
+        take_profits: JSON.stringify(signal.takeProfits ?? []),
+        risk_check_passed: 0,
+        risk_check_reason: gateBlockReason,
+        strategy_name: this.deps.strategyConfigName,
+        outcome: "blocked",
+        outcome_reason: gateBlockReason,
+      });
       return;
     }
 
@@ -588,6 +616,22 @@ export class StrategyRunner {
       );
       if (!resolution.proceed) {
         log.info({ action: "signalDeconflicted", reason: resolution.reason }, "Signal deconflicted");
+        this.signalCounter++;
+        const deconflictAlertId = `runner-deconf-${Date.now()}-${this.signalCounter}`;
+        this.deps.signalHandlerDeps.store.insertSignal({
+          alert_id: deconflictAlertId,
+          source: "strategy-runner",
+          asset: this.deps.coin,
+          side: signal.direction.toUpperCase(),
+          entry_price: signal.entryPrice,
+          stop_loss: signal.stopLoss,
+          take_profits: JSON.stringify(signal.takeProfits ?? []),
+          risk_check_passed: 0,
+          risk_check_reason: resolution.reason ?? "Signal deconflicted",
+          strategy_name: this.deps.strategyConfigName,
+          outcome: "blocked",
+          outcome_reason: resolution.reason ?? "Signal deconflicted",
+        });
         return;
       }
     }

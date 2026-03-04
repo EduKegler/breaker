@@ -25,6 +25,8 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 │   │   ├── signal-popover.tsx      # Quick signal popover (multi-coin, uses useSendQuickSignal)
 │   │   ├── candle-countdown.tsx    # Countdown timer to next candle close
 │   │   ├── timeframe-switcher.tsx  # Interval pill buttons (1m..1d) with LIVE badge
+│   │   ├── history-tabs.tsx        # Tab switcher: Positions / Signals history
+│   │   ├── signal-history-table.tsx # Signal history with outcome badges (executed/blocked/rejected)
 │   │   └── ...
 │   ├── lib/
 │   │   ├── api.ts                  # Fetch wrapper for exchange APIs

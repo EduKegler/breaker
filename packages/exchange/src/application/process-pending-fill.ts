@@ -122,6 +122,9 @@ export async function processPendingFill(
     log.warn({ coin: pending.coin }, "Failed to send notification for GTC fill");
   }
 
+  // Update signal outcome: resting → executed
+  store.updateSignalOutcome(pending.signalId, "executed");
+
   log.info({
     action: "pendingFillComplete",
     coin: pending.coin,

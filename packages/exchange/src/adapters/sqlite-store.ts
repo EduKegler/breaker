@@ -13,6 +13,8 @@ interface SignalRow {
   risk_check_passed: number;
   risk_check_reason: string | null;
   strategy_name: string | null;
+  outcome: string | null;
+  outcome_reason: string | null;
   created_at?: string;
 }
 
@@ -131,15 +133,31 @@ export class SqliteStore {
     } catch {
       // Column already exists — ignore
     }
+
+    // Additive migration: outcome tracking columns on signals (idempotent)
+    try {
+      this.db.exec("ALTER TABLE signals ADD COLUMN outcome TEXT");
+    } catch {
+      // Column already exists — ignore
+    }
+    try {
+      this.db.exec("ALTER TABLE signals ADD COLUMN outcome_reason TEXT");
+    } catch {
+      // Column already exists — ignore
+    }
   }
 
-  insertSignal(row: Omit<SignalRow, "id" | "created_at">): number {
+  insertSignal(row: Omit<SignalRow, "id" | "created_at" | "outcome" | "outcome_reason"> & { outcome?: string | null; outcome_reason?: string | null }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO signals (alert_id, source, asset, side, entry_price, stop_loss, take_profits, risk_check_passed, risk_check_reason, strategy_name)
-      VALUES (@alert_id, @source, @asset, @side, @entry_price, @stop_loss, @take_profits, @risk_check_passed, @risk_check_reason, @strategy_name)
+      INSERT INTO signals (alert_id, source, asset, side, entry_price, stop_loss, take_profits, risk_check_passed, risk_check_reason, strategy_name, outcome, outcome_reason)
+      VALUES (@alert_id, @source, @asset, @side, @entry_price, @stop_loss, @take_profits, @risk_check_passed, @risk_check_reason, @strategy_name, @outcome, @outcome_reason)
     `);
-    const result = stmt.run(row);
+    const result = stmt.run({ ...row, outcome: row.outcome ?? null, outcome_reason: row.outcome_reason ?? null });
     return result.lastInsertRowid as number;
+  }
+
+  updateSignalOutcome(signalId: number, outcome: string, reason?: string): void {
+    this.db.prepare("UPDATE signals SET outcome = ?, outcome_reason = ? WHERE id = ?").run(outcome, reason ?? null, signalId);
   }
 
   hasSignal(alertId: string): boolean {

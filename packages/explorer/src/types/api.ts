@@ -84,7 +84,10 @@ export interface SignalRow {
   stop_loss: number;
   take_profits: string;
   risk_check_passed: number;
+  risk_check_reason: string | null;
   strategy_name: string | null;
+  outcome: string | null;
+  outcome_reason: string | null;
   created_at: string;
 }
 

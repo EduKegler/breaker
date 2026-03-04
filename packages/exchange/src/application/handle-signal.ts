@@ -62,12 +62,26 @@ export async function handleSignal(
   // Auto-trading kill switch: block strategy-runner entries when disabled
   if (source === "strategy-runner" && !autoTradingEnabled) {
     log.info({ action: "autoTradingDisabled", alertId, coin }, "Auto-trading disabled — signal ignored");
+    const signalId = store.insertSignal({
+      alert_id: alertId,
+      source,
+      asset: coin,
+      side: signal.direction.toUpperCase(),
+      entry_price: signal.entryPrice,
+      stop_loss: signal.stopLoss,
+      take_profits: JSON.stringify(signal.takeProfits ?? []),
+      risk_check_passed: 0,
+      risk_check_reason: "Auto-trading disabled",
+      strategy_name: input.strategyName ?? null,
+      outcome: "blocked",
+      outcome_reason: "Auto-trading disabled",
+    });
     await eventLog.append({
       type: "auto_trading_blocked",
       timestamp: new Date().toISOString(),
-      data: { alertId, coin, direction: signal.direction, source },
+      data: { alertId, coin, direction: signal.direction, source, signalId },
     });
-    return { success: false, signalId: -1, reason: "Auto-trading disabled" };
+    return { success: false, signalId, reason: "Auto-trading disabled" };
   }
 
   // Idempotency check
@@ -80,7 +94,21 @@ export async function handleSignal(
   const hasPendingGtc = deps.pendingEntryBook?.has(coin) ?? false;
   if (pendingCoins.has(coin) || !positionBook.isFlat(coin) || hasPendingGtc) {
     log.info({ action: "coinBusy", coin, alertId, hasPendingGtc }, "Position already open or pending for coin");
-    return { success: false, signalId: -1, reason: "Position already open/pending" };
+    const signalId = store.insertSignal({
+      alert_id: alertId,
+      source,
+      asset: coin,
+      side: signal.direction.toUpperCase(),
+      entry_price: signal.entryPrice,
+      stop_loss: signal.stopLoss,
+      take_profits: JSON.stringify(signal.takeProfits ?? []),
+      risk_check_passed: 0,
+      risk_check_reason: "Position already open/pending",
+      strategy_name: input.strategyName ?? null,
+      outcome: "blocked",
+      outcome_reason: "Position already open/pending",
+    });
+    return { success: false, signalId, reason: "Position already open/pending" };
   }
   pendingCoins.add(coin);
 
@@ -127,18 +155,38 @@ async function handleSignalInner(
       risk_check_passed: 0,
       risk_check_reason: "Size is zero",
       strategy_name: input.strategyName ?? null,
+      outcome: "rejected",
+      outcome_reason: "Size is zero",
     });
     return { success: false, signalId, reason: "Size is zero" };
   }
 
-  // Risk check
+  // Risk check — prefer orchestrator's in-memory PnL, but sanity-check against DB.
+  // If the override diverges wildly from the DB value, fall back to DB to prevent
+  // phantom blocks from stale in-memory state (e.g. after rapid daemon restarts).
+  const sqlPnl = store.getTodayRealizedPnl();
+  let dailyLossUsd: number;
+  if (input.dailyLossOverride != null) {
+    const overrideAbs = Math.abs(input.dailyLossOverride);
+    const sqlAbs = Math.abs(sqlPnl);
+    const divergence = Math.abs(overrideAbs - sqlAbs);
+    const maxDailyLoss = config.guardrails.maxDailyLossR * config.sizing.riskPerTradeUsd;
+    if (divergence > maxDailyLoss * 2) {
+      log.warn({ dailyLossOverride: input.dailyLossOverride, sqlPnl, divergence },
+        "dailyLossOverride diverges from DB — using DB value");
+      dailyLossUsd = sqlAbs;
+    } else {
+      dailyLossUsd = overrideAbs;
+    }
+  } else {
+    dailyLossUsd = Math.abs(sqlPnl);
+  }
+
   const riskInput: RiskCheckInput = {
     notionalUsd: intent.notionalUsd,
     leverage,
     coinOpenPositions: positionBook.get(coin) ? 1 : 0,
-    dailyLossUsd: input.dailyLossOverride != null
-      ? Math.abs(input.dailyLossOverride)
-      : Math.abs(store.getTodayRealizedPnl()),
+    dailyLossUsd,
     tradesToday: store.getTodayGlobalTradeCount(),
     riskPerTradeUsd: config.sizing.riskPerTradeUsd,
     entryPrice: intent.entryPrice,
@@ -157,6 +205,8 @@ async function handleSignalInner(
     risk_check_passed: riskResult.passed ? 1 : 0,
     risk_check_reason: riskResult.reason,
     strategy_name: input.strategyName ?? null,
+    outcome: riskResult.passed ? null : "rejected",
+    outcome_reason: riskResult.passed ? null : riskResult.reason ?? null,
   });
 
   await eventLog.append({
@@ -222,6 +272,7 @@ async function handleGtcEntry(
       data: { signalId, alertId, coin, direction: intent.direction, size: intent.size, entryPrice: intent.entryPrice, error: (entryErr as Error).message },
     });
 
+    store.updateSignalOutcome(signalId, "error", (entryErr as Error).message);
     return { success: false, signalId, reason: (entryErr as Error).message, intent };
   }
 
@@ -239,6 +290,7 @@ async function handleGtcEntry(
     });
 
     log.info({ action: "gtcEntryRejected", signalId, coin }, "ALO entry rejected — signal lost timing");
+    store.updateSignalOutcome(signalId, "rejected", "ALO rejected (would cross spread)");
     return { success: false, signalId, reason: "ALO rejected (would cross spread)", intent };
   }
 
@@ -247,6 +299,7 @@ async function handleGtcEntry(
     const actualSize = truncateSize(gtcResult.filledSize, szDecimals);
     if (actualSize <= 0) {
       log.warn({ action: "gtcFillTruncatedToZero", signalId }, "GTC filled but size truncated to zero");
+      store.updateSignalOutcome(signalId, "error", "GTC fill truncated to zero");
       return { success: false, signalId, reason: "GTC fill truncated to zero", intent };
     }
     const actualPrice = gtcResult.avgPrice || intent.entryPrice;
@@ -284,6 +337,8 @@ async function handleGtcEntry(
     strategyName: input.strategyName ?? null,
     comment: intent.comment,
   });
+
+  store.updateSignalOutcome(signalId, "resting", "GTC order resting on book");
 
   log.info({
     action: "gtcEntryResting", signalId, coin, hlOrderId: gtcResult.orderId,
@@ -346,6 +401,7 @@ async function handleIocEntry(
       data: { signalId, alertId, coin, direction: intent.direction, size: intent.size, entryPrice: intent.entryPrice, error: (entryErr as Error).message },
     });
 
+    store.updateSignalOutcome(signalId, "error", (entryErr as Error).message);
     return { success: false, signalId, reason: (entryErr as Error).message, intent };
   }
 
@@ -367,6 +423,7 @@ async function handleIocEntry(
     });
 
     log.info({ action: "entryNoFill", signalId, hlOrderId: entryResult.orderId, requestedSize: intent.size }, "Entry order got no fill (IOC expired)");
+    store.updateSignalOutcome(signalId, "no_fill", "Entry order not filled (IOC expired)");
     return { success: false, signalId, reason: "Entry order not filled", intent };
   }
 
@@ -447,6 +504,8 @@ async function finalizeEntry(
   }
 
   deps.onSignalProcessed?.();
+
+  store.updateSignalOutcome(signalId, "executed");
 
   log.info({
     action: "handleSignalComplete", signalId, coin,

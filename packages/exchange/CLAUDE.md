@@ -63,6 +63,8 @@ src/
 - Daily loss limit uses R-multiples (`maxDailyLossR × riskPerTradeUsd`), NOT fixed USD — scales automatically with risk sizing
 - `maxTradesPerDay` is a global cross-coin limit (uses `getTodayGlobalTradeCount()`), NOT per-coin
 - Idempotency via UNIQUE alert_id in SQLite signals table
+- Signal outcome tracking: `signals.outcome` (`executed|blocked|rejected|no_fill|resting|error`) + `signals.outcome_reason` — every code path in handleSignal and strategy-runner records the final disposition
+- Strategy runner always runs `strategy.onCandle()` even when gates block — records blocked signals with `outcome: "blocked"` for diagnostics (alert_id prefix `runner-gate-`)
 - leverageCache: updateLeverage called once per coin per daemon session
 - `logger.createChild(module)` for per-module log levels (set via `logger.setLogConfig()`)
 - `resolveOrderStatus()` centralizes HL→internal status mapping
@@ -82,6 +84,8 @@ src/
 - Heartbeat in daemon.ts (30s interval) evaluates `shouldForceClose()` to force close positions between candle closes
 - Decision callback persists every decision to EventLog NDJSON (type: `orchestrator_*`)
 - Orchestrator is **optional** in `StrategyRunnerDeps` → existing tests don't break
+- `seedDailyPnl(pnl)` initializes orchestrator from SQLite on daemon startup — prevents stale dailyPnl after restarts
+- `handleSignal` sanity-checks `dailyLossOverride` against SQL: if divergence > 2× maxDailyLoss, falls back to DB value (prevents phantom blocks from corrupted in-memory state)
 
 ## GTC/ALO Maker Entries (PendingEntryBook)
 - Strategies with `entryPrice !== null` (M1 Donchian, M2 Keltner) use GTC ALO (post-only) limit orders instead of IOC

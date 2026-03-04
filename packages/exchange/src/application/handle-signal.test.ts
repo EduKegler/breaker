@@ -483,10 +483,15 @@ describe("handleSignal", () => {
 
     expect(result.success).toBe(false);
     expect(result.reason).toBe("Auto-trading disabled");
-    expect(result.signalId).toBe(-1);
+    expect(result.signalId).toBeGreaterThan(0);
     // No orders should be placed
     expect(deps.hlClient.placeEntryOrder).not.toHaveBeenCalled();
     expect(deps.positionBook.count()).toBe(0);
+
+    // Signal should be recorded with blocked outcome
+    const signals = deps.store.getRecentSignals(1);
+    expect(signals[0].outcome).toBe("blocked");
+    expect(signals[0].outcome_reason).toBe("Auto-trading disabled");
   });
 
   it("logs auto_trading_blocked event when autoTradingEnabled is false", async () => {
@@ -707,19 +712,16 @@ describe("handleSignal", () => {
 });
 
 describe("handleSignal — dailyLossOverride", () => {
-  it("uses dailyLossOverride instead of store.getTodayRealizedPnl when provided", async () => {
-    // Poison the store to return a huge fake loss (like the production bug)
-    vi.spyOn(deps.store, "getTodayRealizedPnl").mockReturnValue(-350);
+  it("uses dailyLossOverride when within sanity range of SQL", async () => {
+    // SQL says small loss, override says none — divergence is small
+    vi.spyOn(deps.store, "getTodayRealizedPnl").mockReturnValue(-5);
 
-    // But provide dailyLossOverride = 0 (orchestrator says no loss)
     const result = await handleSignal(
       createInput({ alertId: "override-001", dailyLossOverride: 0 }),
       deps,
     );
 
     expect(result.success).toBe(true);
-    // getTodayRealizedPnl should NOT be called when override is provided
-    expect(deps.store.getTodayRealizedPnl).not.toHaveBeenCalled();
   });
 
   it("falls back to store.getTodayRealizedPnl when dailyLossOverride is not provided", async () => {
@@ -736,11 +738,40 @@ describe("handleSignal — dailyLossOverride", () => {
 
   it("blocks signal when dailyLossOverride exceeds limit", async () => {
     // maxDailyLossR=2, riskPerTradeUsd=10 → max daily loss = $20
+    vi.spyOn(deps.store, "getTodayRealizedPnl").mockReturnValue(-25);
     const result = await handleSignal(
       createInput({ alertId: "override-block-001", dailyLossOverride: -25 }),
       deps,
     );
 
+    expect(result.success).toBe(false);
+    expect(result.reason).toContain("Daily loss");
+  });
+
+  it("falls back to SQL when dailyLossOverride diverges wildly (sanity check)", async () => {
+    // Reproduces the $350 phantom loss bug: override is wildly wrong, SQL is correct
+    vi.spyOn(deps.store, "getTodayRealizedPnl").mockReturnValue(-1.42);
+
+    // Override says -350, but SQL says only -1.42 loss — divergence 348.58 > 2*20=40
+    const result = await handleSignal(
+      createInput({ alertId: "sanity-001", dailyLossOverride: -350 }),
+      deps,
+    );
+
+    // Should use SQL value ($1.42 < $20 limit) → pass
+    expect(result.success).toBe(true);
+  });
+
+  it("uses override when divergence is within 2x maxDailyLoss", async () => {
+    vi.spyOn(deps.store, "getTodayRealizedPnl").mockReturnValue(-5);
+
+    // Override says -35, SQL says -5 → divergence 30, which is < 2*20=40 → trust override
+    const result = await handleSignal(
+      createInput({ alertId: "sanity-pass-001", dailyLossOverride: -35 }),
+      deps,
+    );
+
+    // Override $35 > maxDailyLoss $20 → blocked
     expect(result.success).toBe(false);
     expect(result.reason).toContain("Daily loss");
   });
