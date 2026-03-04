@@ -84,13 +84,17 @@ If a module says "risk $5 per trade" but Canonical Parameters says "$10", Canoni
 
 **Exchange & costs:**
 
+**Architecture:** Signal source is Binance Futures (candle data). Execution venue is Hyperliquid (perps). These are different orderbooks with different liquidity profiles, funding mechanisms (HL hourly vs Binance 8h), and fee structures. Prices diverge structurally — typically 5-15 bps for BTC in normal conditions, up to 50+ bps in high volatility.
+
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Exchange | Hyperliquid (perps) | All trades |
+| Signal source | Binance Futures | Candle data for indicators and signals |
+| Execution venue | Hyperliquid (perps) | All order execution |
 | Taker fee | 0.045% | Tier 0 (conservative). Round trip = 0.09% |
 | Maker fee | 0.015% | Tier 0. Prefer maker when possible |
-| Slippage | 2 ticks | BTC perp tick = $0.10, so 2 ticks = $0.20 (~0.2 bps at $95k). Conservative for normal liquidity. In low-liquidity hours (02:00-06:00 UTC), real slippage can be 2-5x this estimate. Consider 1-3 bps for general modeling |
-| Funding interval | Hourly | HL-specific. CEXs = 8h. Impacts swing trades (TF module) |
+| Backtest slippage | 10 bps | Models total execution cost: intra-venue slippage (~2-3 bps) + cross-exchange basis (~5-15 bps). Conservative but realistic for signal-on-Binance, execute-on-HL architecture |
+| Daemon entry tolerance | 50 bps | Max acceptable price divergence between Binance signal price and HL fill price. Orders rejected if basis exceeds this. Protects against flash crashes and extreme dislocation — NOT the expected cost |
+| Funding interval | Hourly | HL-specific. Binance = 8h. Different intervals create structural basis between venues. Impacts swing trades (TF module) |
 | Avg BTC funding rate | ~0.005-0.01%/hour [ESTIMATE] | Calm market. Bull runs can spike to ~0.03-0.05%/hour. Derive actual rates from HL API (`fundingHistory` endpoint, rolling 30d). HL cap: 4%/hour. Interest component fixed at 0.00125%/hour (0.01%/8h). Premium sampled every 5s, averaged over hour. Formula: F = avg(P) + clamp(IR - P, -0.0005, 0.0005). ([HL Funding Docs](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/funding), [OneKey guide](https://onekey.so/blog/ecosystem/understanding-hyperliquid-funding-rates-a-traders-guide-49a5c9/)) |
 
 **Risk:**
@@ -233,7 +237,8 @@ Order matters: check top to bottom. Gates 1-3 are global (affect all assets). Ga
 #### 2.5.5 Implementation notes
 
 - **State:** The orchestrator maintains: current position per asset (module, direction, entry time, entry price), daily PnL across all assets (USD), daily trade count across all assets, per-module per-asset cooldown timestamps, volatility spike status
-- **Heartbeat:** Runs every 15m bar close (aligned with fastest module). Checks global gates, polls each module for signals, applies priority rules
+- **Signal loop:** Runs every 15m bar close (aligned with fastest module). Polls each module for signals, applies priority rules, executes entries/exits
+- **Risk loop:** Runs every 30s. Checks global gates (maxDailyLossR, volatility spike), force closes positions if needed. More frequent than signal loop because risk events don't wait for bar boundaries
 - **Logging:** Every decision (entry allowed, entry blocked + reason, forced exit) is logged with timestamp, module, and gate that triggered. This is the primary debugging tool
 - **No backtesting:** The orchestrator cannot be backtested as a unit (modules don't share state in the engine). It is tested via paper trading. See Phase 3 in roadmap (section 15)
 
@@ -757,8 +762,10 @@ Staking HYPE reduces fees by 5-40% depending on amount staked (10 HYPE = 5%, up 
 **In BREAKER engine config:**
 ```
 takerFee: 0.045%    // conservative -- assumes worst case
-slippage: 2 ticks   // conservative to cover microstructure
+slippage: 10 bps   // models cross-exchange basis (Binance signal → HL execution) + intra-venue slippage
 ```
+
+> **Backtest uses taker fees for all operations.** This is intentionally pessimistic. The daemon uses ALO/GTC limit orders for M1 and M2 entries (maker 0.015%), saving ~0.03% per side vs taker. Real performance should be slightly better than backtested. Do not model maker fees in backtest — maker fills are not guaranteed (order may not fill, price may move away), so taker-only is more honest.
 
 **Funding rate:** Paid/received every hour. Not modeled in backtest by default. For MR (short trades of 1-2h), impact is minimal. For trend following (trades lasting hours/days), consider adding to cost model.
 
@@ -965,7 +972,7 @@ The stopping criteria above are **Research Pass** -- the minimum to keep investi
 |------|-------------|----------|-------------|
 | **Research Pass** | Strategy has enough signal to keep optimizing. Not random noise | Meets stopping criteria table above (PF, DD, avgR or WR per module type, trades, WF) | BREAKER automatic |
 | **Paper Trade Pass** | Strategy is robust enough to test with real market conditions (no capital) | Research Pass + WF overfitFlag = false + positive expectancy after fees + session breakdown reviewed (no action required, diagnostic only) | Manual validation (5 min) |
-| **Capital Deployment** | Strategy is ready for real money | Paper Trade Pass + 2-4 weeks paper trading with real orders + slippage checklist: compare real fills vs 2-tick estimate (if real slippage > 2x estimate, flag for review) + no behavioral red flags (revenge trading, skipping signals) + operational discipline confirmed. **Ramp-up:** first 1-2 weeks at half riskPerTradeUsd. Scale to full only after confirming live metrics match paper | Manual decision |
+| **Capital Deployment** | Strategy is ready for real money | Paper Trade Pass + 2-4 weeks paper trading with real orders + slippage checklist: compare real fills vs 10 bps estimate (if real slippage consistently > 2x estimate, flag for review) + no behavioral red flags (revenge trading, skipping signals) + operational discipline confirmed. **Ramp-up:** first 1-2 weeks at half riskPerTradeUsd. Scale to full only after confirming live metrics match paper | Manual decision |
 
 ---
 
@@ -1009,7 +1016,7 @@ Paper trading (2+ weeks with real orders, see section 10 Capital Deployment gate
 - **Max iterations per strategy:** defined in config (recommendation: 15)
 - **Walk-forward:** 70/30 split + pfRatio + automatic overfitFlag (>= 10 trades)
 - **Session breakdown:** Asia/London/NY with count, WR, PF, PnL in prompt
-- **Include real costs:** commission 0.045% (Hyperliquid taker) + slippage 2 ticks in backtest config
+- **Include real costs:** commission 0.045% (Hyperliquid taker) + slippage 10 bps in backtest config (covers cross-exchange basis between Binance signal and HL execution)
 - **Category lock:** BREAKER cannot change strategy type (e.g. breakout -> pullback) without explicit user approval. RESTRUCTURE may change indicators/logic within the same category only
 
 ### 13.2 Session breakdown sanity checks
@@ -1186,7 +1193,7 @@ The argument is: "Asian session has lower volume, so BTC trades sideways, so MR 
 ### 16.4 Candle-based backtesting has real limitations
 
 - **Does not model the order book.** In MR, you enter at extremes -- exactly where liquidity is lowest. The real fill may be worse than the backtest assumes.
-- **Slippage is an estimate.** The engine uses configured slippage (2 ticks). In BTC perp during Asian session (low liquidity), real slippage can be 2-5x the estimate.
+- **Slippage is an estimate.** The engine uses configured slippage (10 bps) to model the combined cost of cross-exchange basis (Binance signal → HL execution) and intra-venue slippage. In high-volatility moments, real basis can exceed 50 bps. Paper trading reveals true slippage.
 - **15m candles hide microstructure.** A candle that "touched KC lower band and bounced back" may have been a 2-second wick that you would never catch with a real order.
 
 **Real risk:** Pretty backtest -> ugly live trading. The backtest-live gap is larger in strategies that trade at extremes (like MR). Degradation of 20-30% is a base estimate; in volatile regimes (cascades, regime shifts), it can reach 40-50%.
@@ -1323,7 +1330,7 @@ Leverage is a capital efficiency tool, not a profit multiplier. But psychologica
 **When to run:** after adding/modifying a module, changing a parameter, or monthly review.
 
 **Parameter consistency:**
-- [ ] All fee values in the doc match section 1.6 (taker 0.045%, maker 0.015%, slippage 2 ticks)
+- [ ] All fee values in the doc match section 1.6 (taker 0.045%, maker 0.015%, backtest slippage 10 bps, daemon tolerance 50 bps)
 - [ ] All "risk per trade" references match section 1.6 (riskPerTradeUsd, fixed USD)
 - [ ] All daily loss limit references use maxDailyLossR (R-multiples of riskPerTradeUsd) per 1.6
 - [ ] All variable caps match section 1.6 (M1=8, M2=6, M3=8, M4=6)
