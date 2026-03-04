@@ -66,6 +66,7 @@ async function syncPositionsAndBroadcast(deps: {
   walletAddress: string;
   wsBroker: WsBroker;
   eventLog: EventLog;
+  orchestrator?: Orchestrator;
 }): Promise<void> {
   const { hlClient, positionBook, store, walletAddress, wsBroker, eventLog } = deps;
   const [hlPositions, openOrders] = await Promise.all([
@@ -77,8 +78,18 @@ async function syncPositionsAndBroadcast(deps: {
   const hlCoins = new Set(hlPositions.map((p) => p.coin));
   for (const local of positionBook.getAll()) {
     if (!hlCoins.has(local.coin)) {
+      const pnl = (local.unrealizedPnl ?? 0) + (local.cumulativeFunding ?? 0);
       positionBook.close(local.coin);
-      log.info({ coin: local.coin }, "Position closed (WS event)");
+
+      // Record PnL in orchestrator so daily loss gate stays accurate
+      if (deps.orchestrator) {
+        const moduleId = `${local.coin}:${local.strategyName ?? "unknown"}`;
+        deps.orchestrator.recordClose(moduleId, pnl);
+        log.info({ coin: local.coin, pnl, dailyPnl: deps.orchestrator.getDailyPnl() },
+          "WS sync: recorded PnL in orchestrator");
+      }
+
+      log.info({ coin: local.coin, pnl }, "Position closed (WS event)");
       eventLog.append({
         type: "position_closed",
         timestamp: new Date().toISOString(),
@@ -86,6 +97,7 @@ async function syncPositionsAndBroadcast(deps: {
           coin: local.coin,
           direction: local.direction,
           entryPrice: local.entryPrice,
+          pnl,
           reason: "ws_sync",
         },
       }).catch(() => {});
@@ -213,8 +225,8 @@ async function main() {
   // WebSocket broker
   const wsBroker = new WsBroker();
 
-  // Shared sync deps
-  const syncDeps = { hlClient, positionBook, store, walletAddress: env.HL_ACCOUNT_ADDRESS, wsBroker, eventLog };
+  // Shared sync deps (orchestrator added after creation below)
+  const syncDeps: Parameters<typeof syncPositionsAndBroadcast>[0] = { hlClient, positionBook, store, walletAddress: env.HL_ACCOUNT_ADDRESS, wsBroker, eventLog };
 
   // Create shared deps
   const signalHandlerDeps: SignalHandlerDeps = {
@@ -253,6 +265,7 @@ async function main() {
     riskPerTradeUsd: config.sizing.riskPerTradeUsd,
     maxTradesPerDay: config.guardrails.maxTradesPerDay,
   });
+  syncDeps.orchestrator = orchestrator;
 
   for (const coinCfg of config.coins) {
     for (const strat of coinCfg.strategies) {
@@ -432,6 +445,7 @@ async function main() {
     candleCache,
     strategyFactory: createStrategy,
     runners,
+    orchestrator,
     persistConfig: () => {
       writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
     },
@@ -655,13 +669,16 @@ async function main() {
       log.warn({ coin: pos.coin, dailyPnl: orchestrator.getDailyPnl() },
         "ORCHESTRATOR: Force closing — daily loss >= 2R");
       try {
+        const pnl = (pos.unrealizedPnl ?? 0) + (pos.cumulativeFunding ?? 0);
         const closeSide = pos.direction === "long" ? "sell" : "buy";
         await hlClient.placeMarketOrder(pos.coin, closeSide === "buy", pos.size);
         positionBook.close(pos.coin);
+        const moduleId = `${pos.coin}:${pos.strategyName ?? "unknown"}`;
+        orchestrator.recordClose(moduleId, pnl);
         eventLog.append({
           type: "orchestrator_force_close",
           timestamp: new Date().toISOString(),
-          data: { coin: pos.coin, direction: pos.direction, dailyPnl: orchestrator.getDailyPnl() },
+          data: { coin: pos.coin, direction: pos.direction, pnl, dailyPnl: orchestrator.getDailyPnl() },
         }).catch(() => {});
         alertsClient.sendText(
           `FORCE CLOSE: ${pos.coin} ${pos.direction} — daily loss >= 2R ($${orchestrator.getDailyPnl().toFixed(2)})`,

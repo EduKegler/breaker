@@ -39,6 +39,7 @@ export interface ServerDeps {
   strategyFactory: (name: string) => Strategy;
   runners: StrategyRunner[];
   persistConfig?: () => void;
+  orchestrator?: { recordClose(moduleId: string, pnl: number): void };
 }
 
 export interface AppResult {
@@ -373,10 +374,17 @@ export function createApp(deps: ServerDeps): AppResult {
     closingInProgress.add(position.coin);
     try {
       // Market order on opposite side to close
+      const pnl = (position.unrealizedPnl ?? 0) + (position.cumulativeFunding ?? 0);
       const isBuy = position.direction === "short";
       await deps.hlClient.placeMarketOrder(position.coin, isBuy, position.size);
 
       deps.positionBook.close(position.coin);
+
+      // Record PnL in orchestrator so daily loss gate stays accurate
+      if (deps.orchestrator) {
+        const moduleId = `${position.coin}:${position.strategyName ?? "unknown"}`;
+        deps.orchestrator.recordClose(moduleId, pnl);
+      }
 
       // Cancel all open orders for this coin
       const openOrders = await deps.hlClient.getOpenOrders(deps.walletAddress);

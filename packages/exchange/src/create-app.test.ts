@@ -549,6 +549,41 @@ describe("Exchange server", () => {
     expect(onSignalProcessed).toHaveBeenCalled();
   });
 
+  it("POST /close-position records PnL in orchestrator", async () => {
+    deps.positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000,
+      takeProfits: [],
+      liquidationPx: null,
+      trailingStopLoss: null,
+      leverage: null,
+      openedAt: new Date().toISOString(),
+      signalId: 1,
+      strategyName: "donchian-adx",
+    });
+    // Simulate unrealized PnL from price movement
+    deps.positionBook.updatePrice("BTC", 90000); // -50 PnL on 0.01 BTC
+
+    const orchestrator = { recordClose: vi.fn() };
+    deps.orchestrator = orchestrator;
+
+    (deps.hlClient.getOpenOrders as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const { app } = createApp(deps);
+    const res = await request(app)
+      .post("/close-position")
+      .send({ coin: "BTC" });
+
+    expect(res.status).toBe(200);
+    expect(orchestrator.recordClose).toHaveBeenCalledOnce();
+    expect(orchestrator.recordClose).toHaveBeenCalledWith("BTC:donchian-adx", expect.any(Number));
+    // PnL should be negative (long at 95000, closed at 90000)
+    expect(orchestrator.recordClose.mock.calls[0][1]).toBeLessThan(0);
+  });
+
   it("POST /close-position returns 400 if no position", async () => {
     const { app } = createApp(deps);
     const res = await request(app)
