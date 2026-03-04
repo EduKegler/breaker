@@ -32,6 +32,19 @@ export async function processPendingFill(
   const filledSize = parseFloat(fill.sz);
   const filledPrice = parseFloat(fill.px);
 
+  if (!Number.isFinite(filledSize) || !Number.isFinite(filledPrice)) {
+    log.warn({
+      action: "pendingFillInvalid",
+      coin: pending.coin,
+      hlOrderId: fill.oid,
+      rawSz: fill.sz,
+      rawPx: fill.px,
+      filledSize,
+      filledPrice,
+    }, "Rejecting fill with invalid size/price (NaN or Infinity)");
+    return false;
+  }
+
   log.info({
     action: "pendingFillReceived",
     coin: pending.coin,

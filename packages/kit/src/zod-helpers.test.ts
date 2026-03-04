@@ -39,4 +39,18 @@ describe("formatZodErrors", () => {
       expect(errors[0]).toMatch(/^user\.email:/);
     }
   });
+
+  it("formats root-level error without leading colon", () => {
+    const schema = z.string();
+    const result = schema.safeParse(42);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const errors = formatZodErrors(result.error);
+      expect(errors).toHaveLength(1);
+      // Should NOT start with ": " — root-level errors have empty path
+      expect(errors[0]).not.toMatch(/^:/);
+      expect(errors[0]).toBe("Expected string, received number");
+    }
+  });
 });

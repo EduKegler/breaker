@@ -269,6 +269,43 @@ describe("no-limits config", () => {
   });
 });
 
+describe("zero stop distance", () => {
+  it("risk mode: produces zero trades when SL equals entry (zero stop distance)", () => {
+    const t0 = new Date("2024-06-01T12:00:00Z").getTime();
+    const ms15 = 900_000;
+    const candles: Candle[] = [];
+    for (let i = 0; i < 20; i++) {
+      candles.push(makeCandle(t0 + i * ms15, 100, 105, 95, 100));
+    }
+
+    /** Strategy where SL = candle close (zero stop distance). */
+    const zeroSlStrategy: Strategy = {
+      name: "zero-sl",
+      params: {},
+      onCandle(ctx: StrategyContext): Signal | null {
+        if (ctx.index < 5) return null;
+        return {
+          direction: "long",
+          entryPrice: null,
+          stopLoss: ctx.currentCandle.c, // SL === entry → stopDist = 0
+          takeProfits: [],
+          comment: "Zero SL dist",
+        };
+      },
+    };
+
+    const result = runBacktest(candles, zeroSlStrategy, {
+      ...DEFAULT_BACKTEST_CONFIG,
+      cooldownBars: 0,
+      maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+      maxDailyLossR: Number.MAX_SAFE_INTEGER,
+      maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
+    });
+    // stopDist = 0 → size = 0 → no entry
+    expect(result.trades).toHaveLength(0);
+  });
+});
+
 describe("cash sizing mode", () => {
   /** Strategy that enters long at a known price with a fixed stop. */
   const fixedPriceStrategy: Strategy = {

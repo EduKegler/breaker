@@ -65,6 +65,14 @@ describe("EquityCurve", () => {
     expect(ec.getTotalReturn()).toBe(50);
   });
 
+  it("drawdown returns 0 when initialCapital is 0", () => {
+    const ec = new EquityCurve(0);
+    // With zero capital, peak stays at 0, drawdown formula has peak=0 guard
+    ec.record(1, 0, -10);
+    expect(ec.getCurrentDrawdown()).toBe(0);
+    expect(ec.getMaxDrawdownPct()).toBe(0);
+  });
+
   it("getPoints returns a copy", () => {
     const ec = new EquityCurve(1000);
     ec.record(1, 0, 10);

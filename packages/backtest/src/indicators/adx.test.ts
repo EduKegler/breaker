@@ -100,4 +100,14 @@ describe("adx", () => {
       }
     }
   });
+
+  it("returns all NaN when period exceeds candle count", () => {
+    const candles = Array.from({ length: 5 }, (_, i) =>
+      makeCandle(100 + i, 105 + i, 95 + i, 102 + i),
+    );
+    const result = adx(candles, 20);
+    expect(result.adx.every(isNaN)).toBe(true);
+    expect(result.diPlus.every(isNaN)).toBe(true);
+    expect(result.diMinus.every(isNaN)).toBe(true);
+  });
 });

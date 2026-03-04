@@ -52,4 +52,15 @@ describe("rsi", () => {
     const values = Array.from({ length: 30 }, (_, i) => 100 + i);
     expect(rsi(values, 14)).toHaveLength(30);
   });
+
+  it("handles constant values without NaN (documents library behavior)", () => {
+    // All same values → no gains, no losses → RSI should be defined
+    const values = Array.from({ length: 20 }, () => 50);
+    const result = rsi(values, 5);
+    // After warmup, constant values → avgGain=0, avgLoss=0
+    // Library returns 0 when both are zero (RS = 0 → RSI = 0)
+    for (let i = 5; i < result.length; i++) {
+      expect(Number.isFinite(result[i])).toBe(true);
+    }
+  });
 });

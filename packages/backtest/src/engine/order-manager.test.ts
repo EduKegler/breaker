@@ -165,4 +165,51 @@ describe("OrderManager", () => {
     expect(om.getPendingOrders()).toHaveLength(1);
     expect(om.getPendingOrders()[0].order.tag).toBe("tp1");
   });
+
+  it("fills multiple TPs on same bar when no SL triggers", () => {
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
+    om.addOrder(
+      makeOrder({ type: "limit", side: "sell", price: 110, tag: "tp1", size: 0.5 }),
+      "test",
+    );
+    om.addOrder(
+      makeOrder({ type: "limit", side: "sell", price: 120, tag: "tp2", size: 0.5 }),
+      "test",
+    );
+    // Wide bar that hits both TPs but no SL
+    const candle = makeCandle(100, 125, 98, 122);
+    const result = om.checkOrders(candle);
+
+    expect(result.fills).toHaveLength(2);
+    expect(result.fills[0].tag).toBe("tp1");
+    expect(result.fills[1].tag).toBe("tp2");
+    expect(result.cancelledOrderIds).toHaveLength(0);
+    expect(om.getPendingOrders()).toHaveLength(0);
+  });
+
+  it("cancels all TPs when SL and multiple TPs trigger on same bar", () => {
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
+    om.addOrder(
+      makeOrder({ type: "stop", side: "sell", price: 90, tag: "sl", size: 1 }),
+      "test",
+    );
+    om.addOrder(
+      makeOrder({ type: "limit", side: "sell", price: 110, tag: "tp1", size: 0.5 }),
+      "test",
+    );
+    om.addOrder(
+      makeOrder({ type: "limit", side: "sell", price: 120, tag: "tp2", size: 0.5 }),
+      "test",
+    );
+    // Wide bar that hits SL and both TPs
+    const candle = makeCandle(100, 125, 85, 110);
+    const result = om.checkOrders(candle);
+
+    // Only SL should survive
+    expect(result.fills).toHaveLength(1);
+    expect(result.fills[0].tag).toBe("sl");
+    // Both TPs cancelled
+    expect(result.cancelledOrderIds).toHaveLength(2);
+    expect(om.getPendingOrders()).toHaveLength(0);
+  });
 });

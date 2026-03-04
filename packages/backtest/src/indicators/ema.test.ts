@@ -52,4 +52,13 @@ describe("ema", () => {
     }
     expect(result[4]).not.toBeNaN();
   });
+
+  it("period=1 returns values close to original", () => {
+    const values = [10, 20, 15, 25, 30];
+    const result = ema(values, 1);
+    // EMA(1) has k=1, so each output = current value
+    for (let i = 0; i < values.length; i++) {
+      expect(result[i]).toBeCloseTo(values[i], 5);
+    }
+  });
 });

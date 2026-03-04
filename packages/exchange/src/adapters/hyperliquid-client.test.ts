@@ -318,6 +318,41 @@ describe("HyperliquidClient.placeGtcEntryOrder", () => {
   });
 });
 
+describe("extractOid error handling", () => {
+  it("throws when exchange returns error status (placeMarketOrder)", async () => {
+    const sdk = createMockSdk();
+    (sdk.custom.marketOpen as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{ error: "Insufficient margin" }] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    await expect(client.placeMarketOrder("BTC", true, 0.01))
+      .rejects.toThrow("Insufficient margin");
+  });
+
+  it("throws when exchange returns error status (placeStopOrder)", async () => {
+    const sdk = createMockSdk();
+    (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{ error: "Invalid trigger price" }] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    await expect(client.placeStopOrder("BTC", false, 0.01, 90000, true))
+      .rejects.toThrow("Invalid trigger price");
+  });
+
+  it("throws when response shape is unexpected (no statuses)", async () => {
+    const sdk = createMockSdk();
+    (sdk.custom.marketOpen as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    const client = new HyperliquidClient(sdk);
+
+    await expect(client.placeMarketOrder("BTC", true, 0.01))
+      .rejects.toThrow();
+  });
+});
+
 describe("HyperliquidClient.fromSymbol normalization", () => {
   it("getPositions strips -PERP suffix from coin", async () => {
     const sdk = createMockSdk();

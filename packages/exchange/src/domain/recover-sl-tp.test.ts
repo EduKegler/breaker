@@ -101,6 +101,28 @@ describe("recoverSlTp", () => {
     expect(result.trailingStopLoss).toBeNull();
   });
 
+  it("with 2 SL orders and no direction, picks most protective (lowest) triggerPx", () => {
+    const orders = [
+      makeOrder({ oid: 1, isTrigger: true, reduceOnly: true, triggerPx: 94000 }),
+      makeOrder({ oid: 2, isTrigger: true, reduceOnly: true, triggerPx: 93000 }),
+    ];
+    const result = recoverSlTp("BTC", 0.01, orders);
+    // Should pick the lowest (most protective for long) instead of arbitrary first
+    expect(result.stopLoss).toBe(93000);
+    expect(result.trailingStopLoss).toBeNull();
+  });
+
+  it("with 3 SL orders and no direction, still picks most protective", () => {
+    const orders = [
+      makeOrder({ oid: 1, isTrigger: true, reduceOnly: true, triggerPx: 94500 }),
+      makeOrder({ oid: 2, isTrigger: true, reduceOnly: true, triggerPx: 93000 }),
+      makeOrder({ oid: 3, isTrigger: true, reduceOnly: true, triggerPx: 93800 }),
+    ];
+    const result = recoverSlTp("BTC", 0.01, orders);
+    expect(result.stopLoss).toBe(93000);
+    expect(result.trailingStopLoss).toBeNull();
+  });
+
   it("discriminates fixed vs trailing SL for long: lower=fixed, higher=trailing", () => {
     const orders = [
       makeOrder({ oid: 1, isTrigger: true, reduceOnly: true, triggerPx: 93000 }),

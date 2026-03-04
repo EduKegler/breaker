@@ -56,4 +56,21 @@ describe("donchian", () => {
     expect(result.upper[1]).toBe(20);
     expect(result.lower[1]).toBe(8);
   });
+
+  it("returns finite mid for flat candles (h === l)", () => {
+    const candles = [makeCandle(100, 100), makeCandle(100, 100), makeCandle(100, 100)];
+    const result = donchian(candles, 2);
+    expect(result.upper[1]).toBe(100);
+    expect(result.lower[1]).toBe(100);
+    expect(result.mid[1]).toBe(100);
+    expect(Number.isFinite(result.mid[1])).toBe(true);
+  });
+
+  it("returns -Infinity upper when candle.h is NaN (documents behavior)", () => {
+    const candles = [makeCandle(NaN, 5), makeCandle(NaN, 3)];
+    const result = donchian(candles, 1);
+    // NaN > hi is always false, so hi stays at -Infinity
+    expect(result.upper[0]).toBe(-Infinity);
+    expect(result.lower[0]).toBe(5);
+  });
 });

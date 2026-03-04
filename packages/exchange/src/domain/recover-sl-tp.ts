@@ -38,8 +38,9 @@ export function recoverSlTp(
       trailingSlOid = sorted[0].oid;
     }
   } else if (slOrders.length >= 2) {
-    // No direction provided — pick first as SL, can't discriminate trailing
-    stopLoss = slOrders[0].triggerPx;
+    // No direction provided — pick the lowest triggerPx as the most conservative SL
+    const sorted = [...slOrders].sort((a, b) => a.triggerPx - b.triggerPx);
+    stopLoss = sorted[0].triggerPx;
   }
 
   const tpOrders = coinReduceOnly.filter((o) => !o.isTrigger);

@@ -115,6 +115,82 @@ describe("processPendingFill", () => {
     expect(hlClient.placeTpOrder).toHaveBeenCalled();
   });
 
+  it("returns false when fill.sz is not a valid number", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-nan-1", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 300, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000, takeProfits: [],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    const fill = makeFill({ oid: 300, sz: "not-a-number", px: "60000" });
+
+    const result = await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    expect(result).toBe(false);
+    // Should not have placed any protection orders
+    expect(hlClient.placeStopOrder).not.toHaveBeenCalled();
+  });
+
+  it("returns false when fill.px is empty string", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-nan-2", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 301, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000, takeProfits: [],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    const fill = makeFill({ oid: 301, sz: "0.01", px: "" });
+
+    const result = await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    expect(result).toBe(false);
+    expect(hlClient.placeStopOrder).not.toHaveBeenCalled();
+  });
+
+  it("returns false when fill values are Infinity", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-nan-3", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 302, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000, takeProfits: [],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    const fill = makeFill({ oid: 302, sz: "Infinity", px: "60000" });
+
+    const result = await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    expect(result).toBe(false);
+    expect(hlClient.placeStopOrder).not.toHaveBeenCalled();
+  });
+
   it("updates entry order status to filled in store", async () => {
     const signalId = store.insertSignal({
       alert_id: "gtc-002", source: "strategy-runner", asset: "BTC",

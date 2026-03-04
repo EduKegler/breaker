@@ -23,10 +23,13 @@ function extractOid(result: unknown): string {
   const resp = result as OrderResponse | undefined;
   const status = resp?.response?.data?.statuses?.[0];
   if (status?.error) {
-    log.warn({ action: "extractOid", error: status.error }, "Exchange rejected order");
+    throw new Error(`Exchange rejected order: ${status.error}`);
   }
   const oid = status?.filled?.oid ?? status?.resting?.oid;
-  return String(oid ?? "unknown");
+  if (oid == null) {
+    throw new Error("Exchange returned unexpected response: no oid in statuses");
+  }
+  return String(oid);
 }
 
 function extractFillInfo(result: unknown): HlEntryResult {
