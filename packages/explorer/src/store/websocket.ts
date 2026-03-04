@@ -9,6 +9,7 @@ import type {
   SignalRow,
   PricesEvent,
   PositionSummary,
+  PendingEntry,
 } from "../types/api.js";
 
 interface WsMessage {
@@ -81,6 +82,7 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
         health: HealthResponse;
         signals?: SignalRow[];
         positionHistory?: PositionSummary[];
+        pendingEntries?: PendingEntry[];
       };
       setState({
         positions: d.positions,
@@ -90,6 +92,7 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
         health: d.health,
         ...(d.signals ? { signals: d.signals } : {}),
         ...(d.positionHistory ? { positionHistory: d.positionHistory } : {}),
+        ...(d.pendingEntries ? { pendingEntries: d.pendingEntries } : {}),
       });
       break;
     }
@@ -135,6 +138,9 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
       break;
     case "position-history":
       setState({ positionHistory: msg.data as PositionSummary[] });
+      break;
+    case "pending-entries":
+      setState({ pendingEntries: msg.data as PendingEntry[] });
       break;
     case "prices": {
       const p = msg.data as PricesEvent;

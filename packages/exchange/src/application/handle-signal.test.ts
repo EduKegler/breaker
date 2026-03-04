@@ -33,7 +33,7 @@ const config: ExchangeConfig = {
 
 const signal: Signal = {
   direction: "long",
-  entryPrice: 95000,
+  entryPrice: null,
   stopLoss: 94000,
   takeProfits: [{ price: 97000, pctOfPosition: 0.5 }],
   comment: "Donchian breakout",
@@ -60,6 +60,7 @@ function createDeps(): SignalHandlerDeps {
       setLeverage: vi.fn(),
       placeMarketOrder: vi.fn().mockResolvedValue({ orderId: "HL-1", status: "placed" }),
       placeEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-E1", filledSize: 0.01052, avgPrice: 95000, status: "placed" }),
+      placeGtcEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-GTC1", status: "resting", filledSize: 0, avgPrice: 0 }),
       placeStopOrder: vi.fn().mockResolvedValue({ orderId: "HL-2", status: "placed" }),
       placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
       placeTpOrder: vi.fn().mockResolvedValue({ orderId: "HL-TP1", status: "placed" }),
@@ -296,7 +297,7 @@ describe("handleSignal", () => {
     // riskPerTradeUsd=10, stopDist=7 → raw size = 10/7 ≈ 1.42857...
     const tightSignal: Signal = {
       direction: "long",
-      entryPrice: 100,
+      entryPrice: null,
       stopLoss: 93, // stopDist=7 → raw size = 10/7 ≈ 1.42857...
       takeProfits: [{ price: 110, pctOfPosition: 0.5 }],
       comment: "Tight stop",
@@ -414,7 +415,7 @@ describe("handleSignal", () => {
 
     const fullTpSignal: Signal = {
       direction: "long",
-      entryPrice: 95000,
+      entryPrice: null,
       stopLoss: 94000,
       takeProfits: [{ price: 97000, pctOfPosition: 1.0 }],
       comment: "Full TP",
@@ -571,7 +572,7 @@ describe("handleSignal", () => {
   it("uses per-coin leverage when opening position", async () => {
     const ethSignal: Signal = {
       direction: "short",
-      entryPrice: 3500,
+      entryPrice: null,
       stopLoss: 3600,
       takeProfits: [],
       comment: "ETH short",
@@ -662,7 +663,7 @@ describe("handleSignal", () => {
   it("allows signals for different coins concurrently", async () => {
     const ethSignal: Signal = {
       direction: "short",
-      entryPrice: 3500,
+      entryPrice: null,
       stopLoss: 3600,
       takeProfits: [],
       comment: "ETH short",
@@ -683,5 +684,116 @@ describe("handleSignal", () => {
     expect(btcResult.success).toBe(true);
     expect(ethResult.success).toBe(true);
     expect(deps.positionBook.count()).toBe(2);
+  });
+});
+
+describe("handleSignal — GTC path", () => {
+  let deps: SignalHandlerDeps;
+
+  const gtcSignal: Signal = {
+    direction: "long",
+    entryPrice: 60000,
+    stopLoss: 59000,
+    takeProfits: [{ price: 62000, pctOfPosition: 1 }],
+    comment: "Donchian breakout",
+  };
+
+  beforeEach(() => {
+    clearPendingCoins();
+    deps = createDeps();
+  });
+
+  it("places GTC entry and opens position on immediate fill", async () => {
+    (deps.hlClient.placeGtcEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "42", status: "filled", filledSize: 0.01, avgPrice: 60000,
+    });
+
+    const result = await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-fill-001" }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    expect(deps.hlClient.placeGtcEntryOrder).toHaveBeenCalledWith("BTC", true, expect.any(Number), 60000);
+    expect(deps.hlClient.placeStopOrder).toHaveBeenCalled();
+    expect(deps.positionBook.get("BTC")).not.toBeNull();
+  });
+
+  it("returns failure when ALO is rejected (would cross spread)", async () => {
+    (deps.hlClient.placeGtcEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "unknown", status: "rejected", filledSize: 0, avgPrice: 0,
+    });
+
+    const result = await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-reject-001" }),
+      deps,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toContain("ALO rejected");
+    expect(deps.positionBook.isFlat("BTC")).toBe(true);
+  });
+
+  it("parks resting order in pendingEntryBook", async () => {
+    const { PendingEntryBook } = await import("../domain/pending-entry-book.js");
+    const pendingEntryBook = new PendingEntryBook();
+    deps.pendingEntryBook = pendingEntryBook;
+
+    (deps.hlClient.placeGtcEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "200", status: "resting", filledSize: 0, avgPrice: 0,
+    });
+
+    const result = await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-rest-001" }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    expect(pendingEntryBook.has("BTC")).toBe(true);
+    const pending = pendingEntryBook.get("BTC")!;
+    expect(pending.hlOrderId).toBe(200);
+    expect(pending.direction).toBe("long");
+    expect(pending.stopLoss).toBe(59000);
+    // Position NOT opened yet
+    expect(deps.positionBook.isFlat("BTC")).toBe(true);
+    // SL/TP NOT placed yet
+    expect(deps.hlClient.placeStopOrder).not.toHaveBeenCalled();
+  });
+
+  it("blocks new signal when pending GTC exists for same coin", async () => {
+    const { PendingEntryBook } = await import("../domain/pending-entry-book.js");
+    const pendingEntryBook = new PendingEntryBook();
+    deps.pendingEntryBook = pendingEntryBook;
+
+    (deps.hlClient.placeGtcEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "300", status: "resting", filledSize: 0, avgPrice: 0,
+    });
+
+    await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-block-001" }),
+      deps,
+    );
+
+    const second = await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-block-002" }),
+      deps,
+    );
+
+    expect(second.success).toBe(false);
+    expect(second.reason).toBe("Position already open/pending");
+  });
+
+  it("returns failure when placeGtcEntryOrder throws", async () => {
+    (deps.hlClient.placeGtcEntryOrder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("Insufficient margin"),
+    );
+
+    const result = await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-err-001" }),
+      deps,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe("Insufficient margin");
   });
 });

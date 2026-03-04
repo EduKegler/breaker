@@ -29,6 +29,7 @@ describe("signalToIntent", () => {
     expect(intent.stopLoss).toBe(95);
     expect(intent.notionalUsd).toBe(200); // 2 * 100
     expect(intent.takeProfits).toHaveLength(1);
+    expect(intent.entryType).toBe("gtc");
   });
 
   it("converts short signal", () => {
@@ -47,7 +48,7 @@ describe("signalToIntent", () => {
     expect(intent.size).toBe(2); // 10 / 5
   });
 
-  it("uses currentPrice when entryPrice is null (market order)", () => {
+  it("uses currentPrice when entryPrice is null (market order) and sets ioc", () => {
     const signal: Signal = {
       direction: "long",
       entryPrice: null,
@@ -60,6 +61,7 @@ describe("signalToIntent", () => {
 
     expect(intent.entryPrice).toBe(95);
     expect(intent.size).toBe(2); // 10 / (95 - 90) = 2
+    expect(intent.entryType).toBe("ioc");
   });
 
   it("uses cash sizing mode", () => {

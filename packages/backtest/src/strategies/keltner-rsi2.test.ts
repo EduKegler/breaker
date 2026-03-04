@@ -170,7 +170,7 @@ describe("createKeltnerRsi2", () => {
       if (signal) {
         expect(signal.direction).toBe("long");
         expect(signal.stopLoss).toBeLessThan(candles[i].c);
-        expect(signal.entryPrice).toBeNull();
+        expect(signal.entryPrice).toBeTypeOf("number");
         expect(signal.takeProfits.length).toBeGreaterThan(0);
         expect(signal.takeProfits[0].pctOfPosition).toBe(1.0);
         expect(signal.comment).toBe("KC mean reversion long");
@@ -213,7 +213,7 @@ describe("createKeltnerRsi2", () => {
       if (signal) {
         expect(signal.direction).toBe("short");
         expect(signal.stopLoss).toBeGreaterThan(candles[i].c);
-        expect(signal.entryPrice).toBeNull();
+        expect(signal.entryPrice).toBeTypeOf("number");
         expect(signal.takeProfits.length).toBeGreaterThan(0);
         expect(signal.takeProfits[0].pctOfPosition).toBe(0.6);
         expect(signal.comment).toBe("KC mean reversion short");

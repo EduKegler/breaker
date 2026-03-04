@@ -126,7 +126,7 @@ export function createKeltnerRsi2(
       if (close < kcLower && rsi2 < rsi2LongThresh) {
         return {
           direction: "long",
-          entryPrice: null,
+          entryPrice: kcLower,
           stopLoss: close - stopDist,
           takeProfits: [{ price: kcMid, pctOfPosition: 1.0 }],
           comment: "KC mean reversion long",
@@ -142,7 +142,7 @@ export function createKeltnerRsi2(
       ) {
         return {
           direction: "short",
-          entryPrice: null,
+          entryPrice: kcUpper,
           stopLoss: close + stopDist,
           takeProfits: [{ price: kcMid, pctOfPosition: 0.6 }],
           comment: "KC mean reversion short",

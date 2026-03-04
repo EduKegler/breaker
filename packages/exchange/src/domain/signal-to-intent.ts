@@ -11,6 +11,7 @@ export interface OrderIntent {
   direction: "long" | "short";
   notionalUsd: number;
   comment: string;
+  entryType: "ioc" | "gtc";
 }
 
 export function signalToIntent(
@@ -42,5 +43,6 @@ export function signalToIntent(
     direction: signal.direction,
     notionalUsd,
     comment: signal.comment,
+    entryType: signal.entryPrice !== null ? "gtc" : "ioc",
   };
 }

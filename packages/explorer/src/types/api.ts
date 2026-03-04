@@ -140,6 +140,21 @@ export interface PositionEvent {
   details: string;
 }
 
+export interface PendingEntry {
+  coin: string;
+  hlOrderId: number;
+  direction: "long" | "short";
+  size: number;
+  price: number;
+  stopLoss: number;
+  takeProfits: { price: number; pctOfPosition: number }[];
+  expiresAt: number;
+  signalId: number;
+  leverage: number;
+  strategyName: string | null;
+  comment: string;
+}
+
 export interface PositionSummary {
   signalId: number;
   coin: string;

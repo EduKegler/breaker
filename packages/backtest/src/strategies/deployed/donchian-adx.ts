@@ -145,7 +145,7 @@ export function createDonchianAdx(
       ) {
         return {
           direction: "long",
-          entryPrice: null, // Market order
+          entryPrice: prevSlowUpper,
           stopLoss: currentCandle.c - stopDist,
           takeProfits: [], // Uses trailing exit instead
           comment: "DC breakout long",
@@ -161,7 +161,7 @@ export function createDonchianAdx(
       ) {
         return {
           direction: "short",
-          entryPrice: null,
+          entryPrice: prevSlowLower,
           stopLoss: currentCandle.c + stopDist,
           takeProfits: [],
           comment: "DC breakout short",

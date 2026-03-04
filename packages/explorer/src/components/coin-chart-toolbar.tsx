@@ -10,6 +10,7 @@ interface CoinChartToolbarProps {
   strategies: string[];
   enabledStrategies: string[];
   onToggleStrategy: (strategy: string) => void;
+  pendingCoins?: Set<string>;
 }
 
 export function CoinChartToolbar({
@@ -19,6 +20,7 @@ export function CoinChartToolbar({
   strategies,
   enabledStrategies,
   onToggleStrategy,
+  pendingCoins,
 }: CoinChartToolbarProps) {
   return (
     <div className="flex items-center gap-3 flex-wrap">
@@ -43,6 +45,11 @@ export function CoinChartToolbar({
             onClick={() => onSelectCoin(coin)}
           >
             {coin}
+            {pendingCoins?.has(coin) && (
+              <span className="ml-1 px-1 py-px text-[8px] rounded bg-amber/20 text-amber border border-amber/30 leading-tight">
+                GTC
+              </span>
+            )}
           </button>
         ))}
       </div>

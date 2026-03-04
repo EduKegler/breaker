@@ -1,6 +1,7 @@
 import type { HlClient, HlPosition } from "../types/hl-client.js";
 import type { SqliteStore } from "../adapters/sqlite-store.js";
 import type { PositionBook } from "../domain/position-book.js";
+import type { PendingEntryBook } from "../domain/pending-entry-book.js";
 import type { EventLog } from "../adapters/event-log.js";
 import { resolveOrderStatus } from "../domain/order-status.js";
 import { recoverSlTp } from "../domain/recover-sl-tp.js";
@@ -55,6 +56,7 @@ export interface ReconciledData {
 interface ReconcileLoopDeps {
   hlClient: HlClient;
   positionBook: PositionBook;
+  pendingEntryBook?: PendingEntryBook;
   eventLog: EventLog;
   store: SqliteStore;
   walletAddress: string;
@@ -114,6 +116,12 @@ export class ReconcileLoop {
         // Backfill trailing SL order into SQLite if recovered from HL but missing locally
         if (recovered.trailingSlOid !== null) {
           ensureTrailingSlRecord(store, coin, recovered, hlPos, store.getOpenSignalId(coin));
+        }
+
+        // Clean up orphaned pending GTC entry (fill was missed by WS)
+        if (this.deps.pendingEntryBook?.has(coin)) {
+          this.deps.pendingEntryBook.remove(coin);
+          log.info({ action: "pendingEntryCleanedUp", coin }, "Orphaned pending GTC entry removed (position hydrated from HL)");
         }
 
         actions.push(`position_hydrated:${coin}`);

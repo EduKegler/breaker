@@ -56,6 +56,7 @@ export function App() {
   const openOrders = useStore((s) => s.openOrders);
   const equity = useStore((s) => s.equity);
   const positionHistory = useStore((s) => s.positionHistory);
+  const pendingEntries = useStore((s) => s.pendingEntries);
   const account = useStore((s) => s.account);
   const httpError = useStore((s) => s.httpError);
   const selectedCoin = useStore((s) => s.selectedCoin);
@@ -270,6 +271,7 @@ export function App() {
                   strategies={selectedCoinStrategies}
                   enabledStrategies={currentEnabledStrategies}
                   onToggleStrategy={toggleStrategy}
+                  pendingCoins={new Set(pendingEntries.map((e) => e.coin))}
                 />
               )}
             </div>

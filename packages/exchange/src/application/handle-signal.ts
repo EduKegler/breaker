@@ -1,12 +1,14 @@
 import type { Signal } from "@breaker/backtest";
 import { signalToIntent, type OrderIntent } from "../domain/signal-to-intent.js";
 import { checkRisk, type RiskCheckInput } from "../domain/check-risk.js";
+import { placeProtectionOrders } from "./place-protection-orders.js";
 import type { ExchangeConfig } from "../types/config.js";
 import type { HlClient } from "../types/hl-client.js";
 import type { SqliteStore } from "../adapters/sqlite-store.js";
 import type { EventLog } from "../adapters/event-log.js";
 import type { AlertsClient } from "../types/alerts-client.js";
 import type { PositionBook } from "../domain/position-book.js";
+import type { PendingEntryBook } from "../domain/pending-entry-book.js";
 import { randomUUID } from "node:crypto";
 import { truncateSize, truncatePrice } from "@breaker/kit";
 import { logger } from "../lib/logger.js";
@@ -20,6 +22,7 @@ export interface SignalHandlerDeps {
   eventLog: EventLog;
   alertsClient: AlertsClient;
   positionBook: PositionBook;
+  pendingEntryBook?: PendingEntryBook;
   onSignalProcessed?: () => void;
 }
 
@@ -71,8 +74,9 @@ export async function handleSignal(
   }
 
   // Race condition guard: first signal wins per coin
-  if (pendingCoins.has(coin) || !positionBook.isFlat(coin)) {
-    log.info({ action: "coinBusy", coin, alertId }, "Position already open or pending for coin");
+  const hasPendingGtc = deps.pendingEntryBook?.has(coin) ?? false;
+  if (pendingCoins.has(coin) || !positionBook.isFlat(coin) || hasPendingGtc) {
+    log.info({ action: "coinBusy", coin, alertId, hasPendingGtc }, "Position already open or pending for coin");
     return { success: false, signalId: -1, reason: "Position already open/pending" };
   }
   pendingCoins.add(coin);
@@ -169,6 +173,136 @@ async function handleSignalInner(
     config.marginType === "cross",
   );
 
+  // ── GTC path (maker limit ALO) ────────────────────────────────────────
+  if (intent.entryType === "gtc") {
+    return handleGtcEntry(input, deps, intent, signalId, alertId, szDecimals, leverage, t0);
+  }
+
+  // ── IOC path (taker limit IOC) ──────────────────────────────────────
+  return handleIocEntry(input, deps, intent, signalId, alertId, szDecimals, leverage, currentPrice, t0);
+}
+
+async function handleGtcEntry(
+  input: HandleSignalInput,
+  deps: SignalHandlerDeps,
+  intent: OrderIntent,
+  signalId: number,
+  alertId: string,
+  szDecimals: number,
+  leverage: number,
+  t0: number,
+): Promise<HandleSignalResult> {
+  const { coin, source } = input;
+  const { config, hlClient, store, eventLog, positionBook } = deps;
+  const pendingEntryBook = deps.pendingEntryBook;
+
+  let gtcResult: Awaited<ReturnType<typeof hlClient.placeGtcEntryOrder>>;
+  try {
+    gtcResult = await hlClient.placeGtcEntryOrder(
+      coin,
+      intent.side === "buy",
+      intent.size,
+      intent.entryPrice,
+    );
+  } catch (entryErr) {
+    log.error({
+      action: "gtcEntryOrderError", signalId, coin, direction: intent.direction,
+      size: intent.size, entryPrice: intent.entryPrice, err: entryErr,
+      latencyMs: Math.round(performance.now() - t0),
+    }, "GTC entry order failed");
+
+    await eventLog.append({
+      type: "entry_order_error",
+      timestamp: new Date().toISOString(),
+      data: { signalId, alertId, coin, direction: intent.direction, size: intent.size, entryPrice: intent.entryPrice, error: (entryErr as Error).message },
+    });
+
+    return { success: false, signalId, reason: (entryErr as Error).message, intent };
+  }
+
+  if (gtcResult.status === "rejected") {
+    store.insertOrder({
+      signal_id: signalId, hl_order_id: gtcResult.orderId, coin, side: intent.side,
+      size: intent.size, price: intent.entryPrice, order_type: "limit", tag: "entry",
+      status: "cancelled", mode: config.mode, filled_at: null,
+    });
+
+    await eventLog.append({
+      type: "gtc_entry_rejected",
+      timestamp: new Date().toISOString(),
+      data: { signalId, alertId, coin, reason: "ALO rejected (would cross spread)" },
+    });
+
+    log.info({ action: "gtcEntryRejected", signalId, coin }, "ALO entry rejected — signal lost timing");
+    return { success: false, signalId, reason: "ALO rejected (would cross spread)", intent };
+  }
+
+  if (gtcResult.status === "filled") {
+    // Immediate fill — same as IOC from here on
+    const actualSize = truncateSize(gtcResult.filledSize, szDecimals);
+    if (actualSize <= 0) {
+      log.warn({ action: "gtcFillTruncatedToZero", signalId }, "GTC filled but size truncated to zero");
+      return { success: false, signalId, reason: "GTC fill truncated to zero", intent };
+    }
+    const actualPrice = gtcResult.avgPrice || intent.entryPrice;
+
+    return finalizeEntry(input, deps, intent, signalId, alertId, szDecimals, leverage, actualSize, actualPrice, gtcResult.orderId, t0);
+  }
+
+  // status === "resting" → park in pending book
+  const entryOrderId = store.insertOrder({
+    signal_id: signalId, hl_order_id: gtcResult.orderId, coin, side: intent.side,
+    size: intent.size, price: intent.entryPrice, order_type: "limit", tag: "entry",
+    status: "pending", mode: config.mode, filled_at: null,
+  });
+
+  await eventLog.append({
+    type: "gtc_entry_resting",
+    timestamp: new Date().toISOString(),
+    data: { signalId, alertId, coin, hlOrderId: gtcResult.orderId, price: intent.entryPrice, size: intent.size },
+  });
+
+  // 2 bars × 15min = 30min timeout
+  const expiresAt = Date.now() + 30 * 60 * 1000;
+
+  pendingEntryBook?.add({
+    coin,
+    hlOrderId: Number(gtcResult.orderId),
+    direction: intent.direction,
+    size: intent.size,
+    price: intent.entryPrice,
+    stopLoss: intent.stopLoss,
+    takeProfits: intent.takeProfits,
+    expiresAt,
+    signalId,
+    leverage,
+    strategyName: input.strategyName ?? null,
+    comment: intent.comment,
+  });
+
+  log.info({
+    action: "gtcEntryResting", signalId, coin, hlOrderId: gtcResult.orderId,
+    price: intent.entryPrice, expiresAt: new Date(expiresAt).toISOString(),
+  }, "GTC entry resting on book — awaiting fill");
+
+  deps.onSignalProcessed?.();
+  return { success: true, signalId, intent };
+}
+
+async function handleIocEntry(
+  input: HandleSignalInput,
+  deps: SignalHandlerDeps,
+  intent: OrderIntent,
+  signalId: number,
+  alertId: string,
+  szDecimals: number,
+  leverage: number,
+  currentPrice: number,
+  t0: number,
+): Promise<HandleSignalResult> {
+  const { coin } = input;
+  const { config, hlClient, store, eventLog } = deps;
+
   // Fetch a fresh mid-price from the exchange to replace the potentially stale
   // candle-close price.  IOC limit orders are sensitive to the reference price:
   // a 3-second-old candle close in a fast market can already be far enough to
@@ -196,28 +330,15 @@ async function handleSignalInner(
     );
   } catch (entryErr) {
     log.error({
-      action: "entryOrderError",
-      signalId,
-      coin,
-      direction: intent.direction,
-      size: intent.size,
-      entryPrice: intent.entryPrice,
-      err: entryErr,
+      action: "entryOrderError", signalId, coin, direction: intent.direction,
+      size: intent.size, entryPrice: intent.entryPrice, err: entryErr,
       latencyMs: Math.round(performance.now() - t0),
     }, "Entry order failed (e.g. insufficient margin)");
 
     await eventLog.append({
       type: "entry_order_error",
       timestamp: new Date().toISOString(),
-      data: {
-        signalId,
-        alertId,
-        coin,
-        direction: intent.direction,
-        size: intent.size,
-        entryPrice: intent.entryPrice,
-        error: (entryErr as Error).message,
-      },
+      data: { signalId, alertId, coin, direction: intent.direction, size: intent.size, entryPrice: intent.entryPrice, error: (entryErr as Error).message },
     });
 
     return { success: false, signalId, reason: (entryErr as Error).message, intent };
@@ -229,17 +350,9 @@ async function handleSignalInner(
   // No fill or truncated to zero → abort
   if (actualSize <= 0) {
     store.insertOrder({
-      signal_id: signalId,
-      hl_order_id: entryResult.orderId,
-      coin,
-      side: intent.side,
-      size: intent.size,
-      price: intent.entryPrice,
-      order_type: "limit",
-      tag: "entry",
-      status: "cancelled",
-      mode: config.mode,
-      filled_at: null,
+      signal_id: signalId, hl_order_id: entryResult.orderId, coin, side: intent.side,
+      size: intent.size, price: intent.entryPrice, order_type: "limit", tag: "entry",
+      status: "cancelled", mode: config.mode, filled_at: null,
     });
 
     await eventLog.append({
@@ -258,157 +371,47 @@ async function handleSignalInner(
 
   const actualPrice = entryResult.avgPrice || currentPrice;
 
+  return finalizeEntry(input, deps, intent, signalId, alertId, szDecimals, leverage, actualSize, actualPrice, entryResult.orderId, t0);
+}
+
+async function finalizeEntry(
+  input: HandleSignalInput,
+  deps: SignalHandlerDeps,
+  intent: OrderIntent,
+  signalId: number,
+  alertId: string,
+  szDecimals: number,
+  leverage: number,
+  actualSize: number,
+  actualPrice: number,
+  hlOrderId: string,
+  t0: number,
+): Promise<HandleSignalResult> {
+  const { coin, source } = input;
+  const { config, hlClient, store, eventLog, alertsClient, positionBook } = deps;
+
   const entryOrderId = store.insertOrder({
-    signal_id: signalId,
-    hl_order_id: entryResult.orderId,
-    coin,
-    side: intent.side,
-    size: actualSize,
-    price: actualPrice,
-    order_type: "limit",
-    tag: "entry",
-    status: "filled",
-    mode: config.mode,
-    filled_at: new Date().toISOString(),
+    signal_id: signalId, hl_order_id: hlOrderId, coin, side: intent.side,
+    size: actualSize, price: actualPrice, order_type: "limit", tag: "entry",
+    status: "filled", mode: config.mode, filled_at: new Date().toISOString(),
   });
 
   const entryFilledAt = new Date().toISOString();
   store.insertFill({
-    order_id: entryOrderId,
-    price: actualPrice,
-    size: actualSize,
-    fee: 0,
-    timestamp: entryFilledAt,
+    order_id: entryOrderId, price: actualPrice, size: actualSize, fee: 0, timestamp: entryFilledAt,
   });
 
   await eventLog.append({
     type: "order_placed",
     timestamp: entryFilledAt,
-    data: { signalId, orderId: entryOrderId, hlOrderId: entryResult.orderId, tag: "entry", filledSize: actualSize, avgPrice: actualPrice },
+    data: { signalId, orderId: entryOrderId, hlOrderId, tag: "entry", filledSize: actualSize, avgPrice: actualPrice },
   });
 
-  // SL closes the position: opposite side to entry, reduceOnly prevents
-  // accidentally opening a new position if the original was already closed.
-  // If SL placement fails, immediately close the entry to avoid an unprotected position.
-  let slResult: Awaited<ReturnType<typeof hlClient.placeStopOrder>>;
-  try {
-    slResult = await hlClient.placeStopOrder(
-      coin,
-      intent.side === "sell",
-      actualSize,
-      intent.stopLoss,
-      true,
-    );
-  } catch (slErr) {
-    log.error({ action: "slPlacementFailed", signalId, err: slErr }, "SL placement failed after entry — rolling back");
-
-    try {
-      await hlClient.placeMarketOrder(coin, intent.side !== "buy", actualSize);
-      log.info({ action: "entryRolledBack", signalId }, "Entry rolled back (position closed)");
-    } catch (closeErr) {
-      // Worst case: position stuck on HL without SL AND without local tracking.
-      // Hydrate into positionBook so reconcile loop can see it.
-      // Reconcile may have already hydrated it — close stale entry first.
-      if (!positionBook.isFlat(coin)) {
-        positionBook.close(coin);
-      }
-      positionBook.open({
-        coin,
-        direction: intent.direction,
-        entryPrice: actualPrice,
-        size: actualSize,
-        stopLoss: 0,
-        takeProfits: [],
-        liquidationPx: null,
-        trailingStopLoss: null,
-        leverage,
-        openedAt: new Date().toISOString(),
-        signalId,
-        strategyName: input.strategyName ?? null,
-      });
-      log.error({ action: "rollbackFailed", signalId, err: closeErr }, "CRITICAL: position stuck on HL without SL, hydrated locally");
-    }
-
-    throw slErr;
-  }
-
-  log.info({ action: "slPlaced", signalId, hlOrderId: slResult.orderId, triggerPrice: intent.stopLoss }, "Stop loss placed");
-  store.insertOrder({
-    signal_id: signalId,
-    hl_order_id: slResult.orderId,
-    coin,
-    side: intent.side === "buy" ? "sell" : "buy",
-    size: actualSize,
-    price: intent.stopLoss,
-    order_type: "stop",
-    tag: "sl",
-    status: "pending",
-    mode: config.mode,
-    filled_at: null,
-  });
-
-  // TP partially closes: opposite side, reduceOnly=true for same reason as SL.
-  // TP failure is non-critical: the SL protects the position. Log and continue.
-  let allocatedTpSize = 0;
-  for (let i = 0; i < intent.takeProfits.length; i++) {
-    const tp = intent.takeProfits[i];
-    const isLast = i === intent.takeProfits.length - 1;
-    // Last TP that would reach 100% allocation gets the exact remainder to avoid
-    // floating-point dust (e.g. 0.00112 * 1.0 → 0.001119... → truncated to 0.00111).
-    const cumulativePct = allocatedTpSize / actualSize + tp.pctOfPosition;
-    const tpSize = isLast && cumulativePct >= 1 - 1e-9
-      ? actualSize - allocatedTpSize
-      : truncateSize(actualSize * tp.pctOfPosition, szDecimals);
-    allocatedTpSize += tpSize;
-    try {
-      const tpResult = await hlClient.placeTpOrder(
-        coin,
-        intent.side === "sell",
-        tpSize,
-        tp.price,
-        true,
-      );
-
-      log.info({ action: "tpPlaced", signalId, hlOrderId: tpResult.orderId, price: tp.price, tag: `tp${i + 1}` }, "Take profit placed");
-      store.insertOrder({
-        signal_id: signalId,
-        hl_order_id: tpResult.orderId,
-        coin,
-        side: intent.side === "buy" ? "sell" : "buy",
-        size: tpSize,
-        price: tp.price,
-        order_type: "trigger",
-        tag: `tp${i + 1}`,
-        status: "pending",
-        mode: config.mode,
-        filled_at: null,
-      });
-    } catch (tpErr) {
-      log.warn({ action: "tpPlacementFailed", signalId, tag: `tp${i + 1}`, err: tpErr }, "TP placement failed (position still protected by SL)");
-    }
-  }
-
-  // Update position book.
-  // The reconcile loop may have already hydrated this position (race: entry order fills
-  // on HL → reconcile sees it → hydrates with stopLoss=0 before we reach this line).
-  // In that case, close the stale hydrated entry and re-open with accurate data.
-  if (!positionBook.isFlat(coin)) {
-    positionBook.close(coin);
-  }
-  positionBook.open({
-    coin,
-    direction: intent.direction,
-    entryPrice: actualPrice,
-    size: actualSize,
-    stopLoss: intent.stopLoss,
-    takeProfits: intent.takeProfits,
-    liquidationPx: null,
-    trailingStopLoss: null,
-    leverage,
-    openedAt: new Date().toISOString(),
-    signalId,
-    strategyName: input.strategyName ?? null,
-  });
+  await placeProtectionOrders({
+    coin, signalId, direction: intent.direction, entrySide: intent.side,
+    actualSize, actualPrice, stopLoss: intent.stopLoss, takeProfits: intent.takeProfits,
+    leverage, mode: config.mode, strategyName: input.strategyName ?? null, szDecimals,
+  }, { hlClient, store, eventLog, positionBook });
 
   await eventLog.append({
     type: "position_opened",
@@ -417,15 +420,9 @@ async function handleSignalInner(
   });
 
   log.info({
-    action: "positionOpened",
-    signalId,
-    coin,
-    direction: intent.direction,
-    size: actualSize,
-    entryPrice: actualPrice,
-    stopLoss: intent.stopLoss,
-    takeProfits: intent.takeProfits.map((tp) => tp.price),
-    source,
+    action: "positionOpened", signalId, coin, direction: intent.direction,
+    size: actualSize, entryPrice: actualPrice, stopLoss: intent.stopLoss,
+    takeProfits: intent.takeProfits.map((tp) => tp.price), source,
   }, "Position opened");
 
   // Notify via WhatsApp
@@ -447,10 +444,8 @@ async function handleSignalInner(
   deps.onSignalProcessed?.();
 
   log.info({
-    action: "handleSignalComplete",
-    signalId, coin,
-    direction: intent.direction,
-    size: actualSize,
+    action: "handleSignalComplete", signalId, coin,
+    direction: intent.direction, size: actualSize,
     latencyMs: Math.round(performance.now() - t0),
   }, "Signal flow completed");
 

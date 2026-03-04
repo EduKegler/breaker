@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { StrategyRunner, type StrategyRunnerDeps } from "./strategy-runner.js";
 import { clearPendingCoins } from "./handle-signal.js";
 import { PositionBook } from "../domain/position-book.js";
+import { PendingEntryBook } from "../domain/pending-entry-book.js";
 import { SqliteStore } from "../adapters/sqlite-store.js";
 import type { Strategy, Candle, Signal, StrategyContext } from "@breaker/backtest";
 import type { ExchangeConfig } from "../types/config.js";
@@ -102,6 +103,7 @@ function createDeps(strategy: Strategy, streamer: ReturnType<typeof createMockSt
         setLeverage: vi.fn(),
         placeMarketOrder: vi.fn().mockResolvedValue({ orderId: "HL-1", status: "placed" }),
         placeEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-E1", filledSize: 0.01, avgPrice: 95200, status: "placed" }),
+        placeGtcEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-GTC1", status: "filled", filledSize: 0.01, avgPrice: 95200 }),
         placeStopOrder: vi.fn().mockResolvedValue({ orderId: "HL-2", status: "placed" }),
         placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
         placeTpOrder: vi.fn().mockResolvedValue({ orderId: "HL-TP1", status: "placed" }),
@@ -185,7 +187,8 @@ describe("StrategyRunner", () => {
     await runner.tick();
 
     expect(deps.positionBook.count()).toBe(1);
-    expect(deps.signalHandlerDeps.hlClient.placeEntryOrder).toHaveBeenCalledOnce();
+    // Strategy emits entryPrice (non-null) → GTC path
+    expect(deps.signalHandlerDeps.hlClient.placeGtcEntryOrder).toHaveBeenCalledOnce();
   });
 
   it("does not call onCandle when in position", async () => {
@@ -1384,6 +1387,83 @@ describe("StrategyRunner", () => {
       const runner = new StrategyRunner(deps);
 
       expect(runner.generateManualSignal("long")).toBeNull();
+    });
+  });
+
+  describe("GTC entry expiration", () => {
+    it("cancels expired GTC entry on next candle close", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+
+      const pendingEntryBook = new PendingEntryBook();
+      deps.signalHandlerDeps.pendingEntryBook = pendingEntryBook;
+
+      // Add an expired GTC entry (expiresAt in the past)
+      pendingEntryBook.add({
+        coin: "BTC", hlOrderId: 500, direction: "long", size: 0.01,
+        price: 95000, stopLoss: 94000, takeProfits: [{ price: 97000, pctOfPosition: 1 }],
+        expiresAt: Date.now() - 1000, signalId: 1, leverage: 5,
+        strategyName: "donchian-adx", comment: "breakout",
+      });
+
+      // Insert matching order in SQLite
+      const signalId = deps.signalHandlerDeps.store.insertSignal({
+        alert_id: "gtc-exp-001", source: "strategy-runner", asset: "BTC",
+        side: "LONG", entry_price: 95000, stop_loss: 94000,
+        take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+        strategy_name: "donchian-adx",
+      });
+      deps.signalHandlerDeps.store.insertOrder({
+        signal_id: signalId, hl_order_id: "500", coin: "BTC", side: "buy",
+        size: 0.01, price: 95000, order_type: "limit", tag: "entry",
+        status: "pending", mode: "testnet", filled_at: null,
+      });
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      streamer.addCandle(makeCandle(5));
+      await runner.tick();
+
+      // Pending entry should be removed
+      expect(pendingEntryBook.has("BTC")).toBe(false);
+      // Cancel should be called on HL
+      expect(deps.signalHandlerDeps.hlClient.cancelOrder).toHaveBeenCalledWith("BTC", 500);
+      // Order status should be cancelled in SQLite
+      const orders = deps.signalHandlerDeps.store.getRecentOrders(10);
+      const entryOrder = orders.find((o) => o.tag === "entry" && o.hl_order_id === "500");
+      expect(entryOrder?.status).toBe("cancelled");
+    });
+
+    it("does not expire GTC entry that is still valid", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+
+      const pendingEntryBook = new PendingEntryBook();
+      deps.signalHandlerDeps.pendingEntryBook = pendingEntryBook;
+
+      // Add a GTC entry that hasn't expired yet
+      pendingEntryBook.add({
+        coin: "BTC", hlOrderId: 600, direction: "long", size: 0.01,
+        price: 95000, stopLoss: 94000, takeProfits: [],
+        expiresAt: Date.now() + 30 * 60 * 1000, signalId: 1, leverage: 5,
+        strategyName: "donchian-adx", comment: "breakout",
+      });
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      streamer.addCandle(makeCandle(5));
+      await runner.tick();
+
+      // Pending entry should still exist
+      expect(pendingEntryBook.has("BTC")).toBe(true);
+      // cancelOrder should NOT be called
+      expect(deps.signalHandlerDeps.hlClient.cancelOrder).not.toHaveBeenCalled();
     });
   });
 

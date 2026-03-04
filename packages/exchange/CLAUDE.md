@@ -8,8 +8,9 @@ Autonomous trading daemon that loads strategies from @breaker/backtest, polls ca
 src/
 ├── domain/              # Pure business logic (zero I/O)
 │   ├── check-risk.ts    # Guardrails: max-notional, leverage, positions, daily-loss, trades/day
-│   ├── signal-to-intent.ts  # Signal → OrderIntent conversion with sizing
+│   ├── signal-to-intent.ts  # Signal → OrderIntent conversion with sizing + entryType (ioc/gtc)
 │   ├── position-book.ts # In-memory position state, price updates, PnL
+│   ├── pending-entry-book.ts # In-memory Map<coin, PendingEntry> for resting GTC/ALO orders
 │   ├── recover-sl-tp.ts # Recover SL/TP from HL open orders (both are trigger orders)
 │   ├── orchestrator.ts   # Centralized daily PnL, signal deconfliction, force close gate
 │   └── order-status.ts  # HL → internal order status mapping
@@ -24,8 +25,10 @@ src/
 │   ├── sqlite-store.ts        # SQLite: signals, orders, fills, equity_snapshots
 │   └── event-log.ts           # NDJSON append-only audit trail
 ├── application/         # Orchestration
-│   ├── handle-signal.ts       # Signal → risk check → execute → persist → notify
-│   ├── strategy-runner.ts     # Event-driven candle processing + strategy.onCandle/shouldExit
+│   ├── handle-signal.ts       # Signal → risk check → execute → persist → notify (IOC/GTC bifurcation)
+│   ├── place-protection-orders.ts # Extracted SL/TP placement (shared by IOC and GTC flows)
+│   ├── process-pending-fill.ts    # GTC fill handler: pending book → protection orders → position open
+│   ├── strategy-runner.ts     # Event-driven candle processing + strategy.onCandle/shouldExit + GTC expiry
 │   ├── reconcile-loop.ts      # Periodic position sync (local vs Hyperliquid)
 │   ├── reconcile.ts           # Pure reconcile() function
 │   ├── resolve-historical-statuses.ts # Batch historical + fallback for trigger orders
@@ -77,6 +80,15 @@ src/
 - Heartbeat in daemon.ts (30s interval) evaluates `shouldForceClose()` to force close positions between candle closes
 - Decision callback persists every decision to EventLog NDJSON (type: `orchestrator_*`)
 - Orchestrator is **optional** in `StrategyRunnerDeps` → existing tests don't break
+
+## GTC/ALO Maker Entries (PendingEntryBook)
+- Strategies with `entryPrice !== null` (M1 Donchian, M2 Keltner) use GTC ALO (post-only) limit orders instead of IOC
+- ALO = Add Liquidity Only (`{ limit: { tif: "Alo" } }`): rejected if it would cross spread, guarantees maker fee (0.015% vs 0.045% taker)
+- `PendingEntryBook`: in-memory Map<coin, PendingEntry> tracking resting GTC orders awaiting fill
+- Three fill detection paths: (a) WS onFill real-time via `processPendingFill`, (b) reconcile-loop fallback (HL position exists but no local position), (c) strategy-runner timeout (2 bars expiry)
+- `handle-signal.ts` bifurcates: `entryType === "ioc"` → immediate IOC flow, `entryType === "gtc"` → ALO placement → resting or immediate fill
+- `place-protection-orders.ts`: extracted SL/TP logic shared by both IOC and GTC flows
+- Guard: `pendingEntryBook.has(coin)` blocks new signals while a GTC order is resting
 - Daily PnL is centralized: all runners report via `recordClose()`, any runner reads via `getDailyPnl()`
 - `moduleType` field in CoinStrategySchema (optional) overrides the fallback map in daemon.ts
 
@@ -98,7 +110,7 @@ src/
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — 384 tests across 20 files
+- `pnpm test` — 467 tests across 24 files
 - `pnpm start` — run daemon (requires HL credentials in .env)
 
 ## Integration points

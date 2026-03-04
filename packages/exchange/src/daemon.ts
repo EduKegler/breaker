@@ -19,7 +19,9 @@ import { CandleStreamer } from "./adapters/candle-streamer.js";
 import { CandleCache } from "@breaker/backtest";
 import { HttpAlertsClient } from "./adapters/alerts-client.js";
 import { PositionBook } from "./domain/position-book.js";
+import { PendingEntryBook } from "./domain/pending-entry-book.js";
 import { resolveOrderStatus } from "./domain/order-status.js";
+import { processPendingFill } from "./application/process-pending-fill.js";
 import { recoverSlTp } from "./domain/recover-sl-tp.js";
 import { Orchestrator, type ModuleType } from "./domain/orchestrator.js";
 import { StrategyRunner } from "./application/strategy-runner.js";
@@ -193,6 +195,7 @@ async function main() {
 
   const alertsClient = new HttpAlertsClient(config.gatewayUrl);
   const positionBook = new PositionBook();
+  const pendingEntryBook = new PendingEntryBook();
 
   // Set leverage per coin before any trading (parallel — independent per coin)
   await Promise.all(config.coins.map(async (coinCfg) => {
@@ -219,11 +222,13 @@ async function main() {
     eventLog,
     alertsClient,
     positionBook,
+    pendingEntryBook,
     onSignalProcessed: () => {
       wsBroker.broadcastEvent("positions", positionBook.getAll());
       wsBroker.broadcastEvent("orders", store.getRecentOrders(100));
       wsBroker.broadcastEvent("position-history", aggregatePositionHistory(store.getPositionHistoryRows(500)));
       wsBroker.broadcastEvent("signals", store.getRecentSignals(100));
+      wsBroker.broadcastEvent("pending-entries", pendingEntryBook.getAll());
       setTimeout(() => {
         hlClient.getOpenOrders(env.HL_ACCOUNT_ADDRESS).then((oo) => {
           wsBroker.broadcastEvent("open-orders", oo);
@@ -375,6 +380,7 @@ async function main() {
   const reconciler = new ReconcileLoop({
     hlClient,
     positionBook,
+    pendingEntryBook,
     eventLog,
     store,
     walletAddress: env.HL_ACCOUNT_ADDRESS,
@@ -446,6 +452,7 @@ async function main() {
       health: { status: "ok", mode: config.mode, coins: coinsSummary, dryRun: isDryRun, uptime: process.uptime() },
       signals: store.getRecentSignals(100),
       positionHistory: aggregatePositionHistory(store.getPositionHistoryRows(500)),
+      pendingEntries: pendingEntryBook.getAll(),
     };
     ws.send(JSON.stringify({ type: "snapshot", timestamp: new Date().toISOString(), data: snapshot }));
   });
@@ -488,6 +495,13 @@ async function main() {
         if (isSnapshot) return;
 
         for (const fill of fills) {
+          // Check if this fill matches a pending GTC entry
+          processPendingFill(fill, {
+            pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: config.mode,
+          }).catch((err) => {
+            log.error({ oid: fill.oid, err }, "Failed to process pending GTC fill");
+          });
+
           const localOrder = store.getOrderByHlOid(String(fill.oid));
           if (!localOrder || localOrder.id == null) continue;
           try {

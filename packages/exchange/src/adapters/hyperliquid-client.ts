@@ -1,7 +1,7 @@
 import { Hyperliquid } from "hyperliquid";
 import { finiteOrThrow, finiteOr, isSanePrice, truncateSize, truncatePrice } from "@breaker/kit";
 import { logger } from "../lib/logger.js";
-import type { HlClient, HlPosition, HlOpenOrder, HlHistoricalOrder, HlOrderResult, HlEntryResult, HlAccountState, HlSpotBalance } from "../types/hl-client.js";
+import type { HlClient, HlPosition, HlOpenOrder, HlHistoricalOrder, HlOrderResult, HlEntryResult, HlGtcResult, HlAccountState, HlSpotBalance } from "../types/hl-client.js";
 
 const log = logger.createChild("hlClient");
 
@@ -157,6 +157,50 @@ export class HyperliquidClient implements HlClient {
       latencyMs: Math.round(performance.now() - t0),
     }, "Entry order placed (limit IOC)");
     return entry;
+  }
+
+  async placeGtcEntryOrder(
+    coin: string,
+    isBuy: boolean,
+    size: number,
+    price: number,
+  ): Promise<HlGtcResult> {
+    const szDec = this.getSzDecimals(coin);
+    const sz = truncateSize(size, szDec);
+    if (sz <= 0) throw new Error(`Size too small after truncation: ${size} → ${sz}`);
+    const px = truncatePrice(price);
+    const t0 = performance.now();
+    const result = await this.sdk.exchange.placeOrder({
+      coin: this.toSymbol(coin),
+      is_buy: isBuy,
+      sz,
+      limit_px: px,
+      order_type: { limit: { tif: "Alo" } },
+      reduce_only: false,
+    });
+    const resp = result as OrderResponse | undefined;
+    const status = resp?.response?.data?.statuses?.[0];
+    if (status?.error) {
+      log.warn({ action: "placeGtcEntryOrder", coin, isBuy, size: sz, price: px, error: status.error, latencyMs: Math.round(performance.now() - t0) }, "ALO entry rejected (would cross spread)");
+      return { orderId: "unknown", status: "rejected", filledSize: 0, avgPrice: 0 };
+    }
+    if (status?.filled) {
+      const filledSize = Number(status.filled.totalSz);
+      const avgPrice = Number(status.filled.avgPx);
+      log.info({ action: "placeGtcEntryOrder", coin, isBuy, size: sz, price: px, orderId: String(status.filled.oid), filledSize, avgPrice, latencyMs: Math.round(performance.now() - t0) }, "ALO entry filled immediately");
+      return {
+        orderId: String(status.filled.oid),
+        status: "filled",
+        filledSize: Number.isFinite(filledSize) ? filledSize : 0,
+        avgPrice: Number.isFinite(avgPrice) ? avgPrice : 0,
+      };
+    }
+    if (status?.resting) {
+      log.info({ action: "placeGtcEntryOrder", coin, isBuy, size: sz, price: px, orderId: String(status.resting.oid), latencyMs: Math.round(performance.now() - t0) }, "ALO entry resting on book");
+      return { orderId: String(status.resting.oid), status: "resting", filledSize: 0, avgPrice: 0 };
+    }
+    log.warn({ action: "placeGtcEntryOrder", coin, isBuy, size: sz, price: px, latencyMs: Math.round(performance.now() - t0) }, "ALO entry: unexpected response shape");
+    return { orderId: "unknown", status: "rejected", filledSize: 0, avgPrice: 0 };
   }
 
   async placeStopOrder(

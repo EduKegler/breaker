@@ -182,7 +182,7 @@ describe("createDonchianAdx", () => {
       if (signal) {
         expect(signal.direction).toBe("long");
         expect(signal.stopLoss).toBeLessThan(candles[i].c);
-        expect(signal.entryPrice).toBeNull();
+        expect(signal.entryPrice).toBeTypeOf("number");
         foundSignal = true;
         break;
       }
@@ -242,7 +242,7 @@ describe("createDonchianAdx", () => {
       if (signal) {
         expect(signal.direction).toBe("short");
         expect(signal.stopLoss).toBeGreaterThan(candles[i].c);
-        expect(signal.entryPrice).toBeNull();
+        expect(signal.entryPrice).toBeTypeOf("number");
         foundSignal = true;
         break;
       }

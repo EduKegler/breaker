@@ -60,6 +60,7 @@ beforeEach(() => {
     setLeverage: vi.fn(),
     placeMarketOrder: vi.fn().mockResolvedValue({ orderId: "HL-1", status: "placed" }),
     placeEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-E1", filledSize: 0.01052, avgPrice: 95000, status: "placed" }),
+    placeGtcEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-GTC1", status: "filled", filledSize: 0.01052, avgPrice: 95000 }),
     placeStopOrder: vi.fn().mockResolvedValue({ orderId: "HL-2", status: "placed" }),
     placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
     placeTpOrder: vi.fn().mockResolvedValue({ orderId: "HL-TP1", status: "placed" }),

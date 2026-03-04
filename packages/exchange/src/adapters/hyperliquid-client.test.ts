@@ -11,6 +11,7 @@ function createMockClient(): HlClient {
     setLeverage: vi.fn(),
     placeMarketOrder: vi.fn().mockResolvedValue({ orderId: "HL-1", status: "placed" }),
     placeEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-E1", filledSize: 0.01, avgPrice: 95000, status: "placed" }),
+    placeGtcEntryOrder: vi.fn().mockResolvedValue({ orderId: "HL-GTC1", status: "resting", filledSize: 0, avgPrice: 0 }),
     placeStopOrder: vi.fn().mockResolvedValue({ orderId: "HL-2", status: "placed" }),
     placeLimitOrder: vi.fn().mockResolvedValue({ orderId: "HL-3", status: "placed" }),
     placeTpOrder: vi.fn().mockResolvedValue({ orderId: "HL-TP1", status: "placed" }),
@@ -235,6 +236,85 @@ describe("HyperliquidClient.placeEntryOrder", () => {
 
     await expect(client.placeEntryOrder("BTC", true, 0.5, 95000, 10))
       .rejects.toThrow("Size too small");
+  });
+});
+
+describe("HyperliquidClient.placeGtcEntryOrder", () => {
+  it("returns resting when order rests on book", async () => {
+    const sdk = createMockSdk();
+    (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{ resting: { oid: 100 } }] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    const result = await client.placeGtcEntryOrder("BTC", true, 0.01, 60000);
+
+    expect(result.status).toBe("resting");
+    expect(result.orderId).toBe("100");
+    expect(result.filledSize).toBe(0);
+    expect(result.avgPrice).toBe(0);
+
+    const call = (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.coin).toBe("BTC-PERP");
+    expect(call.order_type).toEqual({ limit: { tif: "Alo" } });
+    expect(call.reduce_only).toBe(false);
+  });
+
+  it("returns filled when order fills immediately", async () => {
+    const sdk = createMockSdk();
+    (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{ filled: { oid: 101, totalSz: "0.01", avgPx: "60000" } }] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    const result = await client.placeGtcEntryOrder("BTC", true, 0.01, 60000);
+
+    expect(result.status).toBe("filled");
+    expect(result.orderId).toBe("101");
+    expect(result.filledSize).toBe(0.01);
+    expect(result.avgPrice).toBe(60000);
+  });
+
+  it("returns rejected when ALO would cross spread", async () => {
+    const sdk = createMockSdk();
+    (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{ error: "Order would immediately match" }] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    const result = await client.placeGtcEntryOrder("BTC", true, 0.01, 60000);
+
+    expect(result.status).toBe("rejected");
+    expect(result.orderId).toBe("unknown");
+    expect(result.filledSize).toBe(0);
+  });
+
+  it("throws when size too small after truncation", async () => {
+    const sdk = createMockSdk();
+    (sdk.info.perpetuals.getMeta as ReturnType<typeof vi.fn>).mockResolvedValue({
+      universe: [{ name: "BTC", szDecimals: 0 }],
+    });
+    const client = new HyperliquidClient(sdk);
+    await client.loadSzDecimals("BTC");
+
+    await expect(client.placeGtcEntryOrder("BTC", true, 0.5, 60000))
+      .rejects.toThrow("Size too small");
+  });
+
+  it("returns rejected for unexpected response shape", async () => {
+    const sdk = createMockSdk();
+    (sdk.exchange.placeOrder as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "ok",
+      response: { type: "order", data: { statuses: [{}] } },
+    });
+    const client = new HyperliquidClient(sdk);
+
+    const result = await client.placeGtcEntryOrder("BTC", true, 0.01, 60000);
+
+    expect(result.status).toBe("rejected");
   });
 });
 

@@ -10,6 +10,7 @@ export const createServerSlice: StateCreator<StoreState, [], [], ServerSlice> = 
   equity: [],
   signals: [],
   positionHistory: [],
+  pendingEntries: [],
   account: null,
   httpError: false,
 });

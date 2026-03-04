@@ -20,6 +20,7 @@ const intent: OrderIntent = {
   direction: "long",
   notionalUsd: 954.2,
   comment: "Donchian breakout",
+  entryType: "gtc",
 };
 
 describe("formatOpenMessage", () => {

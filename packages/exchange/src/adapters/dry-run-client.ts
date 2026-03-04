@@ -1,4 +1,4 @@
-import type { HlClient, HlOrderResult, HlEntryResult, HlPosition, HlOpenOrder, HlHistoricalOrder, HlAccountState } from "../types/hl-client.js";
+import type { HlClient, HlOrderResult, HlEntryResult, HlGtcResult, HlPosition, HlOpenOrder, HlHistoricalOrder, HlAccountState } from "../types/hl-client.js";
 import { logger } from "../lib/logger.js";
 
 const log = logger.createChild("dryRunClient");
@@ -30,6 +30,13 @@ export class DryRunHlClient implements HlClient {
     const orderId = `dry-run-${this.counter}`;
     log.info({ action: "DRY_RUN", method: "placeEntryOrder", coin, isBuy, size, currentPrice, slippageBps, orderId }, "Dry-run: placeEntryOrder");
     return { orderId, filledSize: size, avgPrice: currentPrice, status: "simulated" };
+  }
+
+  async placeGtcEntryOrder(coin: string, isBuy: boolean, size: number, price: number): Promise<HlGtcResult> {
+    this.counter++;
+    const orderId = `dry-run-${this.counter}`;
+    log.info({ action: "DRY_RUN", method: "placeGtcEntryOrder", coin, isBuy, size, price, orderId }, "Dry-run: placeGtcEntryOrder (resting)");
+    return { orderId, status: "resting", filledSize: 0, avgPrice: 0 };
   }
 
   async placeStopOrder(coin: string, isBuy: boolean, size: number, triggerPrice: number, reduceOnly: boolean): Promise<HlOrderResult> {

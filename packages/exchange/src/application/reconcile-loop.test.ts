@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { reconcile } from "./reconcile.js";
 import { ReconcileLoop } from "./reconcile-loop.js";
 import { PositionBook } from "../domain/position-book.js";
+import { PendingEntryBook } from "../domain/pending-entry-book.js";
 import { SqliteStore } from "../adapters/sqlite-store.js";
 import type { HlClient, HlPosition, HlOpenOrder, HlHistoricalOrder } from "../types/hl-client.js";
 
@@ -12,6 +13,7 @@ function createMockHlClient(overrides: Partial<HlClient> = {}): HlClient {
     setLeverage: vi.fn(),
     placeMarketOrder: vi.fn(),
     placeEntryOrder: vi.fn(),
+    placeGtcEntryOrder: vi.fn(),
     placeStopOrder: vi.fn(),
     placeLimitOrder: vi.fn(),
     placeTpOrder: vi.fn(),
@@ -992,6 +994,36 @@ describe("ReconcileLoop", () => {
 
     const orders = store.getRecentOrders(10);
     expect(orders[0].status).toBe("filled");
+  });
+
+  it("cleans up orphaned pending GTC entry when HL has position but local does not", async () => {
+    const positionBook = new PositionBook();
+    const pendingEntryBook = new PendingEntryBook();
+
+    // A GTC entry is pending (WS fill was missed)
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 500, direction: "long", size: 0.01,
+      price: 95000, stopLoss: 94000, takeProfits: [{ price: 97000, pctOfPosition: 1 }],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId: 1, leverage: 5,
+      strategyName: "donchian-adx", comment: "breakout",
+    });
+
+    const hlPositions: HlPosition[] = [
+      { coin: "BTC", direction: "long", size: 0.01, entryPrice: 95000, unrealizedPnl: 5, leverage: 5, liquidationPx: null },
+    ];
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue(hlPositions),
+    });
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
+
+    const loop = new ReconcileLoop({ hlClient, positionBook, pendingEntryBook, eventLog, store, walletAddress: "0xtest" });
+    const result = await loop.check();
+
+    // Pending entry should be cleaned up
+    expect(pendingEntryBook.has("BTC")).toBe(false);
+    // Position should be hydrated
+    expect(positionBook.get("BTC")).not.toBeNull();
+    expect(result.actions).toContain("position_hydrated:BTC");
   });
 
   it("syncs marginCanceled order as cancelled", async () => {

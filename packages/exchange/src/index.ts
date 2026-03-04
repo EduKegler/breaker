@@ -2,7 +2,7 @@
 export type { ExchangeConfig, Guardrails, Sizing, CoinStrategy, CoinConfig } from "./types/config.js";
 export { ExchangeConfigSchema, GuardrailsSchema, SizingSchema, CoinStrategySchema, CoinConfigSchema } from "./types/config.js";
 export type { ExchangeEvent, EventType } from "./types/events.js";
-export type { HlClient, HlPosition, HlOrderResult, HlEntryResult, HlOpenOrder, HlHistoricalOrder, HlAccountState, HlSpotBalance } from "./types/hl-client.js";
+export type { HlClient, HlPosition, HlOrderResult, HlEntryResult, HlGtcResult, HlOpenOrder, HlHistoricalOrder, HlAccountState, HlSpotBalance } from "./types/hl-client.js";
 export type { WsOrder, WsUserFill, HlEventStreamCallbacks } from "./types/hl-event-stream.js";
 export type { AlertsClient } from "./types/alerts-client.js";
 
@@ -14,6 +14,8 @@ export type { OrderIntent } from "./domain/signal-to-intent.js";
 export { PositionBook } from "./domain/position-book.js";
 export type { LivePosition } from "./domain/position-book.js";
 export { resolveOrderStatus } from "./domain/order-status.js";
+export { PendingEntryBook } from "./domain/pending-entry-book.js";
+export type { PendingEntry } from "./domain/pending-entry-book.js";
 
 // Adapters
 export { HyperliquidClient } from "./adapters/hyperliquid-client.js";

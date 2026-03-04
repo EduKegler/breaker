@@ -44,6 +44,15 @@ describe("DryRunHlClient", () => {
     expect(r.avgPrice).toBe(95000);
   });
 
+  it("placeGtcEntryOrder returns resting with simulated orderId", async () => {
+    const client = new DryRunHlClient();
+    const r = await client.placeGtcEntryOrder("BTC", true, 0.01, 60000);
+    expect(r.orderId).toBe("dry-run-1");
+    expect(r.status).toBe("resting");
+    expect(r.filledSize).toBe(0);
+    expect(r.avgPrice).toBe(0);
+  });
+
   it("placeLimitOrder returns simulated result", async () => {
     const client = new DryRunHlClient();
     const r = await client.placeLimitOrder("BTC", false, 0.005, 97000, true);

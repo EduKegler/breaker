@@ -54,12 +54,20 @@ export interface HlAccountState {
   spotBalances: HlSpotBalance[];
 }
 
+export interface HlGtcResult {
+  orderId: string;
+  status: "resting" | "filled" | "rejected";
+  filledSize: number;
+  avgPrice: number;
+}
+
 export interface HlClient {
   connect(): Promise<void>;
   getSzDecimals(coin: string): number;
   setLeverage(coin: string, leverage: number, isCross: boolean): Promise<void>;
   placeMarketOrder(coin: string, isBuy: boolean, size: number): Promise<HlOrderResult>;
   placeEntryOrder(coin: string, isBuy: boolean, size: number, currentPrice: number, slippageBps: number): Promise<HlEntryResult>;
+  placeGtcEntryOrder(coin: string, isBuy: boolean, size: number, price: number): Promise<HlGtcResult>;
   placeStopOrder(coin: string, isBuy: boolean, size: number, triggerPrice: number, reduceOnly: boolean): Promise<HlOrderResult>;
   placeLimitOrder(coin: string, isBuy: boolean, size: number, price: number, reduceOnly: boolean): Promise<HlOrderResult>;
   placeTpOrder(coin: string, isBuy: boolean, size: number, triggerPrice: number, reduceOnly: boolean): Promise<HlOrderResult>;

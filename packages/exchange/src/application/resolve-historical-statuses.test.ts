@@ -9,6 +9,7 @@ function createMockHlClient(overrides: Partial<HlClient> = {}): HlClient {
     setLeverage: vi.fn(),
     placeMarketOrder: vi.fn(),
     placeEntryOrder: vi.fn(),
+    placeGtcEntryOrder: vi.fn(),
     placeStopOrder: vi.fn(),
     placeLimitOrder: vi.fn(),
     placeTpOrder: vi.fn(),

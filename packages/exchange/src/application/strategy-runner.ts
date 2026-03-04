@@ -215,6 +215,9 @@ export class StrategyRunner {
   private async processClosedCandle(newCandle: Candle): Promise<void> {
     this.lastCandleAt = newCandle.t;
 
+    // Expire pending GTC entry for this coin if past deadline
+    await this.expirePendingEntry();
+
     const candles = this.deps.streamer.getCandles();
     const index = candles.length - 1;
 
@@ -475,6 +478,36 @@ export class StrategyRunner {
     } catch (placeErr) {
       log.error({ action: "trailingSlPlaceFailed", coin, level: truncatedLevel, err: placeErr }, "Trailing SL placement failed (fixed SL still active)");
     }
+  }
+
+  private async expirePendingEntry(): Promise<void> {
+    const pendingEntryBook = this.deps.signalHandlerDeps.pendingEntryBook;
+    if (!pendingEntryBook) return;
+
+    const entry = pendingEntryBook.get(this.deps.coin);
+    if (!entry || entry.expiresAt > Date.now()) return;
+
+    pendingEntryBook.remove(this.deps.coin);
+    log.info({ action: "pendingEntryExpired", coin: this.deps.coin, hlOrderId: entry.hlOrderId }, "GTC entry expired — cancelling order");
+
+    try {
+      await this.deps.signalHandlerDeps.hlClient.cancelOrder(this.deps.coin, entry.hlOrderId);
+      log.info({ action: "pendingEntryCancelled", coin: this.deps.coin, oid: entry.hlOrderId }, "Expired GTC entry order cancelled on HL");
+    } catch (err) {
+      log.warn({ action: "pendingEntryCancelFailed", coin: this.deps.coin, oid: entry.hlOrderId, err }, "Failed to cancel expired GTC entry (may already be filled/cancelled)");
+    }
+
+    // Mark the entry order as cancelled in SQLite
+    const orderRecord = this.deps.signalHandlerDeps.store.getOrderByHlOid(String(entry.hlOrderId));
+    if (orderRecord?.id) {
+      this.deps.signalHandlerDeps.store.updateOrderStatus(orderRecord.id, "cancelled");
+    }
+
+    await this.deps.eventLog.append({
+      type: "gtc_entry_expired",
+      timestamp: new Date().toISOString(),
+      data: { coin: this.deps.coin, hlOrderId: entry.hlOrderId, signalId: entry.signalId },
+    });
   }
 
   private async checkEntry(

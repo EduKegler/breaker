@@ -11,6 +11,7 @@ import type {
   AccountResponse,
   PricesEvent,
   PositionSummary,
+  PendingEntry,
 } from "../types/api.js";
 
 export type WsStatus = "connecting" | "connected" | "disconnected";
@@ -26,6 +27,7 @@ export interface ServerSlice {
   equity: EquitySnapshot[];
   signals: SignalRow[];
   positionHistory: PositionSummary[];
+  pendingEntries: PendingEntry[];
   account: AccountResponse | null;
   httpError: boolean;
 }
