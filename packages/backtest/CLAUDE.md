@@ -19,7 +19,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - SQLite cache lives in `.cache/candles.db` (gitignored)
 - All indicators are pure functions operating on number arrays
 - Engine uses worst-case assumption: if SL and TP both trigger in same bar, SL wins
-- `ExecutionConfig.fundingRate8h` (default 0.0001 = 0.01%/8h) simulates funding cost: `fundingCost = entryPrice × size × rate × holdTime / 8h`. Deducted from `netPnl` in `CompletedTrade`. Prorated for partial closes
+- `ExecutionConfig.fundingRate8h` (default 0.0004 = 0.04%/8h ≈ 0.005%/hour, KB §1.6 calm-market low-end) simulates funding cost: `fundingCost = entryPrice × size × rate × holdTime / 8h`. Deducted from `netPnl` in `CompletedTrade`. Prorated for partial closes
 
 ## Known pitfalls
 - EMA: `trading-signals` library uses first-value seed (not SMA seed); converges after ~5x period

@@ -102,7 +102,7 @@ If a module says "risk $5 per trade" but Canonical Parameters says "$10", Canoni
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | Risk per trade | riskPerTradeUsd (fixed USD) | Default: $10. Adjust manually when scaling. No dynamic % of capital — simpler, no compounding complexity |
-| Max leverage | 5x | Hard cap. See 9.3 for details |
+| Max leverage | 5x (per-asset, see 9.3) | BTC: 5x, SOL: 3x. Rule: liq distance >= 2x widest stop |
 | Max daily loss | maxDailyLossR (default: 2) | Shut down all modules for the day. Value is in R-multiples of riskPerTradeUsd — adjusts automatically when sizing changes |
 | Max daily trades | 5 | Across all modules (global, not per-coin) |
 
@@ -195,11 +195,11 @@ The orchestrator is the only component that sees all modules and all assets simu
 
 | Scenario | Resolution | Rationale |
 |----------|-----------|-----------|
-| Same direction, same bar | Highest-PF module (from last BREAKER run) gets the entry | Both agree on direction; pick the one with better historical edge |
+| Same direction, same bar | Static priority: M1 > M3 > M2 > M4 | Both agree on direction; faster modules get priority because their signals are more time-sensitive |
 | Opposite direction, same bar | No trade. Skip both signals | Conflicting regime read = uncertainty. Aligns with M5 (Do Not Trade) philosophy |
 | One module signals, others silent | Normal entry. No conflict | Most common case (~90%+ of signals) |
 
-**Priority tiebreaker (if PF is identical):** M1 Breakout > M3 Pullback > M2 MR > M4 TF. Rationale: faster modules (15m) get priority over slower (4H/Daily) because their signals are more time-sensitive. This order is a default; override with live PF data once available.
+**Static priority:** M1 Breakout > M3 Pullback > M2 MR > M4 TF. Rationale: faster modules (15m) get priority over slower (4H/Daily) because their signals are more time-sensitive. This is a fixed map — no dynamic PF lookup needed for an edge case that occurs on <1% of signals.
 
 #### 2.5.2 Active position management
 
@@ -404,7 +404,7 @@ BREAKER can explore any combination fitting the MR archetype (price overextended
 
 **Recommended first iteration (starting point, not mandatory):**
 
-> Bollinger Bands(20, 2.0) on 15m + RSI(2) < 10 for longs / > 90 for shorts + ADX(14) < 25 on 1H as regime gate + Exit at BB midline (SMA 20) + Timeout 24 bars (6h) + No fixed stop (use timeout + position sizing as risk control).
+> Bollinger Bands(20, 2.0) on 15m + RSI(2) < 20 for longs / > 80 for shorts + ADX(14) < 25 on 1H as regime gate + Exit at BB midline (SMA 20) + Timeout 24 bars (6h) + No fixed stop (use timeout + position sizing as risk control).
 > 6 free vars: (1) BB period, (2) BB multiplier, (3) RSI period, (4) RSI threshold, (5) ADX threshold, (6) timeout bars. ADX period fixed at 14 (Wilder default, see 1.6). At cap -- adding a catastrophic stop (1 var) requires fixing one of the above.
 
 **Variable budget (6 max):**
@@ -789,14 +789,14 @@ slippage: 10 bps   // models cross-exchange basis (Binance signal → HL executi
 | **Isolated** | Margin locked per position. Liquidation affects only that position. Other positions and free capital untouched. | **Default for all modules.** Prevents one bad trade from cascading. |
 | **Cross** | All positions share a single margin pool. Unrealized PnL from winners offsets losers. | Only if running portfolio margin optimization later (Phase 5+). NOT for initial deployment. |
 
-**Leverage tiers:**
+**Leverage per asset (fixed in config):**
 
-| Phase | Max leverage | Rationale |
-|-------|-------------|-----------|
-| Paper trading | Any (no real capital) | Test freely, but log the leverage used |
-| Capital Deployment (weeks 1-2) | 2x | Ramp-up period. Conservative. Focus on execution quality, not returns |
-| Capital Deployment (weeks 3+) | 3x | Standard operating leverage after confirming live metrics |
-| Experienced (3+ months live) | 5x | Only if all modules are profitable and drawdown < 50% of max allowed |
+| Asset | Leverage | Liq distance | Widest stop (TF, 3x ATR Daily) | Buffer |
+|-------|---------|-------------|-------------------------------|--------|
+| BTC | 5x | ~19% | ~6-12% | Comfortable |
+| SOL | 3x | ~33% | ~15-25% | Comfortable |
+
+**Sizing rule: liquidation distance must be >= 2x the widest stop the asset can use.** This ensures wicks, slippage, and cross-exchange basis never cause liquidation before the stop fires. When adding a new asset, compute its widest possible stop (TF module, 3x ATR Daily), then pick leverage where liq distance >= 2x that value.
 
 **Liquidation math (isolated margin, BTC at 40x max):**
 
@@ -811,12 +811,12 @@ Maintenance margin = initial margin at max leverage / 2 = (1/40) / 2 = **1.25% o
 | 20x | 5% | ~4.4% |
 | 40x (max) | 2.5% | ~1.25% |
 
-> **Why 5x hard cap:** At 5x, liquidation is ~19% away from entry. BTC ATR Daily is typically 2-5%. Even a 3-sigma daily move (~10-15%) would not liquidate. At 10x+, a large wick during low-liquidity hours can liquidate before your stop fires. The stop is your exit, not the liquidation engine.
+> **Why 5x hard cap:** At 5x, liquidation is ~19% away from entry. BTC ATR Daily is typically 2-5%. Even a 3-sigma daily move (~10-15%) would not liquidate. At 10x+, a large wick during low-liquidity hours can liquidate before your stop fires. The stop is your exit, not the liquidation engine. More volatile assets (SOL) use lower leverage (3x, liq ~33%) to maintain the same safety margin.
 
 **Key rules:**
 
-1. **Stop must ALWAYS be closer than liquidation price.** If your ATR stop is at 3% and your liq price is at 4.4% (10x), you have only 1.4% buffer. That is too thin. At 3x (liq ~33%), you have 30% buffer. Safe.
-2. **Leverage is set per-position on Hyperliquid.** Each isolated position can have different leverage. MR (tight stops, frequent trades) can use 3x. Breakout (wider stops, less frequent) can use 2-3x.
+1. **Liquidation must be >= 2x widest stop.** This is the sizing rule above. If your ATR stop is at 3% and your liq price is at 4.4% (10x), the ratio is only 1.5x. Too thin. At 5x (liq ~19%), the ratio is 3x+. Safe.
+2. **Leverage is fixed per asset in config.** Each asset has one leverage value based on its volatility profile. No temporal ramp-up, no per-module variation. Change only when asset volatility regime shifts materially.
 3. **Never use leverage to increase position size beyond riskPerTradeUsd.** Leverage reduces collateral locked, it does NOT mean "bet bigger." If your risk = $10, and stop distance = $1000, position = 0.01 BTC regardless of leverage. At 3x you just lock less collateral.
 4. **Funding rate awareness:** At higher leverage, funding payments are proportionally larger relative to your margin. For MR (1-2h holds), negligible. For TF (multi-day holds at 3-5x), funding can erode 0.01-0.03% per hour. Monitor.
 5. **No leverage adjustment mid-trade.** Set leverage before entry. Increasing leverage on a losing position is equivalent to averaging down -- forbidden.
@@ -848,7 +848,7 @@ Some rules are enforceable per-module in the BREAKER engine. Others require the 
 | One position at a time per asset | **No** -- strategies don't see each other | Orchestrator -- **per-asset** |
 | Daily loss maxDailyLossR shutdown | **No** -- strategies don't share P&L | Orchestrator -- **global** (all assets) |
 | Volatility spike pause (7.1/7.2) | **Yes** -- computable from price data alone | Orchestrator -- **global** (all assets) |
-| Leverage cap (5x max) | **No** -- backtests don't model leverage/margin | Orchestrator -- per-position via Hyperliquid API |
+| Leverage cap (per-asset, max 5x) | **No** -- backtests don't model leverage/margin | Orchestrator -- per-asset config via Hyperliquid API |
 
 > **Implication:** The orchestrator is implemented (TypeScript). Handles mutex, daily P&L limits, volatility spike detection, leverage enforcement via Hyperliquid API.
 
