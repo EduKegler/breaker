@@ -14,7 +14,7 @@ const guardrails: Guardrails = {
 const safeInput: RiskCheckInput = {
   notionalUsd: 1000,
   leverage: 5,
-  openPositions: 0,
+  coinOpenPositions: 0,
   dailyLossUsd: 0,
   tradesToday: 0,
   riskPerTradeUsd: 10,
@@ -40,9 +40,9 @@ describe("checkRisk", () => {
   });
 
   it("fails when open positions at max", () => {
-    const result = checkRisk({ ...safeInput, openPositions: 1 }, guardrails);
+    const result = checkRisk({ ...safeInput, coinOpenPositions: 1 }, guardrails);
     expect(result.passed).toBe(false);
-    expect(result.reason).toContain("Open positions");
+    expect(result.reason).toContain("Coin positions");
   });
 
   it("fails when daily loss at max (2R = $20 with riskPerTradeUsd=10)", () => {
@@ -75,7 +75,7 @@ describe("checkRisk", () => {
     const result = checkRisk({
       notionalUsd: 10000,
       leverage: 20,
-      openPositions: 5,
+      coinOpenPositions: 5,
       dailyLossUsd: 500,
       tradesToday: 10,
     }, guardrails);

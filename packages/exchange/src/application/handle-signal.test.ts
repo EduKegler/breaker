@@ -131,8 +131,31 @@ describe("handleSignal", () => {
     expect(result.reason).toContain("Duplicate");
   });
 
-  it("rejects when risk check fails (max positions)", async () => {
-    // Open a position first
+  it("rejects when same coin already has open position", async () => {
+    // Open a BTC position — same coin as the signal
+    deps.positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000,
+      takeProfits: [],
+      liquidationPx: null,
+      trailingStopLoss: null,
+      leverage: null,
+      openedAt: new Date().toISOString(),
+      signalId: 0,
+    });
+
+    const input = createInput({ alertId: "risk-001" });
+
+    const result = await handleSignal(input, deps);
+    expect(result.success).toBe(false);
+    expect(result.reason).toContain("Position already open/pending");
+  });
+
+  it("allows signal on different coin when another coin has open position", async () => {
+    // Open an ETH position — different coin from BTC signal
     deps.positionBook.open({
       coin: "ETH",
       direction: "long",
@@ -147,11 +170,10 @@ describe("handleSignal", () => {
       signalId: 0,
     });
 
-    const input = createInput({ alertId: "risk-001" });
+    const input = createInput({ alertId: "cross-coin-001" });
 
     const result = await handleSignal(input, deps);
-    expect(result.success).toBe(false);
-    expect(result.reason).toContain("Open positions");
+    expect(result.success).toBe(true);
   });
 
   it("rejects when notional exceeds max", async () => {
@@ -672,9 +694,6 @@ describe("handleSignal", () => {
     (deps.hlClient.placeEntryOrder as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({ orderId: "HL-E1", filledSize: 0.01, avgPrice: 95000, status: "placed" })
       .mockResolvedValueOnce({ orderId: "HL-E2", filledSize: 0.5, avgPrice: 3500, status: "placed" });
-
-    // Increase maxOpenPositions to allow 2 concurrent positions
-    deps.config = { ...config, guardrails: { ...config.guardrails, maxOpenPositions: 2 } };
 
     const [btcResult, ethResult] = await Promise.all([
       handleSignal(createInput({ alertId: "multi-btc" }), deps),

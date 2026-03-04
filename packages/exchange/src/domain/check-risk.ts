@@ -11,7 +11,7 @@ const MAX_PRICE_DEVIATION_PCT = 0.05;
 export interface RiskCheckInput {
   notionalUsd: number;
   leverage: number;
-  openPositions: number;
+  coinOpenPositions: number;
   dailyLossUsd: number;
   tradesToday: number;
   riskPerTradeUsd: number;
@@ -38,8 +38,8 @@ export function checkRisk(input: RiskCheckInput, guardrails: Guardrails): RiskCh
     return { passed: false, reason: `Leverage ${input.leverage}x exceeds max ${guardrails.maxLeverage}x` };
   }
 
-  if (input.openPositions >= guardrails.maxOpenPositions) {
-    return { passed: false, reason: `Open positions ${input.openPositions} >= max ${guardrails.maxOpenPositions}` };
+  if (input.coinOpenPositions >= guardrails.maxOpenPositions) {
+    return { passed: false, reason: `Coin positions ${input.coinOpenPositions} >= max ${guardrails.maxOpenPositions}` };
   }
 
   const maxDailyLossUsd = guardrails.maxDailyLossR * input.riskPerTradeUsd;

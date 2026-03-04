@@ -132,7 +132,7 @@ async function handleSignalInner(
   const riskInput: RiskCheckInput = {
     notionalUsd: intent.notionalUsd,
     leverage,
-    openPositions: positionBook.count(),
+    coinOpenPositions: positionBook.get(coin) ? 1 : 0,
     dailyLossUsd: Math.abs(store.getTodayRealizedPnl()),
     tradesToday: store.getTodayGlobalTradeCount(),
     riskPerTradeUsd: config.sizing.riskPerTradeUsd,
