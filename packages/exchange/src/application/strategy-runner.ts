@@ -119,12 +119,12 @@ export class StrategyRunner {
   }
 
   async warmup(): Promise<void> {
-    const twoYearsBars = Math.ceil(730 * 86_400_000 / intervalToMs(this.deps.interval));
-    const effectiveWarmup = Math.max(this.deps.warmupBars, twoYearsBars);
+    const oneYearBars = Math.ceil(365 * 86_400_000 / intervalToMs(this.deps.interval));
+    const effectiveWarmup = Math.max(this.deps.warmupBars, oneYearBars);
     if (effectiveWarmup > this.deps.warmupBars) {
       log.warn(
-        { coin: this.deps.coin, configured: this.deps.warmupBars, twoYearFloor: twoYearsBars, effective: effectiveWarmup },
-        "warmupBars raised to 2-year floor",
+        { coin: this.deps.coin, configured: this.deps.warmupBars, oneYearFloor: oneYearBars, effective: effectiveWarmup },
+        "warmupBars raised to 1-year floor",
       );
     }
 
