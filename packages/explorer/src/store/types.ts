@@ -38,6 +38,8 @@ export interface MarketDataSlice {
   coinPrices: Record<string, PricesEvent>;
   altCandles: CandleData[];
   candlesLoading: boolean;
+  /** Strategy keys currently loading replay signals, e.g. "BTC:donchian-adx" */
+  loadingStrategies: Set<string>;
 }
 
 export interface UiSlice {

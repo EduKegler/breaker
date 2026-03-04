@@ -138,7 +138,8 @@ describe("StrategyRunner", () => {
     const runner = new StrategyRunner(deps);
     await runner.warmup();
 
-    expect(streamer.warmup).toHaveBeenCalledWith(5);
+    // 2-year floor: ceil(730 * 86400000 / 900000) = 70080 bars on 15m
+    expect(streamer.warmup).toHaveBeenCalledWith(70080);
     expect(strategy.init).toHaveBeenCalledOnce();
   });
 
@@ -1081,52 +1082,51 @@ describe("StrategyRunner", () => {
     expect(strategy.onCandle).not.toHaveBeenCalled();
   });
 
-  describe("warmup auto-correction via requiredWarmup", () => {
-    it("auto-corrects warmup when strategy requires more bars than configured", async () => {
-      const candles = Array.from({ length: 100 }, (_, i) => makeCandle(i));
-      const streamer = createMockStreamer(candles);
-      const strategy = createTestStrategy();
-      // Strategy requires 72 source bars (1h: 15 on 15m = 15*4*1.2 = 72)
-      strategy.requiredWarmup = { "1h": 15 };
-
-      const deps = createDeps(strategy, streamer);
-      deps.warmupBars = 5; // configured too low
-
-      const runner = new StrategyRunner(deps);
-      await runner.warmup();
-
-      // Streamer should be called with auto-corrected value (72), not configured (5)
-      expect(streamer.warmup).toHaveBeenCalledWith(72);
-    });
-
-    it("keeps configured warmup when it exceeds strategy minimum", async () => {
-      const candles = Array.from({ length: 200 }, (_, i) => makeCandle(i));
-      const streamer = createMockStreamer(candles);
-      const strategy = createTestStrategy();
-      strategy.requiredWarmup = { source: 22, "1h": 15 }; // min = 72
-
-      const deps = createDeps(strategy, streamer);
-      deps.warmupBars = 200; // configured is already sufficient
-
-      const runner = new StrategyRunner(deps);
-      await runner.warmup();
-
-      expect(streamer.warmup).toHaveBeenCalledWith(200);
-    });
-
-    it("uses configured warmup when no requiredWarmup is set", async () => {
+  describe("warmup 2-year floor", () => {
+    it("applies 2-year floor regardless of configured warmupBars", async () => {
       const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
       const streamer = createMockStreamer(candles);
       const strategy = createTestStrategy();
-      // No requiredWarmup
 
       const deps = createDeps(strategy, streamer);
-      deps.warmupBars = 5;
+      deps.warmupBars = 5; // much lower than 2-year floor
 
       const runner = new StrategyRunner(deps);
       await runner.warmup();
 
-      expect(streamer.warmup).toHaveBeenCalledWith(5);
+      // 2-year floor: ceil(730 * 86400000 / 900000) = 70080 bars on 15m
+      expect(streamer.warmup).toHaveBeenCalledWith(70080);
+    });
+
+    it("applies 2-year floor even when strategy has requiredWarmup", async () => {
+      const candles = Array.from({ length: 100 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      strategy.requiredWarmup = { "1h": 15 }; // 72 bars — still below 70080
+
+      const deps = createDeps(strategy, streamer);
+      deps.warmupBars = 200;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      expect(streamer.warmup).toHaveBeenCalledWith(70080);
+    });
+
+    it("uses configured warmupBars when it exceeds 2-year floor", async () => {
+      // Use 1d interval so 2-year floor = 730 bars (not 70080 on 15m)
+      const candles = Array.from({ length: 500 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+
+      const deps = createDeps(strategy, streamer);
+      deps.interval = "1d";
+      deps.warmupBars = 1000; // higher than 2-year floor (730 on 1d)
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      expect(streamer.warmup).toHaveBeenCalledWith(1000);
     });
   });
 

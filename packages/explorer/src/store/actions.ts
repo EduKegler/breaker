@@ -112,13 +112,21 @@ export const createActions: StateCreator<StoreState, [], [], Actions & { _toastF
         }).catch((err) => { console.error(`[initCoinData] candle fetch error for ${coin}:`, err); }),
       );
       for (const strat of cc.strategies) {
+        const stratKey = `${coin}:${strat.name}`;
+        set((s) => ({ loadingStrategies: new Set([...s.loadingStrategies, stratKey]) }));
         fetchPromises.push(
           api.strategySignals({ coin, strategy: strat.name }).then((r) => {
             if (r.signals.length === 0) return;
             set((s) => ({
               coinReplaySignals: mergeReplaySignals(s.coinReplaySignals, coin, r.signals),
             }));
-          }).catch(() => {}),
+          }).catch(() => {}).finally(() => {
+            set((s) => {
+              const next = new Set(s.loadingStrategies);
+              next.delete(stratKey);
+              return { loadingStrategies: next };
+            });
+          }),
         );
       }
     }

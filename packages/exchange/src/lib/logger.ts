@@ -21,7 +21,16 @@ function createPinoLogger(): pino.Logger {
     { level: getBaseLevel() },
     pino.transport({
       targets: [
-        { target: "pino/file", level: getBaseLevel(), options: { destination: 1 } },
+        {
+          target: "pino-pretty",
+          level: getBaseLevel(),
+          options: {
+            destination: 1,
+            colorize: true,
+            translateTime: "HH:MM:ss",
+            ignore: "pid,hostname",
+          },
+        },
         {
           target: "pino-roll",
           level: getBaseLevel(),

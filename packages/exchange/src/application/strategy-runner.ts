@@ -4,7 +4,6 @@ import {
   createUtcDayFormatter,
   aggregateCandles,
   intervalToMs,
-  computeMinWarmupBars,
 } from "@breaker/backtest";
 import type { Strategy, Signal, Candle, CandleInterval, StrategyContext } from "@breaker/backtest";
 import type { CandleStreamer } from "../adapters/candle-streamer.js";
@@ -123,18 +122,18 @@ export class StrategyRunner {
   }
 
   async warmup(): Promise<void> {
-    const minRequired = computeMinWarmupBars(this.deps.strategy, this.deps.interval);
-    const effectiveWarmup = Math.max(this.deps.warmupBars, minRequired);
+    const twoYearsBars = Math.ceil(730 * 86_400_000 / intervalToMs(this.deps.interval));
+    const effectiveWarmup = Math.max(this.deps.warmupBars, twoYearsBars);
     if (effectiveWarmup > this.deps.warmupBars) {
       log.warn(
-        { coin: this.deps.coin, configured: this.deps.warmupBars, required: minRequired, effective: effectiveWarmup },
-        "warmupBars auto-corrected: strategy requires more bars than configured",
+        { coin: this.deps.coin, configured: this.deps.warmupBars, twoYearFloor: twoYearsBars, effective: effectiveWarmup },
+        "warmupBars raised to 2-year floor",
       );
     }
 
     const candles = await this.deps.streamer.warmup(effectiveWarmup);
 
-    const minBars = Math.ceil(effectiveWarmup * 0.5);
+    const minBars = Math.ceil(this.deps.warmupBars * 0.5);
     if (candles.length < minBars) {
       throw new Error(
         `Insufficient warmup data: got ${candles.length}, need ≥${minBars} (${effectiveWarmup} requested)`,

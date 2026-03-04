@@ -176,10 +176,9 @@ export function createApp(deps: ServerDeps): express.Express {
     res.json({ signals });
   });
 
-  // Replay warmup: strategies with daily indicators (e.g. EMA 50 on 1d)
-  // need ~51 daily candles of warmup before signals can generate.
-  // 15000 × 15m ≈ 156 days → daily EMA valid from day 51 → ~106 days of signal coverage.
-  const REPLAY_WARMUP = 15000;
+  // Signal window: how many bars of signals to display beyond warmup.
+  // ~104 days on 15m — enough for the explorer chart.
+  const SIGNAL_WINDOW = 10_000;
 
   /** Fetch candles using SQLite cache (sync → read) or streamer fallback. */
   async function fetchCandlesForReplay(coin: string, interval: CandleInterval, endTime: number, bars: number) {
@@ -235,15 +234,9 @@ export function createApp(deps: ServerDeps): express.Express {
       }
 
       const strategy = deps.strategyFactory(stratCfg.name);
-      const minRequired = computeMinWarmupBars(strategy, interval);
-      if (REPLAY_WARMUP < minRequired) {
-        res.status(422).json({
-          error: `REPLAY_WARMUP (${REPLAY_WARMUP}) is below strategy minimum (${minRequired}) for ${stratCfg.name}`,
-        });
-        return;
-      }
-
-      const candles = await fetchCandlesForReplay(coin, interval, now, REPLAY_WARMUP);
+      const minWarmup = computeMinWarmupBars(strategy, interval);
+      const replayBars = minWarmup + SIGNAL_WINDOW;
+      const candles = await fetchCandlesForReplay(coin, interval, now, replayBars);
       const signals = replayStrategy({
         strategyFactory: () => deps.strategyFactory(stratCfg.name),
         candles,

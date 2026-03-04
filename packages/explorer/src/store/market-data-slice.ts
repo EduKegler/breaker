@@ -7,4 +7,5 @@ export const createMarketDataSlice: StateCreator<StoreState, [], [], MarketDataS
   coinPrices: {},
   altCandles: [],
   candlesLoading: true,
+  loadingStrategies: new Set(),
 });

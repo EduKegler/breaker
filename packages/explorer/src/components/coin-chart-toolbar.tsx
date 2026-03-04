@@ -11,6 +11,7 @@ interface CoinChartToolbarProps {
   enabledStrategies: string[];
   onToggleStrategy: (strategy: string) => void;
   pendingCoins?: Set<string>;
+  loadingStrategies?: Set<string>;
 }
 
 export function CoinChartToolbar({
@@ -21,6 +22,7 @@ export function CoinChartToolbar({
   enabledStrategies,
   onToggleStrategy,
   pendingCoins,
+  loadingStrategies,
 }: CoinChartToolbarProps) {
   return (
     <div className="flex items-center gap-3 flex-wrap">
@@ -63,6 +65,7 @@ export function CoinChartToolbar({
               const isEnabled = enabledStrategies.includes(s);
               const canToggle = strategies.length >= 2;
               const tip = strategyTooltip(s);
+              const isLoading = loadingStrategies?.has(`${selectedCoin}:${s}`);
               return (
                 <div key={s} className="relative group">
                   <button
@@ -80,6 +83,9 @@ export function CoinChartToolbar({
                     }}
                     onClick={canToggle ? () => onToggleStrategy(s) : undefined}
                   >
+                    {isLoading && (
+                      <span className="inline-block w-2.5 h-2.5 mr-1 rounded-full border border-txt-secondary/40 border-t-amber animate-spin align-[-2px]" />
+                    )}
                     {strategyDisplayName(s)}
                   </button>
                   {/* Tooltip */}

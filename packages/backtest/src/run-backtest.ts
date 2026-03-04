@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   cli.option("--end <date>", "End date YYYY-MM-DD (default: today)");
   cli.option("--days <n>", "Days to backtest (default: 180, ignored if --start given)");
   cli.option("--source <source>", "Data source: binance|hyperliquid (default: binance)");
-  cli.option("--warmup <days>", "Warmup days for indicators (default: 60)");
+  cli.option("--warmup <days>", "Warmup days for indicators (default: 730)");
   cli.option("--strategy <name>", "Strategy: donchian-adx|keltner-rsi2 (default: donchian-adx)");
   cli.option("--cash", "Use cash sizing mode ($100 per trade)");
   cli.option("--limits", "Enable trade limits (use --no-limits to disable)");
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   const coin = args[0] ?? "BTC";
   const source = (options.source ?? "binance") as "binance" | "hyperliquid";
   const interval = "15m" as const;
-  const WARMUP_DAYS = Number(options.warmup ?? 60);
+  const WARMUP_DAYS = Number(options.warmup ?? 730);
   const strategyName = options.strategy ?? "donchian-adx";
   const useCash = options.cash === true;
   const noLimits = options.limits === false;
@@ -58,8 +58,8 @@ async function main(): Promise<void> {
     startTime = endTime - days * 86_400_000;
   }
 
-  // Fetch extra candles before startTime so indicators (EMA50 daily) can warm up
-  const dataStartTime = startDate ? startTime - WARMUP_DAYS * 86_400_000 : startTime;
+  // Always fetch extra candles before startTime so indicators (EMA200 daily) can warm up
+  const dataStartTime = startTime - WARMUP_DAYS * 86_400_000;
 
   // Ensure cache directory exists
   const cacheDir = path.join(process.cwd(), ".cache");
@@ -112,13 +112,8 @@ async function main(): Promise<void> {
   const result = runBacktest(candles, strategy, config, interval);
 
   // Filter trades to user-specified window (exclude warmup-period trades)
-  const trades = startDate
-    ? result.trades.filter(t => t.entryTimestamp >= startTime)
-    : result.trades;
-
-  if (startDate) {
-    console.log(`  All engine trades: ${result.trades.length}, after filtering to window: ${trades.length}`);
-  }
+  const trades = result.trades.filter(t => t.entryTimestamp >= startTime);
+  console.log(`  All engine trades: ${result.trades.length}, after filtering to window: ${trades.length}`);
 
   // Compute metrics on filtered trades
   const metrics = computeMetrics(trades, result.maxDrawdownPct);
@@ -126,7 +121,7 @@ async function main(): Promise<void> {
 
   // Output results
   console.log("\n=== Backtest Results ===");
-  console.log(`Period: ${new Date(startTime).toISOString().slice(0, 10)} → ${new Date(endTime).toISOString().slice(0, 10)} (${days} days${startDate ? `, +${WARMUP_DAYS}d warmup` : ""})`);
+  console.log(`Period: ${new Date(startTime).toISOString().slice(0, 10)} → ${new Date(endTime).toISOString().slice(0, 10)} (${days} days, +${WARMUP_DAYS}d warmup)`);
   console.log(`Bars processed: ${result.barsProcessed}`);
   console.log(`Trades: ${metrics.numTrades}`);
   console.log(`Total PnL: $${metrics.totalPnl?.toFixed(2)}`);

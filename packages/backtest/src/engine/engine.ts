@@ -219,6 +219,7 @@ export function runBacktest(
         const signal = strategy.onCandle(ctx);
 
         if (signal) {
+          orderManager.clearOrders();
           placeEntryOrders(
             signal, candle, config, orderManager,
           );

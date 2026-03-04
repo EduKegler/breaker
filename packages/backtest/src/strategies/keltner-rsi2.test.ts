@@ -21,9 +21,9 @@ function generate15mCandles(count: number, startPrice: number, trend: "up" | "do
   const base = new Date("2024-01-01T00:00:00Z").getTime();
   for (let i = 0; i < count; i++) {
     candles.push(makeCandle(base + i * 900_000, price));
-    if (trend === "up") price += 10 + Math.random() * 5;
-    else if (trend === "down") price -= 10 + Math.random() * 5;
-    else price += (Math.random() - 0.5) * 20;
+    if (trend === "up") price += 12;
+    else if (trend === "down") price -= 12;
+    else price = startPrice + Math.sin(i * 0.3) * 10;
   }
   return candles;
 }
@@ -147,11 +147,11 @@ describe("createKeltnerRsi2", () => {
 
     // Phase 1: stable period (~3 days = 288 bars) for indicators to warm up
     for (let i = 0; i < 288; i++) {
-      price = 10000 + (Math.random() - 0.5) * 40;
+      price = 10000 + Math.sin(i * 0.1) * 15;
       candles.push(makeCandle(base + i * 900_000, price, 30));
     }
 
-    // Phase 2: sharp drop — two consecutive down bars to get RSI2 < 30
+    // Phase 2: sharp drop — three consecutive down bars to get RSI2 < 30
     // and close below KC lower band
     const dropBase = base + 288 * 900_000;
     candles.push(makeCandle(dropBase, price - 200, 30));
@@ -190,11 +190,11 @@ describe("createKeltnerRsi2", () => {
 
     // Phase 1: stable period with moderate volume for indicators to warm up
     for (let i = 0; i < 288; i++) {
-      price = 10000 + (Math.random() - 0.5) * 40;
+      price = 10000 + Math.sin(i * 0.1) * 15;
       candles.push(makeCandle(base + i * 900_000, price, 30, 100));
     }
 
-    // Phase 2: sharp rise with high volume — two consecutive up bars to get RSI2 > 70
+    // Phase 2: sharp rise with high volume — three consecutive up bars to get RSI2 > 70
     // and close above KC upper band, with volume > 1.5 * SMA(20)
     const spikeBase = base + 288 * 900_000;
     candles.push(makeCandle(spikeBase, price + 200, 30, 300));
@@ -319,7 +319,7 @@ describe("createKeltnerRsi2", () => {
     // Build 15m candles: stable period then sharp drop (would trigger KC long without ADX gate)
     let price = htfPrice; // Match latest 1H price
     for (let i = 0; i < 288; i++) {
-      price = htfPrice + (Math.random() - 0.5) * 40;
+      price = htfPrice + Math.sin(i * 0.1) * 15;
       candles.push(makeCandle(base + 40 * 3_600_000 + i * 900_000, price, 30));
     }
     // Sharp drop to trigger KC long + RSI2 oversold
@@ -381,7 +381,7 @@ describe("createKeltnerRsi2", () => {
     // Build 15m candles: stable period then sharp drop
     let price = 10000;
     for (let i = 0; i < 288; i++) {
-      price = 10000 + (Math.random() - 0.5) * 40;
+      price = 10000 + Math.sin(i * 0.1) * 15;
       candles.push(makeCandle(base + 120 * 3_600_000 + i * 900_000, price, 30));
     }
     // Sharp drop to trigger KC long + RSI2 oversold

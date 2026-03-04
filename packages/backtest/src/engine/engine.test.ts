@@ -625,6 +625,72 @@ describe("take-profit and partial close", () => {
   });
 });
 
+describe("duplicate entry orders", () => {
+  function makeCandle(t: number, o: number, h: number, l: number, c: number): Candle {
+    return { t, o, h, l, c, v: 100, n: 50 };
+  }
+
+  const noLimitsNoFees: BacktestConfig = {
+    ...DEFAULT_BACKTEST_CONFIG,
+    cooldownBars: 0,
+    maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
+    maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+    maxDailyLossR: Number.MAX_SAFE_INTEGER,
+    maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
+    execution: { slippageBps: 0, commissionPct: 0, fundingRate8h: 0 },
+  };
+
+  it("should not crash when entry stop doesn't fill and strategy re-signals", () => {
+    const t0 = new Date("2024-06-01T12:00:00Z").getTime();
+    const ms15 = 900_000;
+
+    // Candles where a buy-stop at 110 doesn't fill for bars 6-7,
+    // then fills on bar 8 (high reaches 112).
+    const candles: Candle[] = [
+      // 0-4: warmup — stable around 100
+      makeCandle(t0 + 0 * ms15, 100, 105, 95, 100),
+      makeCandle(t0 + 1 * ms15, 100, 105, 95, 100),
+      makeCandle(t0 + 2 * ms15, 100, 105, 95, 100),
+      makeCandle(t0 + 3 * ms15, 100, 105, 95, 100),
+      makeCandle(t0 + 4 * ms15, 100, 105, 95, 100),
+      // 5: signal fires — buy stop at 110, SL at 90
+      makeCandle(t0 + 5 * ms15, 100, 105, 95, 100),
+      // 6: price stays below 110 → entry stop NOT filled, signal re-fires
+      makeCandle(t0 + 6 * ms15, 100, 107, 95, 102),
+      // 7: still below 110 → entry stop NOT filled, signal re-fires again
+      makeCandle(t0 + 7 * ms15, 102, 108, 96, 103),
+      // 8: price breaks above 110 → entry stop fills
+      makeCandle(t0 + 8 * ms15, 103, 112, 100, 111),
+      // 9: extra bar (SL far away, stays open)
+      makeCandle(t0 + 9 * ms15, 111, 115, 108, 113),
+    ];
+
+    /** Strategy that emits a buy-stop entry at 110 every bar while flat. */
+    const stopEntryStrategy: Strategy = {
+      name: "stop-entry-resignal",
+      params: {},
+      onCandle(ctx: StrategyContext): Signal | null {
+        if (ctx.index < 5) return null;
+        return {
+          direction: "long",
+          entryPrice: 110, // stop entry — only fills when price >= 110
+          stopLoss: 90,
+          takeProfits: [],
+          comment: `Entry bar ${ctx.index}`,
+        };
+      },
+    };
+
+    // Without the fix this throws "Cannot open position: already in a position"
+    const result = runBacktest(candles, stopEntryStrategy, noLimitsNoFees);
+
+    // Should have exactly 1 trade (opened at bar 8, force-closed at end)
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0].entryPrice).toBe(110);
+    expect(result.trades[0].entryComment).toBe("Entry bar 7");
+  });
+});
+
 describe("aggregateCandles", () => {
   it("returns same candles when target equals source", () => {
     const candles = [
