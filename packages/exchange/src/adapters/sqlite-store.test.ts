@@ -389,6 +389,247 @@ describe("SqliteStore", () => {
     });
   });
 
+  describe("getTodayRealizedPnl", () => {
+    /**
+     * Helper: insert a complete round-trip (entry + exit) with fills.
+     * Entry fill timestamp is always "yesterday" unless overridden.
+     * Exit fill timestamp is always "now" (today) unless overridden.
+     */
+    function insertRoundTrip(opts: {
+      side: "LONG" | "SHORT";
+      entryPrice: number;
+      exitPrice: number;
+      size: number;
+      exitTag?: string;
+      partialFills?: { price: number; size: number }[];
+      fundingPaid?: number;
+      exitTimestamp?: string;
+      entryTimestamp?: string;
+    }) {
+      const sigId = store.insertSignal({
+        alert_id: `pnl-${Math.random()}`,
+        source: "strategy-runner",
+        asset: "SOL",
+        side: opts.side,
+        entry_price: opts.entryPrice,
+        stop_loss: opts.side === "LONG" ? opts.entryPrice - 10 : opts.entryPrice + 10,
+        take_profits: "[]",
+        risk_check_passed: 1,
+        risk_check_reason: null,
+        strategy_name: "ema-pullback",
+      });
+
+      if (opts.fundingPaid) {
+        store.updateSignalFunding(sigId, opts.fundingPaid);
+      }
+
+      // Entry order + fill (yesterday by default)
+      const entryOrderId = store.insertOrder({
+        signal_id: sigId,
+        hl_order_id: null,
+        coin: "SOL",
+        side: opts.side === "LONG" ? "buy" : "sell",
+        size: opts.size,
+        price: opts.entryPrice,
+        order_type: "limit",
+        tag: "entry",
+        status: "filled",
+        mode: "mainnet",
+        filled_at: opts.entryTimestamp ?? "2020-01-01T00:00:00Z",
+      });
+      store.insertFill({
+        order_id: entryOrderId,
+        price: opts.entryPrice,
+        size: opts.size,
+        fee: 0,
+        timestamp: opts.entryTimestamp ?? "2020-01-01T00:00:00Z",
+      });
+
+      // Exit order + fill(s) (today by default)
+      const tag = opts.exitTag ?? "trailing-sl";
+      const exitTs = opts.exitTimestamp ?? new Date().toISOString();
+
+      if (opts.partialFills) {
+        // Multiple partial fills on the same exit order
+        const exitOrderId = store.insertOrder({
+          signal_id: sigId,
+          hl_order_id: null,
+          coin: "SOL",
+          side: opts.side === "LONG" ? "sell" : "buy",
+          size: opts.size,
+          price: opts.exitPrice,
+          order_type: "stop",
+          tag,
+          status: "filled",
+          mode: "mainnet",
+          filled_at: exitTs,
+        });
+        for (const pf of opts.partialFills) {
+          store.insertFill({
+            order_id: exitOrderId,
+            price: pf.price,
+            size: pf.size,
+            fee: 0,
+            timestamp: exitTs,
+          });
+        }
+      } else {
+        const exitOrderId = store.insertOrder({
+          signal_id: sigId,
+          hl_order_id: null,
+          coin: "SOL",
+          side: opts.side === "LONG" ? "sell" : "buy",
+          size: opts.size,
+          price: opts.exitPrice,
+          order_type: "stop",
+          tag,
+          status: "filled",
+          mode: "mainnet",
+          filled_at: exitTs,
+        });
+        store.insertFill({
+          order_id: exitOrderId,
+          price: opts.exitPrice,
+          size: opts.size,
+          fee: 0,
+          timestamp: exitTs,
+        });
+      }
+    }
+
+    it("returns 0 when no fills today", () => {
+      expect(store.getTodayRealizedPnl()).toBe(0);
+    });
+
+    it("computes profit for a LONG position closed today", () => {
+      insertRoundTrip({
+        side: "LONG",
+        entryPrice: 85,
+        exitPrice: 90,
+        size: 1.0,
+      });
+      // PnL = (90 - 85) * 1.0 = +5
+      expect(store.getTodayRealizedPnl()).toBeCloseTo(5, 4);
+    });
+
+    it("computes loss for a LONG position closed today", () => {
+      insertRoundTrip({
+        side: "LONG",
+        entryPrice: 90,
+        exitPrice: 85,
+        size: 1.0,
+        exitTag: "sl",
+      });
+      // PnL = (85 - 90) * 1.0 = -5
+      expect(store.getTodayRealizedPnl()).toBeCloseTo(-5, 4);
+    });
+
+    it("computes profit for a SHORT position closed today", () => {
+      insertRoundTrip({
+        side: "SHORT",
+        entryPrice: 90,
+        exitPrice: 85,
+        size: 1.0,
+        exitTag: "sl",
+      });
+      // PnL = (90 - 85) * 1.0 = +5
+      expect(store.getTodayRealizedPnl()).toBeCloseTo(5, 4);
+    });
+
+    it("computes loss for a SHORT position closed today", () => {
+      insertRoundTrip({
+        side: "SHORT",
+        entryPrice: 85,
+        exitPrice: 90,
+        size: 1.0,
+        exitTag: "trailing-sl",
+      });
+      // PnL = (85 - 90) * 1.0 = -5
+      expect(store.getTodayRealizedPnl()).toBeCloseTo(-5, 4);
+    });
+
+    it("handles partial exit fills correctly (the original bug)", () => {
+      // This reproduces the exact production bug: trailing-SL with 5 partial fills
+      insertRoundTrip({
+        side: "LONG",
+        entryPrice: 85.203,
+        exitPrice: 86.634, // trigger price (order price)
+        size: 1.01,
+        exitTag: "trailing-sl",
+        partialFills: [
+          { price: 86.613, size: 0.46 },
+          { price: 86.611, size: 0.17 },
+          { price: 86.610, size: 0.13 },
+          { price: 86.608, size: 0.13 },
+          { price: 86.600, size: 0.12 },
+        ],
+      });
+      // Avg exit = (86.613*0.46 + 86.611*0.17 + 86.610*0.13 + 86.608*0.13 + 86.600*0.12) / 1.01
+      // Total exit value = sum of fill_price * fill_size
+      const exitValue = 86.613 * 0.46 + 86.611 * 0.17 + 86.610 * 0.13 + 86.608 * 0.13 + 86.600 * 0.12;
+      const entryValue = 85.203 * 1.01;
+      const expectedPnl = exitValue - entryValue; // ~+1.42
+      expect(store.getTodayRealizedPnl()).toBeCloseTo(expectedPnl, 2);
+      expect(store.getTodayRealizedPnl()).toBeGreaterThan(0); // must be positive!
+    });
+
+    it("ignores positions not closed today", () => {
+      insertRoundTrip({
+        side: "LONG",
+        entryPrice: 85,
+        exitPrice: 90,
+        size: 1.0,
+        exitTimestamp: "2020-01-01T00:00:00Z", // exit was in the past
+        entryTimestamp: "2020-01-01T00:00:00Z",
+      });
+      expect(store.getTodayRealizedPnl()).toBe(0);
+    });
+
+    it("sums PnL across multiple positions closed today", () => {
+      insertRoundTrip({ side: "LONG", entryPrice: 85, exitPrice: 90, size: 1.0 }); // +5
+      insertRoundTrip({ side: "LONG", entryPrice: 100, exitPrice: 95, size: 2.0, exitTag: "sl" }); // -10
+      // Total: +5 - 10 = -5
+      expect(store.getTodayRealizedPnl()).toBeCloseTo(-5, 4);
+    });
+
+    it("ignores entry-only fills (open position, no exit today)", () => {
+      // Only insert entry, no exit
+      const sigId = store.insertSignal({
+        alert_id: "open-only",
+        source: "strategy-runner",
+        asset: "SOL",
+        side: "LONG",
+        entry_price: 85,
+        stop_loss: 80,
+        take_profits: "[]",
+        risk_check_passed: 1,
+        risk_check_reason: null,
+        strategy_name: null,
+      });
+      const orderId = store.insertOrder({
+        signal_id: sigId,
+        hl_order_id: null,
+        coin: "SOL",
+        side: "buy",
+        size: 1.0,
+        price: 85,
+        order_type: "limit",
+        tag: "entry",
+        status: "filled",
+        mode: "mainnet",
+        filled_at: new Date().toISOString(),
+      });
+      store.insertFill({
+        order_id: orderId,
+        price: 85,
+        size: 1.0,
+        fee: 0,
+        timestamp: new Date().toISOString(),
+      });
+      expect(store.getTodayRealizedPnl()).toBe(0);
+    });
+  });
+
   describe("equity snapshots", () => {
     it("inserts and retrieves equity snapshots", () => {
       store.insertEquitySnapshot({

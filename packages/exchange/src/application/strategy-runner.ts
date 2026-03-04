@@ -604,6 +604,7 @@ export class StrategyRunner {
         leverage: this.deps.leverage,
         autoTradingEnabled: this.deps.autoTradingEnabled,
         strategyName: this.deps.strategyConfigName,
+        dailyLossOverride: this.deps.orchestrator?.getDailyPnl(),
       },
       this.deps.signalHandlerDeps,
     );

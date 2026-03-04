@@ -35,6 +35,9 @@ export interface HandleSignalInput {
   leverage: number;
   autoTradingEnabled: boolean;
   strategyName?: string;
+  /** When provided, overrides store.getTodayRealizedPnl() for the risk check.
+   *  Strategy-runner passes the orchestrator's in-memory daily PnL here. */
+  dailyLossOverride?: number;
 }
 
 interface HandleSignalResult {
@@ -133,7 +136,9 @@ async function handleSignalInner(
     notionalUsd: intent.notionalUsd,
     leverage,
     coinOpenPositions: positionBook.get(coin) ? 1 : 0,
-    dailyLossUsd: Math.abs(store.getTodayRealizedPnl()),
+    dailyLossUsd: input.dailyLossOverride != null
+      ? Math.abs(input.dailyLossOverride)
+      : Math.abs(store.getTodayRealizedPnl()),
     tradesToday: store.getTodayGlobalTradeCount(),
     riskPerTradeUsd: config.sizing.riskPerTradeUsd,
     entryPrice: intent.entryPrice,

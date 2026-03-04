@@ -62,6 +62,7 @@ interface ReconcileLoopDeps {
   walletAddress: string;
   intervalMs?: number;
   onReconciled?: (data: ReconciledData) => void;
+  onAutoClose?: (coin: string, strategyName: string | null, pnl: number) => void;
   onApiDown?: () => void;
 }
 
@@ -138,13 +139,15 @@ export class ReconcileLoop {
       }
     }
 
-    // 2b. Local has position, HL doesn't → auto-close
+    // 2b. Local has position, HL doesn't → auto-close (liquidation or external close)
     for (const [coin] of localMap) {
       if (!hlMap.has(coin)) {
         const closedPos = positionBook.get(coin);
         positionBook.close(coin);
+        const pnl = (closedPos?.unrealizedPnl ?? 0) + (closedPos?.cumulativeFunding ?? 0);
+        this.deps.onAutoClose?.(coin, closedPos?.strategyName ?? null, pnl);
         actions.push(`position_auto_closed:${coin}`);
-        log.info({ action: "positionAutoClosed", coin }, "Position auto-closed (not on HL)");
+        log.info({ action: "positionAutoClosed", coin, pnl }, "Position auto-closed (not on HL)");
         eventLog.append({
           type: "position_closed",
           timestamp: new Date().toISOString(),
@@ -152,6 +155,7 @@ export class ReconcileLoop {
             coin,
             direction: closedPos?.direction ?? "unknown",
             entryPrice: closedPos?.entryPrice ?? 0,
+            pnl,
             reason: "reconcile_auto_close",
           },
         }).catch(() => {});

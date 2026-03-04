@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import type { StoreState } from "./types.js";
 import type {
   HealthResponse,
@@ -12,6 +13,11 @@ import type {
   PositionSummary,
   PendingEntry,
 } from "../types/api.js";
+
+let _qc: QueryClient | null = null;
+export function setWsQueryClient(qc: QueryClient) {
+  _qc = qc;
+}
 
 interface WsMessage {
   type: string;
@@ -90,15 +96,18 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
         orders: d.orders,
         openOrders: d.openOrders,
         equity: Array.isArray(d.equity) ? d.equity : d.equity.snapshots,
-        health: d.health,
         ...(d.signals ? { signals: d.signals } : {}),
-        ...(d.positionHistory ? { positionHistory: d.positionHistory } : {}),
         ...(d.pendingEntries ? { pendingEntries: d.pendingEntries } : {}),
       });
+      _qc?.setQueryData(["server", "health"], d.health);
+      if (d.positionHistory) {
+        _qc?.setQueryData(["server", "position-history"], d.positionHistory);
+      }
       break;
     }
     case "positions":
       setState({ positions: msg.data as LivePosition[] });
+      _qc?.invalidateQueries({ queryKey: ["server", "account"] });
       break;
     case "orders":
       setState({ orders: msg.data as OrderRow[] });
@@ -110,7 +119,7 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
       setState({ equity: msg.data as EquitySnapshot[] });
       break;
     case "health":
-      setState({ health: msg.data as HealthResponse });
+      _qc?.setQueryData(["server", "health"], msg.data as HealthResponse);
       break;
     case "candle": {
       const newCandle = msg.data as CandleData & { coin?: string };
@@ -138,7 +147,7 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
       setState({ signals: msg.data as SignalRow[] });
       break;
     case "position-history":
-      setState({ positionHistory: msg.data as PositionSummary[] });
+      _qc?.setQueryData(["server", "position-history"], msg.data as PositionSummary[]);
       break;
     case "pending-entries":
       setState({ pendingEntries: msg.data as PendingEntry[] });

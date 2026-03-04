@@ -1,8 +1,8 @@
 import type { StoreState } from "./types.js";
-import type { CandleData, ReplaySignal, SignalRow, LivePosition, PricesEvent } from "../types/api.js";
+import type { CandleData, ReplaySignal, SignalRow, LivePosition, PricesEvent, CoinConfig } from "../types/api.js";
 
 // ── Stable empty arrays (prevent new refs each call) ──
-const EMPTY_CANDLES: CandleData[] = [];
+export const EMPTY_CANDLES: CandleData[] = [];
 const EMPTY_REPLAY: ReplaySignal[] = [];
 const EMPTY_SIGNALS: SignalRow[] = [];
 const EMPTY_POSITIONS: LivePosition[] = [];
@@ -29,39 +29,26 @@ function createSelector<Deps extends readonly unknown[], R>(
   };
 }
 
-// ── Coin list ─────────────────────────────────
-export const selectCoinList = createSelector(
-  (s) => [s.config?.coins] as const,
-  (coins) => coins?.map((c) => c.coin) ?? EMPTY_STRINGS,
-);
+// ── Pure derivations from config (used by hooks) ──
+export function deriveCoinList(coins: CoinConfig[] | undefined): string[] {
+  return coins?.map((c) => c.coin) ?? EMPTY_STRINGS;
+}
 
-// ── Selected coin strategies ──────────────────
-export const selectSelectedCoinStrategies = createSelector(
-  (s) => [s.config?.coins, s.selectedCoin] as const,
-  (coins, selectedCoin) => {
-    if (!coins || !selectedCoin) return EMPTY_STRINGS;
-    const cc = coins.find((c) => c.coin === selectedCoin);
-    return cc ? cc.strategies.map((st) => st.name) : EMPTY_STRINGS;
-  },
-);
+export function deriveCoinStrategies(coins: CoinConfig[] | undefined, selectedCoin: string): string[] {
+  if (!coins || !selectedCoin) return EMPTY_STRINGS;
+  const cc = coins.find((c) => c.coin === selectedCoin);
+  return cc ? cc.strategies.map((st) => st.name) : EMPTY_STRINGS;
+}
 
-// ── Selected coin interval (streaming) ────────
-export const selectSelectedCoinInterval = createSelector(
-  (s) => [s.config?.coins, s.selectedCoin] as const,
-  (coins, selectedCoin) => {
-    if (!coins || !selectedCoin) return null;
-    const cc = coins.find((c) => c.coin === selectedCoin);
-    return cc?.strategies[0]?.interval ?? null;
-  },
-);
+export function deriveCoinInterval(coins: CoinConfig[] | undefined, selectedCoin: string): string | null {
+  if (!coins || !selectedCoin) return null;
+  const cc = coins.find((c) => c.coin === selectedCoin);
+  return cc?.strategies[0]?.interval ?? null;
+}
 
-// ── Candles (streaming or alt) ────────────────
-// Returns store references directly — stable when underlying data is stable.
-export const selectCandles = (s: StoreState): CandleData[] =>
-  s.selectedInterval === null ? s.coinCandles[s.selectedCoin] ?? EMPTY_CANDLES : s.altCandles;
-
-export const selectIsLiveInterval = (s: StoreState): boolean =>
-  s.selectedInterval === null;
+// ── Candles (streaming) ───────────────────────
+export const selectStreamingCandles = (s: StoreState): CandleData[] =>
+  s.coinCandles[s.selectedCoin] ?? EMPTY_CANDLES;
 
 // ── Replay signals (filtered by enabled strategies) ──
 export const selectFilteredReplaySignals = createSelector(

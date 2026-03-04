@@ -271,10 +271,39 @@ export class SqliteStore {
 
   getTodayRealizedPnl(): number {
     const row = this.db.prepare(`
-      SELECT COALESCE(SUM(f.price * f.size - o.price * o.size), 0) as pnl
-      FROM fills f
-      JOIN orders o ON f.order_id = o.id
-      WHERE f.timestamp >= datetime('now', 'start of day')
+      WITH closed_today AS (
+        SELECT DISTINCT o.signal_id
+        FROM orders o
+        JOIN fills f ON f.order_id = o.id
+        WHERE o.tag IN ('sl', 'tp', 'trailing-sl')
+          AND f.timestamp >= datetime('now', 'start of day')
+      ),
+      entries AS (
+        SELECT o.signal_id, SUM(f.price * f.size) AS total
+        FROM orders o
+        JOIN fills f ON f.order_id = o.id
+        WHERE o.tag = 'entry'
+          AND o.signal_id IN (SELECT signal_id FROM closed_today)
+        GROUP BY o.signal_id
+      ),
+      exits AS (
+        SELECT o.signal_id, SUM(f.price * f.size) AS total
+        FROM orders o
+        JOIN fills f ON f.order_id = o.id
+        WHERE o.tag IN ('sl', 'tp', 'trailing-sl')
+          AND o.signal_id IN (SELECT signal_id FROM closed_today)
+        GROUP BY o.signal_id
+      )
+      SELECT COALESCE(SUM(
+        CASE WHEN s.side = 'LONG'
+          THEN COALESCE(ex.total, 0) - COALESCE(en.total, 0)
+          ELSE COALESCE(en.total, 0) - COALESCE(ex.total, 0)
+        END
+      ), 0) AS pnl
+      FROM closed_today ct
+      JOIN signals s ON s.id = ct.signal_id
+      LEFT JOIN entries en ON en.signal_id = ct.signal_id
+      LEFT JOIN exits ex ON ex.signal_id = ct.signal_id
     `).get() as { pnl: number } | undefined;
     return row?.pnl ?? 0;
   }

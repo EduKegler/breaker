@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { api } from "../lib/api.js";
+import { useState, useEffect, useRef } from "react";
 import type { CoinConfig } from "../types/api.js";
 import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
+import { useSendQuickSignal } from "../lib/use-send-quick-signal.js";
 
 interface SignalPopoverProps {
   coins: CoinConfig[];
@@ -19,9 +19,10 @@ export function SignalPopover({ coins, onClose, onSuccess }: SignalPopoverProps)
   const coinStrategies = strategiesForCoin(coins, coin);
   const [strategy, setStrategy] = useState(coinStrategies[0] ?? "");
   const [direction, setDirection] = useState<"long" | "short">("long");
-  const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const sendSignal = useSendQuickSignal();
+  const sending = sendSignal.isPending;
 
   // Sync strategy when coin changes
   useEffect(() => {
@@ -54,28 +55,29 @@ export function SignalPopover({ coins, onClose, onSuccess }: SignalPopoverProps)
     };
   }, [onClose]);
 
-  const handleSend = useCallback(async () => {
-    setSending(true);
+  const handleSend = () => {
     setFeedback(null);
-
-    try {
-      const res = await api.sendQuickSignal({ coin, direction, strategy });
-      if (res.status === "executed") {
-        const sl = res.stopLoss ? ` · SL ${res.stopLoss}` : "";
-        setFeedback({ ok: true, msg: `Executed #${res.signalId}${sl}` });
-        setTimeout(onSuccess, 800);
-      } else {
-        setFeedback({ ok: false, msg: res.reason ?? res.error ?? "Rejected" });
-      }
-    } catch (err) {
-      const msg = (err as { data?: { reason?: string; error?: string } }).data?.reason
-        ?? (err as { data?: { error?: string } }).data?.error
-        ?? (err as Error).message;
-      setFeedback({ ok: false, msg });
-    } finally {
-      setSending(false);
-    }
-  }, [coin, direction, strategy, onSuccess]);
+    sendSignal.mutate(
+      { coin, direction, strategy },
+      {
+        onSuccess: (res) => {
+          if (res.status === "executed") {
+            const sl = res.stopLoss ? ` · SL ${res.stopLoss}` : "";
+            setFeedback({ ok: true, msg: `Executed #${res.signalId}${sl}` });
+            setTimeout(onSuccess, 800);
+          } else {
+            setFeedback({ ok: false, msg: res.reason ?? res.error ?? "Rejected" });
+          }
+        },
+        onError: (err) => {
+          const msg = (err as { data?: { reason?: string; error?: string } }).data?.reason
+            ?? (err as { data?: { error?: string } }).data?.error
+            ?? (err as Error).message;
+          setFeedback({ ok: false, msg });
+        },
+      },
+    );
+  };
 
   const isLong = direction === "long";
 

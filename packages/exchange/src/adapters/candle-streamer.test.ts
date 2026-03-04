@@ -59,6 +59,8 @@ function createControllableStream() {
 describe("CandleStreamer", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // Default: reconciliation finds no matching REST candle → emits WS values as-is
+    vi.mocked(fetchCandles).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -129,25 +131,33 @@ describe("CandleStreamer", () => {
       await vi.advanceTimersByTimeAsync(0);
 
       emitClose(makeCandle(1000));
+      await vi.advanceTimersByTimeAsync(0); // flush reconciliation promise
       expect(closes).toHaveLength(1);
       expect(closes[0].t).toBe(1000);
 
       streamer.stop();
     });
 
-    it("also emits candle:tick on close (close is a superset of tick)", async () => {
+    it("also emits candle:tick on close (tick is synchronous, close is async after reconciliation)", async () => {
       const { mockStream, emitClose } = createControllableStream();
       const streamer = new CandleStreamer(config);
       streamer._streamOverride = mockStream;
 
       const ticks: Candle[] = [];
+      const closes: Candle[] = [];
       streamer.on("candle:tick", (c) => ticks.push(c));
+      streamer.on("candle:close", (c) => closes.push(c));
 
       streamer.start();
       await vi.advanceTimersByTimeAsync(0);
 
       emitClose(makeCandle(1000));
+      // tick is synchronous — fires immediately
       expect(ticks).toHaveLength(1);
+      // close is async — needs reconciliation to complete
+      expect(closes).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(closes).toHaveLength(1);
 
       streamer.stop();
     });
@@ -365,6 +375,171 @@ describe("CandleStreamer", () => {
         1000,
         { source: "binance" },
       );
+    });
+  });
+
+  describe("REST reconciliation", () => {
+    it("reconciles candle:close with REST values when they differ", async () => {
+      const { mockStream, emitClose } = createControllableStream();
+      const streamer = new CandleStreamer(config);
+      streamer._streamOverride = mockStream;
+
+      const wsCandle = makeCandle(1000, 89_60); // WS close
+      const restCandle: Candle = { ...wsCandle, c: 90_11, h: wsCandle.h + 50 }; // REST differs
+
+      streamer._fetchOverride = vi.fn().mockResolvedValue([restCandle]);
+
+      const closes: Candle[] = [];
+      streamer.on("candle:close", (c) => closes.push(c));
+
+      streamer.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      emitClose(wsCandle);
+      await vi.advanceTimersByTimeAsync(0); // flush reconciliation
+
+      expect(closes).toHaveLength(1);
+      expect(closes[0].c).toBe(restCandle.c);
+      expect(closes[0].h).toBe(restCandle.h);
+
+      // Buffer should also be updated
+      const latest = streamer.getCandles();
+      const stored = latest.find((c) => c.t === 1000);
+      expect(stored?.c).toBe(restCandle.c);
+
+      streamer.stop();
+    });
+
+    it("falls back to WS values when REST fetch fails", async () => {
+      const { mockStream, emitClose } = createControllableStream();
+      const streamer = new CandleStreamer(config);
+      streamer._streamOverride = mockStream;
+
+      const wsCandle = makeCandle(1000, 89_60);
+      streamer._fetchOverride = vi.fn().mockRejectedValue(new Error("network error"));
+
+      const closes: Candle[] = [];
+      streamer.on("candle:close", (c) => closes.push(c));
+
+      streamer.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      emitClose(wsCandle);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(closes).toHaveLength(1);
+      expect(closes[0]).toEqual(wsCandle);
+
+      streamer.stop();
+    });
+
+    it("falls back to WS values on timeout", async () => {
+      const { mockStream, emitClose } = createControllableStream();
+      const streamer = new CandleStreamer(config);
+      streamer._streamOverride = mockStream;
+
+      const wsCandle = makeCandle(1000, 89_60);
+      // Never resolves — will hit timeout
+      streamer._fetchOverride = vi.fn().mockReturnValue(new Promise(() => {}));
+
+      const closes: Candle[] = [];
+      streamer.on("candle:close", (c) => closes.push(c));
+
+      streamer.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      emitClose(wsCandle);
+      // Advance past the 5s reconcile timeout
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(closes).toHaveLength(1);
+      expect(closes[0]).toEqual(wsCandle);
+
+      streamer.stop();
+    });
+
+    it("preserves FIFO order for consecutive closes", async () => {
+      const { mockStream, emitClose } = createControllableStream();
+      const streamer = new CandleStreamer(config);
+      streamer._streamOverride = mockStream;
+
+      const candle1 = makeCandle(1000, 500);
+      const candle2 = makeCandle(2000, 600);
+
+      // Both fetches resolve immediately — FIFO is enforced by promise chain
+      streamer._fetchOverride = vi.fn()
+        .mockResolvedValueOnce([candle1])
+        .mockResolvedValueOnce([candle2]);
+
+      const closes: Candle[] = [];
+      streamer.on("candle:close", (c) => closes.push(c));
+
+      streamer.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Emit two closes in rapid succession
+      emitClose(candle1);
+      emitClose(candle2);
+
+      // Flush all chained reconciliation promises
+      await vi.runAllTimersAsync();
+
+      expect(closes).toHaveLength(2);
+      expect(closes[0].t).toBe(1000);
+      expect(closes[1].t).toBe(2000);
+
+      streamer.stop();
+    });
+
+    it("does not reconcile when REST matches WS", async () => {
+      const { mockStream, emitClose } = createControllableStream();
+      const streamer = new CandleStreamer(config);
+      streamer._streamOverride = mockStream;
+
+      const wsCandle = makeCandle(1000, 95000);
+      // REST returns identical values
+      streamer._fetchOverride = vi.fn().mockResolvedValue([{ ...wsCandle }]);
+
+      const closes: Candle[] = [];
+      streamer.on("candle:close", (c) => closes.push(c));
+
+      streamer.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      emitClose(wsCandle);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(closes).toHaveLength(1);
+      expect(closes[0]).toEqual(wsCandle);
+
+      streamer.stop();
+    });
+
+    it("uses _fetchOverride when provided", async () => {
+      const { mockStream, emitClose } = createControllableStream();
+      const streamer = new CandleStreamer(config);
+      streamer._streamOverride = mockStream;
+
+      const wsCandle = makeCandle(1000);
+      const overrideFetch = vi.fn().mockResolvedValue([wsCandle]);
+      streamer._fetchOverride = overrideFetch;
+
+      streamer.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      emitClose(wsCandle);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(overrideFetch).toHaveBeenCalledTimes(1);
+      expect(overrideFetch).toHaveBeenCalledWith(
+        "BTC",
+        "15m",
+        wsCandle.t,
+        expect.any(Number),
+        { source: "binance" },
+      );
+
+      streamer.stop();
     });
   });
 });

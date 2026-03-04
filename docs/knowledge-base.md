@@ -765,9 +765,9 @@ takerFee: 0.045%    // conservative -- assumes worst case
 slippage: 10 bps   // models cross-exchange basis (Binance signal → HL execution) + intra-venue slippage
 ```
 
-> **Backtest uses taker fees for all operations.** This is intentionally pessimistic. The daemon uses ALO/GTC limit orders for M1 and M2 entries (maker 0.015%), saving ~0.03% per side vs taker. Real performance should be slightly better than backtested. Do not model maker fees in backtest — maker fills are not guaranteed (order may not fill, price may move away), so taker-only is more honest.
+> **Backtest uses taker fees for all operations.** This is intentionally pessimistic. The daemon uses ALO limit orders for M2/M3 entries (maker 0.015%), saving ~0.03% per side vs taker. M1/M4 use IOC (taker) because price moves away from entry level. Real M2/M3 performance should be slightly better than backtested. Do not model maker fees in backtest — maker fills are not guaranteed, so taker-only is more honest.
 
-**Funding rate:** Paid/received every hour. Not modeled in backtest by default. For MR (short trades of 1-2h), impact is minimal. For trend following (trades lasting hours/days), consider adding to cost model.
+**Funding rate:** Paid/received every hour. Modeled in backtest by default (fundingRate8h = 0.0004, i.e. ~0.01%/8h = interest rate component). For MR (short trades of 1-2h), impact is minimal. For trend following (trades lasting hours/days), this is a material cost — see TF module rule 3.
 
 ### 9.2 Sizing
 
@@ -900,19 +900,20 @@ Every trade follows this exact sequence. No step may be skipped.
 
 | Action | Order type | Rationale |
 |--------|-----------|-----------|
-| Entry (M1 Breakout) | Limit at breakout level (maker) | Breakout level is known in advance. Save fees (0.015% vs 0.045%) |
-| Entry (M2 MR) | Limit at band touch (maker) | Same logic. MR enters at known extreme |
-| Entry (M3 Pullback) | Market on confirmation close (taker) | Confirmation is a bar close event. Speed > cost |
-| Entry (M4 TF) | Market on SuperTrend flip (taker) | 4H bar close. Signal is time-sensitive |
+| Entry (M1 Breakout) | IOC limit with slippage tolerance (taker) | Price moves away from breakout level. ALO/maker is systematically rejected in fast markets — HL cancels post-only orders that would cross the spread. IOC guarantees fill. Daemon uses entrySlippageBps (50 bps) as max acceptable divergence |
+| Entry (M2 MR) | ALO limit at band touch (maker) | Price coming toward entry level. ALO works naturally — order rests on book, fills when price reaches it. Saves fees (0.015% vs 0.045%) |
+| Entry (M3 Pullback) | ALO limit at pullback level (maker) | Similar to MR — entering on retrace, price coming to you. ALO fills naturally |
+| Entry (M4 TF) | IOC limit with slippage tolerance (taker) | 4H bar close confirmation. Signal is time-sensitive, price may be moving. Same logic as M1 |
 | Stop loss (all) | Stop-market | Must fill. Slippage acceptable for protection |
 | Timeout exit (all) | Market | Immediate execution. No waiting |
-| TP / trailing exit | Limit if > 2 bars to expiry, market otherwise | Save fees when time allows |
+| TP / trailing exit | Trigger order (taker) | Guarantees fill. Fee savings from limit orders are negligible vs risk of missed exit |
 
 **Edge cases:**
 
 - **Partial fill:** If entry order partially fills within 2 bars, cancel remainder and trade the filled size. Do not chase. Log partial fill for slippage analysis
-- **Order rejected:** Log rejection reason (insufficient margin, API error, rate limit). Do not retry automatically. Alert for manual review
-- **Stale signal:** If entry order is not filled within 2 bars (30 min for 15m modules), cancel. The setup has passed. Do not market-order into a moved price
+- **ALO rejected (M2/M3):** If ALO is rejected because it would cross spread (price moved through level), do NOT fall back to IOC. The setup has changed — if price already moved through the band/pullback level, the entry thesis is weaker. Log and skip
+- **IOC rejected (M1/M4):** Log rejection reason (insufficient margin, API error, price beyond tolerance). Do not retry automatically. Alert for manual review
+- **Stale signal:** If ALO entry order (M2/M3) is not filled within 2 bars (30 min for 15m modules), cancel. The setup has passed. Do not market-order into a moved price
 - **Re-entry after stop:** Allowed only if a NEW signal fires from the same or different module. No re-entry on the same signal that was stopped out. Minimum cooldown: 2 bars (30 min)
 
 ### 9.9 Drawdown recovery

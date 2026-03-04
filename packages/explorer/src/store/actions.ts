@@ -1,12 +1,7 @@
 import type { StateCreator } from "zustand";
-import type { StoreState, Actions, ToastFn } from "./types.js";
+import type { StoreState, Actions } from "./types.js";
 import type { CandleData, ReplaySignal, ConfigResponse } from "../types/api.js";
 import { api } from "../lib/api.js";
-
-function errorMsg(err: unknown): string {
-  const e = err as { data?: { error?: string }; message?: string };
-  return e?.data?.error ?? e?.message ?? "unknown error";
-}
 
 function mergeReplaySignals(
   prev: Record<string, ReplaySignal[]>,
@@ -32,48 +27,24 @@ function mergeCandles(
   return { ...prev, [coin]: [...fresh, ...existing].sort((a, b) => a.t - b.t) };
 }
 
-const EMPTY_CANDLES: CandleData[] = [];
-
-export const createActions: StateCreator<StoreState, [], [], Actions & { _toastFn: ToastFn | null }> = (set, get) => ({
-  _toastFn: null,
-
-  setToastFn: (fn) => set({ _toastFn: fn }),
-
+export const createActions: StateCreator<StoreState, [], [], Actions> = (set, get) => ({
   fetchInitialData: async () => {
     const results = await Promise.allSettled([
-      api.health(),
-      api.config(),
       api.positions(),
       api.orders(),
       api.openOrders(),
       api.equity(),
       api.signals(),
-      api.account(),
-      api.positionHistory(),
     ]);
-    const [health, config, positions, orders, openOrders, equity, signals, account, positionHistory] = results;
+    const [positions, orders, openOrders, equity, signals] = results;
 
     set({
-      health: health.status === "fulfilled" ? health.value : null,
-      httpError: health.status === "rejected",
-      config: config.status === "fulfilled" ? config.value : null,
       positions: positions.status === "fulfilled" ? positions.value.positions : [],
       orders: orders.status === "fulfilled" ? orders.value.orders : [],
       openOrders: openOrders.status === "fulfilled" ? openOrders.value.orders : [],
       equity: equity.status === "fulfilled" ? equity.value.snapshots : [],
       signals: signals.status === "fulfilled" ? signals.value.signals : [],
-      positionHistory: positionHistory.status === "fulfilled" ? positionHistory.value.positions : [],
-      account: account.status === "fulfilled" ? account.value : null,
     });
-  },
-
-  refreshAccount: async () => {
-    try {
-      const account = await api.account();
-      set({ account });
-    } catch {
-      // Silently ignore account refresh failures
-    }
   },
 
   initCoinData: async (config: ConfigResponse) => {
@@ -150,19 +121,6 @@ export const createActions: StateCreator<StoreState, [], [], Actions & { _toastF
     }
   },
 
-  fetchAltCandles: async (coin: string, interval: string | null) => {
-    if (!coin || interval === null) {
-      set({ altCandles: EMPTY_CANDLES });
-      return;
-    }
-    try {
-      const r = await api.candles({ coin, interval, limit: 500 });
-      set({ altCandles: r.candles });
-    } catch {
-      set({ altCandles: EMPTY_CANDLES });
-    }
-  },
-
   loadMoreCandles: (before: number) => {
     const coin = get().selectedCoin;
     if (!coin) return;
@@ -176,41 +134,6 @@ export const createActions: StateCreator<StoreState, [], [], Actions & { _toastF
         coinReplaySignals: mergeReplaySignals(s.coinReplaySignals, coin, r.signals),
       }));
     }).catch(() => {});
-  },
-
-  closePosition: async (coin: string) => {
-    const toast = get()._toastFn;
-    try {
-      await api.closePosition(coin);
-      toast?.(`${coin} position closed`, "success");
-    } catch (err) {
-      toast?.(`Close ${coin}: ${errorMsg(err)}`, "error");
-    }
-  },
-
-  cancelOrder: async (_coin: string, oid: number) => {
-    const toast = get()._toastFn;
-    try {
-      await api.cancelOrder(oid);
-      toast?.(`Order ${oid} cancelled`, "success");
-    } catch (err) {
-      toast?.(`Cancel #${oid}: ${errorMsg(err)}`, "error");
-    }
-  },
-
-  toggleAutoTrading: async () => {
-    const { autoTrading, config, _toastFn: toast } = get();
-    const coins = config?.coins;
-    if (!coins?.length) return;
-    const newValue = !autoTrading;
-    set({ autoTrading: newValue });
-    try {
-      await Promise.all(coins.map((c) => api.setAutoTrading(c.coin, newValue)));
-      toast?.(`Auto trading ${newValue ? "enabled" : "disabled"}`, "success");
-    } catch (err) {
-      set({ autoTrading: !newValue });
-      toast?.(`Auto trading toggle: ${errorMsg(err)}`, "error");
-    }
   },
 
   selectCoin: (coin: string) => {

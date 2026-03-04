@@ -706,6 +706,46 @@ describe("handleSignal", () => {
   });
 });
 
+describe("handleSignal — dailyLossOverride", () => {
+  it("uses dailyLossOverride instead of store.getTodayRealizedPnl when provided", async () => {
+    // Poison the store to return a huge fake loss (like the production bug)
+    vi.spyOn(deps.store, "getTodayRealizedPnl").mockReturnValue(-350);
+
+    // But provide dailyLossOverride = 0 (orchestrator says no loss)
+    const result = await handleSignal(
+      createInput({ alertId: "override-001", dailyLossOverride: 0 }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    // getTodayRealizedPnl should NOT be called when override is provided
+    expect(deps.store.getTodayRealizedPnl).not.toHaveBeenCalled();
+  });
+
+  it("falls back to store.getTodayRealizedPnl when dailyLossOverride is not provided", async () => {
+    vi.spyOn(deps.store, "getTodayRealizedPnl").mockReturnValue(0);
+
+    const result = await handleSignal(
+      createInput({ alertId: "no-override-001" }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    expect(deps.store.getTodayRealizedPnl).toHaveBeenCalled();
+  });
+
+  it("blocks signal when dailyLossOverride exceeds limit", async () => {
+    // maxDailyLossR=2, riskPerTradeUsd=10 → max daily loss = $20
+    const result = await handleSignal(
+      createInput({ alertId: "override-block-001", dailyLossOverride: -25 }),
+      deps,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toContain("Daily loss");
+  });
+});
+
 describe("handleSignal — GTC path", () => {
   let deps: SignalHandlerDeps;
 

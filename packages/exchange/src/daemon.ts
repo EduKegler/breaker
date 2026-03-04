@@ -393,6 +393,12 @@ async function main() {
       wsBroker.broadcastEvent("open-orders", data.openOrders);
       wsBroker.broadcastEvent("equity", store.getEquitySnapshots(500));
     },
+    onAutoClose: (coin, strategyName, pnl) => {
+      const moduleId = `${coin}:${strategyName ?? "unknown"}`;
+      orchestrator.recordClose(moduleId, pnl);
+      log.warn({ coin, strategyName, pnl, dailyPnl: orchestrator.getDailyPnl() },
+        `Reconcile auto-close: recorded PnL $${pnl.toFixed(2)} in orchestrator`);
+    },
     onApiDown: () => {
       alertsClient.sendText(
         `⚠️ Hyperliquid API appears down (3 consecutive reconcile failures) — ${config.mode}`,

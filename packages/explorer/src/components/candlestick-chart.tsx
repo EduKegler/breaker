@@ -1,14 +1,14 @@
-import { memo, useRef, useEffect } from "react";
+import { memo, useRef, useEffect, useMemo } from "react";
 import { useStore } from "../store/use-store.js";
 import {
-  selectCandles,
-  selectIsLiveInterval,
   selectFilteredSignals,
   selectFilteredReplaySignals,
   selectCoinPositions,
-  selectCoinList,
   selectWatermark,
+  deriveCoinList,
 } from "../store/selectors.js";
+import { useConfigQuery } from "../lib/use-config-query.js";
+import { useActiveCandles } from "../lib/use-active-candles.js";
 import { useChartInstance } from "../lib/use-chart-instance.js";
 import { useChartCandles } from "../lib/use-chart-candles.js";
 import { useChartMarkers } from "../lib/use-chart-markers.js";
@@ -21,14 +21,16 @@ import { VolumeProfilePrimitive } from "../lib/primitives/volume-profile.js";
 export const CandlestickChart = memo(function CandlestickChart() {
   // ── Store subscriptions (granular selectors) ─
   const coin = useStore((s) => s.selectedCoin);
-  const candles = useStore(selectCandles);
+  const selectedInterval = useStore((s) => s.selectedInterval);
+  const candles = useActiveCandles();
   const signals = useStore(selectFilteredSignals);
   const replaySignals = useStore(selectFilteredReplaySignals);
   const positions = useStore(selectCoinPositions);
   const loading = useStore((s) => s.candlesLoading);
-  const isLive = useStore(selectIsLiveInterval);
+  const isLive = selectedInterval === null;
   const watermark = useStore(selectWatermark);
-  const coinList = useStore(selectCoinList);
+  const { data: config } = useConfigQuery();
+  const coinList = useMemo(() => deriveCoinList(config?.coins), [config?.coins]);
   const showSessions = useStore((s) => s.showSessions);
   const showVpvr = useStore((s) => s.showVpvr);
   const onLoadMore = useStore((s) => s.loadMoreCandles);

@@ -1042,6 +1042,77 @@ describe("ReconcileLoop", () => {
     expect(result.actions).toContain("position_hydrated:BTC");
   });
 
+  it("records PnL in orchestrator when auto-closing liquidated position", async () => {
+    const positionBook = new PositionBook();
+    positionBook.open({
+      coin: "BTC",
+      direction: "long",
+      entryPrice: 95000,
+      size: 0.01,
+      stopLoss: 94000,
+      takeProfits: [],
+      liquidationPx: null,
+      trailingStopLoss: null,
+      leverage: null,
+      openedAt: "2024-01-01T00:00:00Z",
+      signalId: 1,
+      strategyName: "donchian-adx",
+    });
+    // Simulate price drop — position has unrealized loss
+    positionBook.updatePrice("BTC", 90000);
+
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue([]), // HL liquidated — no position
+    });
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
+    const onAutoClose = vi.fn();
+
+    const loop = new ReconcileLoop({
+      hlClient, positionBook, eventLog, store, walletAddress: "0xtest",
+      onAutoClose,
+    });
+    await loop.check();
+
+    // onAutoClose should be called with coin and PnL (unrealizedPnl + cumulativeFunding)
+    expect(onAutoClose).toHaveBeenCalledOnce();
+    expect(onAutoClose).toHaveBeenCalledWith("BTC", "donchian-adx", expect.closeTo(-50, 1));
+  });
+
+  it("records PnL including cumulative funding on auto-close", async () => {
+    const positionBook = new PositionBook();
+    positionBook.open({
+      coin: "ETH",
+      direction: "short",
+      entryPrice: 3000,
+      size: 1,
+      stopLoss: 3100,
+      takeProfits: [],
+      liquidationPx: null,
+      trailingStopLoss: null,
+      leverage: null,
+      openedAt: "2024-01-01T00:00:00Z",
+      signalId: 2,
+      strategyName: "keltner-rsi2",
+    });
+    positionBook.updatePrice("ETH", 3050); // -50 unrealized
+    positionBook.updateFunding("ETH", -5);  // -5 funding paid
+
+    const hlClient = createMockHlClient({
+      getPositions: vi.fn().mockResolvedValue([]),
+    });
+    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
+    const onAutoClose = vi.fn();
+
+    const loop = new ReconcileLoop({
+      hlClient, positionBook, eventLog, store, walletAddress: "0xtest",
+      onAutoClose,
+    });
+    await loop.check();
+
+    // PnL = unrealizedPnl (-50) + cumulativeFunding (-5) = -55
+    expect(onAutoClose).toHaveBeenCalledWith("ETH", "keltner-rsi2", expect.closeTo(-55, 1));
+  });
+
   it("syncs marginCanceled order as cancelled", async () => {
     store.insertSignal({
       alert_id: "sig-006", source: "strategy-runner", asset: "BTC",

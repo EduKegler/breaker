@@ -1,14 +1,21 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useStore } from "./store/use-store.js";
-import { connectWebSocket } from "./store/websocket.js";
+import { connectWebSocket, setWsQueryClient } from "./store/websocket.js";
 import {
-  selectCoinList,
-  selectSelectedCoinStrategies,
-  selectSelectedCoinInterval,
+  deriveCoinList,
+  deriveCoinStrategies,
+  deriveCoinInterval,
   selectCurrentEnabledStrategies,
 } from "./store/selectors.js";
 import type { WsStatus } from "./store/types.js";
-import { useToasts } from "./lib/use-toasts.js";
+import { useHealthQuery } from "./lib/use-health-query.js";
+import { useConfigQuery } from "./lib/use-config-query.js";
+import { useAccountQuery } from "./lib/use-account-query.js";
+import { usePositionHistoryQuery } from "./lib/use-position-history-query.js";
+import { useClosePosition } from "./lib/use-close-position.js";
+import { useCancelOrder } from "./lib/use-cancel-order.js";
+import { useToggleAutoTrading } from "./lib/use-toggle-auto-trading.js";
+import { queryClient } from "./lib/query-provider.js";
 import { EquityChart } from "./components/equity-chart.js";
 import { CandlestickChart } from "./components/candlestick-chart.js";
 import { PositionCard } from "./components/position-card.js";
@@ -22,6 +29,9 @@ import { CandleCountdown } from "./components/candle-countdown.js";
 import { TimeframeSwitcher } from "./components/timeframe-switcher.js";
 import { PriceDisplay } from "./components/price-display.js";
 import { ChartToggle } from "./components/chart-toggle.js";
+import type { PositionSummary } from "./types/api.js";
+
+const EMPTY_PH: PositionSummary[] = [];
 
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -47,19 +57,23 @@ function wsUrl(): string {
 }
 
 export function App() {
-  const { addToast } = useToasts();
+  // ── React Query ───────────────────────────────
+  const healthQuery = useHealthQuery();
+  const configQuery = useConfigQuery();
+  const accountQuery = useAccountQuery();
+  const positionHistoryQuery = usePositionHistoryQuery();
+  const health = healthQuery.data ?? null;
+  const config = configQuery.data ?? null;
+  const account = accountQuery.data ?? null;
+  const httpError = healthQuery.isError;
+  const positionHistory = positionHistoryQuery.data ?? EMPTY_PH;
 
   // ── Store selectors (low-frequency only — high-freq moved to leaf components) ─
-  const health = useStore((s) => s.health);
-  const config = useStore((s) => s.config);
   const positions = useStore((s) => s.positions);
   const openOrders = useStore((s) => s.openOrders);
   const equity = useStore((s) => s.equity);
-  const positionHistory = useStore((s) => s.positionHistory);
   const pendingEntries = useStore((s) => s.pendingEntries);
   const loadingStrategies = useStore((s) => s.loadingStrategies);
-  const account = useStore((s) => s.account);
-  const httpError = useStore((s) => s.httpError);
   const selectedCoin = useStore((s) => s.selectedCoin);
   const selectedInterval = useStore((s) => s.selectedInterval);
   const showSignalPopover = useStore((s) => s.showSignalPopover);
@@ -68,40 +82,44 @@ export function App() {
   const wsStatus = useStore((s) => s.wsStatus);
   const autoTrading = useStore((s) => s.autoTrading);
 
-  // Derived selectors (low-frequency)
-  const coinList = useStore(selectCoinList);
-  const selectedCoinStrategies = useStore(selectSelectedCoinStrategies);
-  const selectedCoinInterval = useStore(selectSelectedCoinInterval);
+  // Derived selectors
+  const coinList = useMemo(() => deriveCoinList(config?.coins), [config?.coins]);
+  const selectedCoinStrategies = useMemo(
+    () => deriveCoinStrategies(config?.coins, selectedCoin),
+    [config?.coins, selectedCoin],
+  );
+  const selectedCoinInterval = useMemo(
+    () => deriveCoinInterval(config?.coins, selectedCoin),
+    [config?.coins, selectedCoin],
+  );
   const currentEnabledStrategies = useStore(selectCurrentEnabledStrategies);
+
+  // ── Mutations ──────────────────────────────
+  const closePositionMutation = useClosePosition();
+  const cancelOrderMutation = useCancelOrder();
+  const toggleAutoTradingMutation = useToggleAutoTrading();
 
   // ── Actions (stable refs from store) ────────
   const fetchInitialData = useStore((s) => s.fetchInitialData);
   const initCoinData = useStore((s) => s.initCoinData);
-  const fetchAltCandles = useStore((s) => s.fetchAltCandles);
-  const closePosition = useStore((s) => s.closePosition);
-  const cancelOrder = useStore((s) => s.cancelOrder);
-  const toggleAutoTrading = useStore((s) => s.toggleAutoTrading);
   const selectCoin = useStore((s) => s.selectCoin);
   const setSelectedInterval = useStore((s) => s.setSelectedInterval);
   const toggleStrategy = useStore((s) => s.toggleStrategy);
   const setShowSignalPopover = useStore((s) => s.setShowSignalPopover);
   const setShowSessions = useStore((s) => s.setShowSessions);
   const setShowVpvr = useStore((s) => s.setShowVpvr);
-  const setToastFn = useStore((s) => s.setToastFn);
-  const refreshAccount = useStore((s) => s.refreshAccount);
 
-  // ── Toast bridge ────────────────────────────
+  // ── WS → QueryClient bridge ────────────────
   useEffect(() => {
-    setToastFn(addToast);
-    return () => setToastFn(null);
-  }, [addToast, setToastFn]);
+    setWsQueryClient(queryClient);
+  }, []);
 
   // ── WebSocket ───────────────────────────────
   useEffect(() => {
     return connectWebSocket(wsUrl(), useStore);
   }, []);
 
-  // ── Initial HTTP fetch ──────────────────────
+  // ── Initial HTTP fetch (WS-pushed data bootstrap) ─
   useEffect(() => {
     fetchInitialData();
   }, [fetchInitialData]);
@@ -113,16 +131,7 @@ export function App() {
     }
   }, [config, initCoinData]);
 
-  // ── Fetch alt candles when interval changes ─
-  useEffect(() => {
-    fetchAltCandles(selectedCoin, selectedInterval);
-  }, [selectedCoin, selectedInterval, fetchAltCandles]);
 
-  // ── Periodic account refresh (30s) ──────────
-  useEffect(() => {
-    const id = setInterval(refreshAccount, 30_000);
-    return () => clearInterval(id);
-  }, [refreshAccount]);
 
   // ── Derived header values ───────────────────
   const h = health;
@@ -176,8 +185,8 @@ export function App() {
           <div className="ml-auto flex items-center gap-3">
             <button
               type="button"
-              disabled={!isOnline}
-              onClick={toggleAutoTrading}
+              disabled={!isOnline || toggleAutoTradingMutation.isPending}
+              onClick={() => toggleAutoTradingMutation.mutate()}
               className={`px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded border transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer ${
                 autoTrading
                   ? "bg-profit/15 text-profit border-profit/40 hover:bg-profit/30 hover:border-profit/60"
@@ -343,7 +352,7 @@ export function App() {
                     key={p.coin}
                     position={p}
                     openOrders={openOrders}
-                    onClose={closePosition}
+                    onClose={(coin) => closePositionMutation.mutateAsync(coin).then(() => {})}
                   />
                 ))}
               </div>
@@ -371,7 +380,7 @@ export function App() {
                 {openOrders.length}
               </span>
             </div>
-            <OpenOrdersTable orders={openOrders} onCancel={cancelOrder} />
+            <OpenOrdersTable orders={openOrders} onCancel={(_coin, oid) => cancelOrderMutation.mutateAsync(oid).then(() => {})} />
           </section>
         )}
 

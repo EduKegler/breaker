@@ -32,6 +32,7 @@ export declare interface CandleStreamer {
 const STALE_THRESHOLD_MULTIPLIER = 3;
 const BASE_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
+const RECONCILE_TIMEOUT_MS = 5_000;
 
 export class CandleStreamer extends EventEmitter {
   private config: CandleStreamerConfig;
@@ -41,9 +42,12 @@ export class CandleStreamer extends EventEmitter {
   private lastCandleAt = 0;
   private reconnectAttempt = 0;
   private running = false;
+  private reconcileChain: Promise<void> = Promise.resolve();
 
   /** @internal — override for testing */
   _streamOverride?: typeof streamCandles;
+  /** @internal — override for testing */
+  _fetchOverride?: typeof fetchCandles;
 
   constructor(config: CandleStreamerConfig) {
     super();
@@ -151,7 +155,7 @@ export class CandleStreamer extends EventEmitter {
             this.lastCandleAt = candle.t;
 
             if (isClosed) {
-              this.emit("candle:close", candle);
+              this.reconcileAndEmitClose(candle);
             }
             this.emit("candle:tick", candle);
           },
@@ -195,6 +199,54 @@ export class CandleStreamer extends EventEmitter {
       clearTimeout(this.staleTimer);
       this.staleTimer = null;
     }
+  }
+
+  private reconcileAndEmitClose(wsCandle: Candle): void {
+    this.reconcileChain = this.reconcileChain.then(async () => {
+      let finalCandle = wsCandle;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const fetchFn = this._fetchOverride ?? fetchCandles;
+        const ivlMs = intervalToMs(this.config.interval);
+        const restCandles = await Promise.race([
+          fetchFn(this.config.coin, this.config.interval, wsCandle.t, wsCandle.t + ivlMs, {
+            source: this.config.dataSource,
+          }),
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error("reconcile timeout")), RECONCILE_TIMEOUT_MS);
+          }),
+        ]);
+        clearTimeout(timeoutId);
+        const restCandle = restCandles.find((c) => c.t === wsCandle.t);
+        if (restCandle && isValidCandle(restCandle)) {
+          const diverged = restCandle.o !== wsCandle.o || restCandle.h !== wsCandle.h ||
+                           restCandle.l !== wsCandle.l || restCandle.c !== wsCandle.c ||
+                           restCandle.v !== wsCandle.v;
+          if (diverged) {
+            this.upsertCandle(restCandle);
+            finalCandle = restCandle;
+            log.warn({
+              action: "candleReconciled",
+              coin: this.config.coin,
+              t: wsCandle.t,
+              wsClose: wsCandle.c,
+              restClose: restCandle.c,
+              wsHigh: wsCandle.h,
+              restHigh: restCandle.h,
+              wsLow: wsCandle.l,
+              restLow: restCandle.l,
+            }, "Candle reconciled: REST values differ from WS");
+          }
+        }
+      } catch (err) {
+        clearTimeout(timeoutId);
+        log.warn(
+          { action: "reconcileFailed", coin: this.config.coin, t: wsCandle.t, err },
+          "REST reconciliation failed — using WS values",
+        );
+      }
+      this.emit("candle:close", finalCandle);
+    });
   }
 
   private upsertCandle(c: Candle): void {

@@ -4,7 +4,7 @@
     "minTrades": 70,
     "minPF": 1.8,
     "maxDD": 4,
-    "minWR": 42,
+    "minWR": 0,
     "minAvgR": 0.0,
     "minTradesForFilter": 6
   },
@@ -16,7 +16,7 @@
     "plan": "claude-opus-4-6"
   },
   "assetClasses": {
-    "crypto-major":    { "minPF": 1.8, "maxDD": 4, "minTrades": 70, "minWR": 42, "minAvgR": 0.0 },
+    "crypto-major":    { "minPF": 1.8, "maxDD": 4, "minTrades": 70, "minWR": 0, "minAvgR": 0.0 },
     "crypto-volatile": { "minPF": 1.5, "maxDD": 20, "minTrades": 100 },
     "rwa":             { "minPF": 1.2, "maxDD": 10, "minTrades": 50  }
   },
@@ -59,16 +59,20 @@
         "Timeout exit (timeoutBars)"
       ]
     },
-    "trend-continuation": {
-      "minPF": 1.6, "maxDD": 6, "minWR": 45, "minTrades": 50,
-      "maxIterations": 15, "maxFreeVariables": 8
+    "pullback": {
+      "minPF": 1.4, "maxDD": 10, "minTrades": 50, "minAvgR": 0.15,
+      "maxIterations": 15, "maxFreeVariables": 8,
+      "coreParameters": [],
+      "designChecklist": [
+        "HTF trend confirmation (4H+ EMA or structure)",
+        "Pullback depth filter (Fibonacci levels, mandatory KB §5 rule 4)",
+        "Pullback confirmation (reversal candle or momentum shift)",
+        "ATR 1H stop",
+        "Timeout exit (timeoutBars)"
+      ]
     },
     "trend-following": {
-      "minPF": 1.6, "maxDD": 8, "minWR": 35, "minTrades": 40,
-      "maxIterations": 15, "maxFreeVariables": 8
-    },
-    "reversal": {
-      "minPF": 1.8, "maxDD": 6, "minWR": 35, "minTrades": 40,
+      "minPF": 1.4, "maxDD": 12, "minTrades": 30, "minAvgR": 0.20,
       "maxIterations": 15, "maxFreeVariables": 6
     }
   },
@@ -99,35 +103,11 @@
         }
       }
     },
-    "ETH": {
-      "class": "crypto-major",
-      "strategies": {
-        "breakout": {
-          "coin": "ETH",
-          "dataSource": "binance",
-          "interval": "15m",
-          "strategyFactory": "createDonchianAdx",
-          "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
-        }
-      }
-    },
     "SOL": {
       "class": "crypto-major",
       "strategies": {
         "breakout": {
           "coin": "SOL",
-          "dataSource": "binance",
-          "interval": "15m",
-          "strategyFactory": "createDonchianAdx",
-          "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
-        }
-      }
-    },
-    "SUI": {
-      "class": "crypto-volatile",
-      "strategies": {
-        "breakout": {
-          "coin": "SUI",
           "dataSource": "binance",
           "interval": "15m",
           "strategyFactory": "createDonchianAdx",
