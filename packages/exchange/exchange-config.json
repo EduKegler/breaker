@@ -45,7 +45,10 @@
     "maxOpenPositions": 1,
     "maxDailyLossR": 2,
     "maxTradesPerDay": 5,
-    "cooldownBars": 4
+    "cooldownBars": 4,
+    "volSpikeThresholdPct": 1.5,
+    "volSpikeLookbackBars": 4,
+    "volSpikeCooldownBars": 4
   },
   "sizing": {
     "mode": "risk",

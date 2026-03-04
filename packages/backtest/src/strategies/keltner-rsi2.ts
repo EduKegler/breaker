@@ -24,7 +24,7 @@ const DEFAULT_PARAMS: KeltnerRsi2Params = {
   rsi2Short: { value: 80, min: 70, max: 90, step: 5, optimizable: true, description: "RSI2 overbought threshold for shorts" },
   adxThreshold: { value: 25, min: 20, max: 35, step: 5, optimizable: true, description: "ADX below this on 1H = ranging regime (KB §4.1 rule 3)" },
   maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
-  timeoutBars: { value: 8, min: 4, max: 16, step: 2, optimizable: true, description: "Bars before timeout exit" },
+  timeoutBars: { value: 12, min: 12, max: 48, step: 4, optimizable: true, description: "Bars before timeout exit (KB range: 12–48)" },
   atrStopMult: { value: 3.0, min: 3.0, max: 5.0, step: 0.5, optimizable: true, description: "ATR multiplier for wide catastrophic stop (KB §4 rule 4)" },
 };
 

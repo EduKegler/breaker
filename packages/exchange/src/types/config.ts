@@ -8,6 +8,9 @@ export const GuardrailsSchema = z.object({
   // nonnegative allows 0 as a kill switch (blocks all trades)
   maxTradesPerDay: z.number().int().nonnegative(),
   cooldownBars: z.number().int().nonnegative(),
+  volSpikeThresholdPct: z.number().positive().default(1.5),
+  volSpikeLookbackBars: z.number().int().positive().default(4),
+  volSpikeCooldownBars: z.number().int().positive().default(4),
 });
 
 export const SizingSchema = z.object({

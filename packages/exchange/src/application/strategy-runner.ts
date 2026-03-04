@@ -232,6 +232,7 @@ export class StrategyRunner {
       this.lastTradeDay = currentDay;
     }
     this.deps.orchestrator?.resetDayIfNeeded(currentDay);
+    this.deps.orchestrator?.reportPrice(this.deps.coin, newCandle.c, newCandle.t);
 
     const higherTimeframes = this.buildHigherTimeframes(candles);
 

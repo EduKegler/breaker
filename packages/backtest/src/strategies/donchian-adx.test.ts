@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import { createDonchianAdx } from "./donchian-adx.js";
 import type { StrategyContext } from "../types/strategy.js";
 import type { Candle } from "../types/candle.js";
+import { bollingerBands } from "../indicators/bollinger-bands.js";
+import { keltner } from "../indicators/keltner.js";
+import { detectSqueeze } from "../indicators/detect-squeeze.js";
 
 function makeCandle(t: number, price: number, range = 50): Candle {
   return {
@@ -635,5 +638,105 @@ describe("createDonchianAdx", () => {
       barsSinceExit: 999,
           };
     expect(strategy.getExitLevel!(ctx)).toBeNull();
+  });
+
+  it("blocks signal during active squeeze (BB inside KC, width decreasing >= 4 bars)", () => {
+    const strategy = createDonchianAdx({ dcSlow: 10, adxThreshold: 50 });
+
+    const base = new Date("2024-01-01T00:00:00Z").getTime();
+    const candles: Candle[] = [];
+    let price = 10000;
+
+    // Phase 1: ~210 days of gentle uptrend (enough for daily EMA200)
+    for (let i = 0; i < 96 * 210; i++) {
+      price += 0.5 + (Math.random() - 0.5) * 2;
+      candles.push(makeCandle(base + i * 900_000, price, 30));
+    }
+
+    // Phase 2: tight consolidation (~5 days) to create BB squeeze
+    // When volatility collapses, BB(20,2.0) contracts inside KC(20,1.5×ATR)
+    const consolidationPrice = price;
+    const squeezeLen = 96 * 5; // 5 days = 480 bars of extremely tight range
+    for (let i = 0; i < squeezeLen; i++) {
+      price = consolidationPrice + (Math.random() - 0.5) * 0.5;
+      const c = makeCandle(base + (96 * 210 + i) * 900_000, price, 0.3);
+      c.v = 100;
+      candles.push(c);
+    }
+
+    const htf1h = generate1hCandles(candles);
+    const htf1d = generate1dCandles(candles);
+    const htf = { "1h": htf1h, "1d": htf1d };
+
+    strategy.init!(candles, htf);
+
+    // Verify squeeze is active on bars within the consolidation phase
+    const closes = candles.map((c) => c.c);
+    const bb = bollingerBands(closes, 20, 2.0);
+    const kc = keltner(candles, 20, 20, 1.5);
+    const squeeze = detectSqueeze(bb, kc, 4);
+
+    const squeezeBars: number[] = [];
+    for (let i = 0; i < candles.length; i++) {
+      if (squeeze.squeezeActive[i]) squeezeBars.push(i);
+    }
+    expect(squeezeBars.length).toBeGreaterThan(0);
+
+    // Every bar with active squeeze must return null from onCandle
+    for (const idx of squeezeBars) {
+      const ctx: StrategyContext = {
+        candles,
+        index: idx,
+        currentCandle: candles[idx],
+        positionDirection: null,
+        positionEntryPrice: null,
+        positionEntryBarIndex: null,
+        higherTimeframes: htf,
+        dailyPnl: 0,
+        tradesToday: 0,
+        barsSinceExit: 999,
+      };
+      expect(strategy.onCandle(ctx), `bar ${idx} should be blocked by squeeze`).toBeNull();
+    }
+  });
+
+  it("squeeze does not affect exits", () => {
+    const strategy = createDonchianAdx({ dcFast: 3, timeoutBars: 100 });
+
+    // Deterministic candles: squeeze active doesn't block shouldExit
+    const base = 1_000_000_000_000;
+    const candles: Candle[] = [
+      { t: base, o: 100, h: 110, l: 95, c: 105, v: 10, n: 5 },
+      { t: base + 900_000, o: 105, h: 115, l: 100, c: 110, v: 10, n: 5 },
+      { t: base + 1_800_000, o: 110, h: 120, l: 105, c: 115, v: 10, n: 5 },
+      { t: base + 2_700_000, o: 115, h: 125, l: 110, c: 120, v: 10, n: 5 },
+      // Drop below fast DC lower → should trigger DC Trail exit
+      { t: base + 3_600_000, o: 110, h: 110, l: 85, c: 90, v: 10, n: 5 },
+    ];
+    const htf = {} as Record<string, Candle[]>;
+    strategy.init!(candles, htf);
+
+    const ctx: StrategyContext = {
+      candles,
+      index: 4,
+      currentCandle: candles[4],
+      positionDirection: "long",
+      positionEntryPrice: 105,
+      positionEntryBarIndex: 2,
+      higherTimeframes: htf,
+      dailyPnl: 0,
+      tradesToday: 0,
+      barsSinceExit: 999,
+    };
+
+    // shouldExit should still work regardless of squeeze state
+    const result = strategy.shouldExit!(ctx);
+    expect(result).not.toBeNull();
+    expect(result!.exit).toBe(true);
+    expect(result!.comment).toBe("DC Trail");
+
+    // getExitLevel should also work
+    const level = strategy.getExitLevel!(ctx);
+    expect(level).toBeTypeOf("number");
   });
 });

@@ -10,7 +10,7 @@ import type {
 } from "../types/metrics.js";
 import { computeFilterSimulations } from "./filter-simulation.js";
 import { computeWalkForward } from "./walk-forward.js";
-import { getSessionForHour } from "./get-session-for-hour.js";
+import { getSessionForTimestamp } from "./get-session-for-hour.js";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -196,8 +196,7 @@ function computeSessionStats(trades: CompletedTrade[]): Record<SessionName, Sess
   };
 
   for (const t of trades) {
-    const hour = new Date(t.entryTimestamp).getUTCHours();
-    const session = getSessionForHour(hour);
+    const session = getSessionForTimestamp(t.entryTimestamp);
     buckets[session].count++;
     buckets[session].pnl += t.pnl;
     if (t.pnl > 0) {

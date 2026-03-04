@@ -7,6 +7,7 @@ import { PendingEntryBook } from "../domain/pending-entry-book.js";
 import { SqliteStore } from "../adapters/sqlite-store.js";
 import type { Strategy, Candle, Signal, StrategyContext } from "@breaker/backtest";
 import type { ExchangeConfig } from "../types/config.js";
+import { Orchestrator } from "../domain/orchestrator.js";
 
 const config: ExchangeConfig = {
   mode: "testnet",
@@ -24,6 +25,9 @@ const config: ExchangeConfig = {
     maxDailyLossR: 2,
     maxTradesPerDay: 5,
     cooldownBars: 0,
+    volSpikeThresholdPct: 1.5,
+    volSpikeLookbackBars: 4,
+    volSpikeCooldownBars: 4,
   },
   sizing: {
     mode: "risk",
@@ -1538,6 +1542,73 @@ describe("StrategyRunner", () => {
 
       const runner = new StrategyRunner(deps);
       expect(runner.getStrategyName()).toBe("donchian-adx");
+    });
+  });
+
+  describe("orchestrator volatility spike", () => {
+    it("calls reportPrice on every bar close", async () => {
+      const candles = Array.from({ length: 10 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+
+      const orch = new Orchestrator({
+        maxDailyLossR: 2,
+        riskPerTradeUsd: 10,
+        maxTradesPerDay: 5,
+        volSpikeThresholdPct: 1.5,
+        volSpikeLookbackBars: 4,
+        volSpikeCooldownBars: 4,
+      });
+      orch.registerModule("BTC:donchian-adx", "breakout");
+      const spy = vi.spyOn(orch, "reportPrice");
+      deps.orchestrator = orch;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // Add a new candle and tick
+      const newCandle = makeCandle(10);
+      streamer.addCandle(newCandle);
+      await runner.tick();
+
+      expect(spy).toHaveBeenCalledWith("BTC", newCandle.c, newCandle.t);
+    });
+
+    it("blocks entry when volatility spike is active", async () => {
+      const candles = Array.from({ length: 10 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      // Signal on bar 10 (the next candle)
+      const strategy = createTestStrategy(10);
+      const deps = createDeps(strategy, streamer);
+
+      const orch = new Orchestrator({
+        maxDailyLossR: 2,
+        riskPerTradeUsd: 10,
+        maxTradesPerDay: 5,
+        volSpikeThresholdPct: 0.01, // very low threshold to trigger easily
+        volSpikeLookbackBars: 1,
+        volSpikeCooldownBars: 10,
+      });
+      orch.registerModule("BTC:donchian-adx", "breakout");
+      deps.orchestrator = orch;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // Pre-seed the orchestrator with a price to enable spike detection
+      orch.reportPrice("BTC", 1, 1000);
+
+      // Add a new candle — its close price vs the seeded price will trigger spike
+      const newCandle = makeCandle(10);
+      streamer.addCandle(newCandle);
+      await runner.tick();
+
+      // Spike should be active (price jump from 1 to ~95300)
+      expect(orch.isVolatilitySpikeActive()).toBe(true);
+
+      // Orchestrator blocked at canSignal gate — onCandle never reached
+      expect(deps.signalHandlerDeps.hlClient.placeMarketOrder).not.toHaveBeenCalled();
     });
   });
 });

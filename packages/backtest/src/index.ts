@@ -34,6 +34,10 @@ export type { AdxResult } from "./indicators/adx.js";
 export { rsi } from "./indicators/rsi.js";
 export { keltner } from "./indicators/keltner.js";
 export type { KeltnerResult } from "./indicators/keltner.js";
+export { bollingerBands } from "./indicators/bollinger-bands.js";
+export type { BollingerBandsResult } from "./indicators/bollinger-bands.js";
+export { detectSqueeze } from "./indicators/detect-squeeze.js";
+export type { SqueezeResult } from "./indicators/detect-squeeze.js";
 
 // Engine
 export { runBacktest, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
@@ -55,7 +59,7 @@ export type { ExecutionConfig } from "./engine/execution-model.js";
 // Analysis
 export { computeMetrics } from "./analysis/metrics-calculator.js";
 export { analyzeTradeList } from "./analysis/trade-analysis.js";
-export { getSessionForHour } from "./analysis/get-session-for-hour.js";
+export { getSessionForTimestamp } from "./analysis/get-session-for-hour.js";
 export { computeWalkForward } from "./analysis/walk-forward.js";
 export { computeFilterSimulations } from "./analysis/filter-simulation.js";
 

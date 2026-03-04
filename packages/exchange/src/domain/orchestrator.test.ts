@@ -6,6 +6,9 @@ function createOrchestrator(overrides?: Partial<Parameters<typeof Orchestrator["
     maxDailyLossR: 2,
     riskPerTradeUsd: 10,
     maxTradesPerDay: 5,
+    volSpikeThresholdPct: 1.5,
+    volSpikeLookbackBars: 4,
+    volSpikeCooldownBars: 4,
     ...overrides,
   });
 }
@@ -217,6 +220,227 @@ describe("Orchestrator", () => {
       expect(gate.allowed).toBe(false);
       // Signal should never reach proposeSignal — verified by design
       // (strategy-runner checks canSignal first, skips proposeSignal if blocked)
+    });
+  });
+
+  describe("Gate 3: Volatility Spike", () => {
+    let spikeOrch: Orchestrator;
+
+    beforeEach(() => {
+      // threshold=1.5%, lookback=4 bars, cooldown=4 bars
+      spikeOrch = createOrchestrator({
+        volSpikeThresholdPct: 1.5,
+        volSpikeLookbackBars: 4,
+        volSpikeCooldownBars: 4,
+      });
+      spikeOrch.registerModule("BTC:donchian-adx", "breakout");
+      spikeOrch.registerModule("SOL:ema-pullback", "pullback");
+    });
+
+    it("does not activate spike when change < threshold", () => {
+      // 5 prices with < 1.5% change over 4 bars
+      const base = 100;
+      for (let i = 0; i < 5; i++) {
+        spikeOrch.reportPrice("BTC", base + i * 0.1, 1000 + i * 900_000);
+      }
+      expect(spikeOrch.isVolatilitySpikeActive()).toBe(false);
+      expect(spikeOrch.canSignal("BTC:donchian-adx").allowed).toBe(true);
+    });
+
+    it("activates spike when change > threshold", () => {
+      // Price jumps from 100 to 102 in 4 bars → 2% > 1.5%
+      spikeOrch.reportPrice("BTC", 100, 1000);
+      spikeOrch.reportPrice("BTC", 100.2, 2000);
+      spikeOrch.reportPrice("BTC", 100.4, 3000);
+      spikeOrch.reportPrice("BTC", 100.6, 4000);
+      spikeOrch.reportPrice("BTC", 102, 5000); // |102/100 - 1| = 2% > 1.5%
+      expect(spikeOrch.isVolatilitySpikeActive()).toBe(true);
+    });
+
+    it("blocks ALL modules when spike is active", () => {
+      spikeOrch.reportPrice("BTC", 100, 1000);
+      spikeOrch.reportPrice("BTC", 100, 2000);
+      spikeOrch.reportPrice("BTC", 100, 3000);
+      spikeOrch.reportPrice("BTC", 100, 4000);
+      spikeOrch.reportPrice("BTC", 102, 5000);
+
+      expect(spikeOrch.canSignal("BTC:donchian-adx").allowed).toBe(false);
+      expect(spikeOrch.canSignal("SOL:ema-pullback").allowed).toBe(false);
+      expect(spikeOrch.canSignal("BTC:donchian-adx").reason).toBe("Volatility spike active");
+    });
+
+    it("blocks entries on different coin (BTC spike → SOL blocked)", () => {
+      // Spike triggered by BTC
+      spikeOrch.reportPrice("BTC", 100, 1000);
+      spikeOrch.reportPrice("BTC", 100, 2000);
+      spikeOrch.reportPrice("BTC", 100, 3000);
+      spikeOrch.reportPrice("BTC", 100, 4000);
+      spikeOrch.reportPrice("BTC", 102, 5000);
+
+      // SOL never reported but still blocked
+      expect(spikeOrch.canSignal("SOL:ema-pullback").allowed).toBe(false);
+    });
+
+    it("clears spike after Z bars of cooldown", () => {
+      // lookback=1 keeps ring buffer short, so old prices are pushed out in 1 bar
+      const o = createOrchestrator({ volSpikeLookbackBars: 1, volSpikeCooldownBars: 4 });
+      o.registerModule("BTC:donchian-adx", "breakout");
+
+      o.reportPrice("BTC", 100, 1000);
+      o.reportPrice("BTC", 102, 2000); // spike! cooldown=4
+
+      // 4 bars of stable prices: 1 to push old price out + 3 cooldown ticks
+      o.reportPrice("BTC", 102, 3000); // buffer=[102,102], tick 4→3
+      o.reportPrice("BTC", 102, 4000); // tick 3→2
+      o.reportPrice("BTC", 102, 5000); // tick 2→1
+      expect(o.isVolatilitySpikeActive()).toBe(true);
+      o.reportPrice("BTC", 102, 6000); // tick 1→0 → cleared
+      expect(o.isVolatilitySpikeActive()).toBe(false);
+      expect(o.canSignal("BTC:donchian-adx").allowed).toBe(true);
+    });
+
+    it("resets cooldown if new spike occurs during cooldown", () => {
+      const o = createOrchestrator({ volSpikeLookbackBars: 1, volSpikeCooldownBars: 4 });
+      o.registerModule("BTC:donchian-adx", "breakout");
+
+      o.reportPrice("BTC", 100, 1000);
+      o.reportPrice("BTC", 102, 2000); // spike! cooldown=4
+
+      // 2 stable bars (push old price out + tick cooldown)
+      o.reportPrice("BTC", 102, 3000); // buffer=[102,102], tick 4→3
+      o.reportPrice("BTC", 102, 4000); // tick 3→2
+
+      // New spike: 102 → 104 (~1.96% > 1.5%)
+      o.reportPrice("BTC", 104, 5000); // tick 2→1, then |104/102|≈1.96% → reset cooldown=4
+      expect(o.isVolatilitySpikeActive()).toBe(true);
+
+      // Need 1 bar to push old 102 out + 3 cooldown ticks
+      o.reportPrice("BTC", 104, 6000); // buffer=[104,104], tick 4→3
+      o.reportPrice("BTC", 104, 7000); // tick 3→2
+      o.reportPrice("BTC", 104, 8000); // tick 2→1
+      expect(o.isVolatilitySpikeActive()).toBe(true);
+      o.reportPrice("BTC", 104, 9000); // tick 1→0 → cleared
+      expect(o.isVolatilitySpikeActive()).toBe(false);
+    });
+
+    it("does NOT affect shouldForceClose (only blocks entries)", () => {
+      spikeOrch.reportPrice("BTC", 100, 1000);
+      spikeOrch.reportPrice("BTC", 100, 2000);
+      spikeOrch.reportPrice("BTC", 100, 3000);
+      spikeOrch.reportPrice("BTC", 100, 4000);
+      spikeOrch.reportPrice("BTC", 102, 5000); // spike active
+
+      // shouldForceClose only cares about daily loss, not spike
+      expect(spikeOrch.shouldForceClose()).toBe(false);
+    });
+
+    it("gate priority: daily loss > max trades > vol spike", () => {
+      // Hit daily loss limit
+      spikeOrch.recordClose("BTC:donchian-adx", -20);
+
+      // Also trigger spike
+      spikeOrch.reportPrice("BTC", 100, 1000);
+      spikeOrch.reportPrice("BTC", 100, 2000);
+      spikeOrch.reportPrice("BTC", 100, 3000);
+      spikeOrch.reportPrice("BTC", 100, 4000);
+      spikeOrch.reportPrice("BTC", 102, 5000);
+
+      const result = spikeOrch.canSignal("BTC:donchian-adx");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("2R"); // daily loss checked first, not spike
+    });
+
+    it("day reset does NOT clear spike state", () => {
+      spikeOrch.reportPrice("BTC", 100, 1000);
+      spikeOrch.reportPrice("BTC", 100, 2000);
+      spikeOrch.reportPrice("BTC", 100, 3000);
+      spikeOrch.reportPrice("BTC", 100, 4000);
+      spikeOrch.reportPrice("BTC", 102, 5000);
+      expect(spikeOrch.isVolatilitySpikeActive()).toBe(true);
+
+      spikeOrch.resetDayIfNeeded("2026-03-04");
+      expect(spikeOrch.isVolatilitySpikeActive()).toBe(true);
+    });
+
+    it("needs lookback+1 prices before detecting spike", () => {
+      // Only 4 prices (need 5 = lookback+1 for 4-bar lookback)
+      spikeOrch.reportPrice("BTC", 100, 1000);
+      spikeOrch.reportPrice("BTC", 100, 2000);
+      spikeOrch.reportPrice("BTC", 100, 3000);
+      spikeOrch.reportPrice("BTC", 110, 4000); // huge jump but only 4 data points
+      expect(spikeOrch.isVolatilitySpikeActive()).toBe(false);
+    });
+
+    it("dedup: same barTs from different coins only ticks cooldown once", () => {
+      const o = createOrchestrator({ volSpikeLookbackBars: 1, volSpikeCooldownBars: 4 });
+      o.registerModule("BTC:donchian-adx", "breakout");
+      o.registerModule("SOL:ema-pullback", "pullback");
+
+      o.reportPrice("BTC", 100, 1000);
+      o.reportPrice("BTC", 102, 2000); // spike! cooldown=4
+
+      // Bar 3000: push old price out → cooldown tick 4→3
+      o.reportPrice("BTC", 102, 3000);
+
+      // Bar 4000: BTC and SOL report same barTs → cooldown ticks only once (3→2)
+      o.reportPrice("BTC", 102, 4000);
+      o.reportPrice("SOL", 50, 4000); // same barTs → no extra tick
+
+      // 2 more unique bars needed
+      o.reportPrice("BTC", 102, 5000); // tick 2→1
+      expect(o.isVolatilitySpikeActive()).toBe(true);
+      o.reportPrice("BTC", 102, 6000); // tick 1→0 → cleared
+      expect(o.isVolatilitySpikeActive()).toBe(false);
+    });
+
+    it("spike on price drop (descending) also triggers", () => {
+      // Price drops from 100 to 98 in 4 bars → |-2%| > 1.5%
+      spikeOrch.reportPrice("BTC", 100, 1000);
+      spikeOrch.reportPrice("BTC", 99.8, 2000);
+      spikeOrch.reportPrice("BTC", 99.5, 3000);
+      spikeOrch.reportPrice("BTC", 99.2, 4000);
+      spikeOrch.reportPrice("BTC", 98, 5000); // |98/100 - 1| = 2%
+      expect(spikeOrch.isVolatilitySpikeActive()).toBe(true);
+    });
+
+    it("logs spike_detected and spike_cleared decisions", () => {
+      const o = createOrchestrator({ volSpikeLookbackBars: 1, volSpikeCooldownBars: 4 });
+      const decisions: OrchestratorDecision[] = [];
+      o.setDecisionCallback((d) => decisions.push(d));
+
+      o.reportPrice("BTC", 100, 1000);
+      o.reportPrice("BTC", 102, 2000); // spike detected
+
+      const detected = decisions.find((d) => d.data.event === "spike_detected");
+      expect(detected).toBeDefined();
+      expect(detected!.data.coin).toBe("BTC");
+      expect(detected!.data.changePct).toBeCloseTo(2.0, 1);
+
+      // Clear spike: 1 bar to push old price out + 3 cooldown ticks
+      o.reportPrice("BTC", 102, 3000);
+      o.reportPrice("BTC", 102, 4000);
+      o.reportPrice("BTC", 102, 5000);
+      o.reportPrice("BTC", 102, 6000); // cleared
+
+      const cleared = decisions.find((d) => d.data.event === "spike_cleared");
+      expect(cleared).toBeDefined();
+    });
+
+    it("canSignal logs volatility_spike gate when blocked", () => {
+      const decisions: OrchestratorDecision[] = [];
+      spikeOrch.setDecisionCallback((d) => decisions.push(d));
+
+      spikeOrch.reportPrice("BTC", 100, 1000);
+      spikeOrch.reportPrice("BTC", 100, 2000);
+      spikeOrch.reportPrice("BTC", 100, 3000);
+      spikeOrch.reportPrice("BTC", 100, 4000);
+      spikeOrch.reportPrice("BTC", 102, 5000);
+
+      spikeOrch.canSignal("BTC:donchian-adx");
+
+      const blocked = decisions.find((d) => d.type === "signal_blocked" && d.data.gate === "volatility_spike");
+      expect(blocked).toBeDefined();
+      expect(blocked!.moduleId).toBe("BTC:donchian-adx");
     });
   });
 });

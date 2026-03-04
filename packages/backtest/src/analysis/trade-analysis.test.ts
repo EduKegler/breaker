@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { analyzeTradeList } from "./trade-analysis.js";
-import { getSessionForHour } from "./get-session-for-hour.js";
 import type { CompletedTrade } from "../types/order.js";
 
 function makeTrade(overrides: Partial<CompletedTrade> = {}): CompletedTrade {
@@ -25,32 +24,6 @@ function makeTrade(overrides: Partial<CompletedTrade> = {}): CompletedTrade {
     ...overrides,
   };
 }
-
-describe("getSessionForHour", () => {
-  it("classifies Asia hours", () => {
-    for (let h = 0; h < 8; h++) {
-      expect(getSessionForHour(h)).toBe("Asia");
-    }
-  });
-
-  it("classifies London hours", () => {
-    for (let h = 8; h < 13; h++) {
-      expect(getSessionForHour(h)).toBe("London");
-    }
-  });
-
-  it("classifies NY hours", () => {
-    for (let h = 13; h < 21; h++) {
-      expect(getSessionForHour(h)).toBe("NY");
-    }
-  });
-
-  it("classifies Off-peak hours", () => {
-    for (let h = 21; h < 24; h++) {
-      expect(getSessionForHour(h)).toBe("Off-peak");
-    }
-  });
-});
 
 describe("analyzeTradeList", () => {
   it("returns empty analysis for no trades", () => {
@@ -142,16 +115,23 @@ describe("analyzeTradeList", () => {
     expect(result.worst3TradesPnl).toEqual([-40, -25, -10]);
   });
 
-  it("computes session stats", () => {
+  it("computes session stats (DST-aware)", () => {
+    // Summer (Jul 15): London=BST, NY=EDT → boundaries shift 1h earlier
+    // Asia 0-6, London 7-11, NY 12-19, Off-peak 20-23
     const trades = [
-      makeTrade({ entryTimestamp: new Date("2024-06-15T03:00:00Z").getTime(), pnl: 10 }), // Asia
-      makeTrade({ entryTimestamp: new Date("2024-06-15T10:00:00Z").getTime(), pnl: 15 }), // London
-      makeTrade({ entryTimestamp: new Date("2024-06-15T15:00:00Z").getTime(), pnl: -5 }), // NY
+      makeTrade({ entryTimestamp: new Date("2024-07-15T03:00:00Z").getTime(), pnl: 10 }),  // Asia
+      makeTrade({ entryTimestamp: new Date("2024-07-15T07:00:00Z").getTime(), pnl: 15 }),  // London (would be Asia with old UTC-fixed code)
+      makeTrade({ entryTimestamp: new Date("2024-07-15T15:00:00Z").getTime(), pnl: -5 }),  // NY
+      makeTrade({ entryTimestamp: new Date("2024-07-15T20:30:00Z").getTime(), pnl: -2 }),  // Off-peak (would be NY with old code)
     ];
     const result = analyzeTradeList(trades);
     expect(result.bySession!["Asia"].count).toBe(1);
     expect(result.bySession!["Asia"].pnl).toBe(10);
     expect(result.bySession!["London"].count).toBe(1);
+    expect(result.bySession!["London"].pnl).toBe(15);
     expect(result.bySession!["NY"].count).toBe(1);
+    expect(result.bySession!["NY"].pnl).toBe(-5);
+    expect(result.bySession!["Off-peak"].count).toBe(1);
+    expect(result.bySession!["Off-peak"].pnl).toBe(-2);
   });
 });

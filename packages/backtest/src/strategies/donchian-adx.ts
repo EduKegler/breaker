@@ -5,6 +5,9 @@ import { adx, type AdxResult } from "../indicators/adx.js";
 import { ema } from "../indicators/ema.js";
 import { atr } from "../indicators/atr.js";
 import { sma } from "../indicators/sma.js";
+import { bollingerBands } from "../indicators/bollinger-bands.js";
+import { keltner as keltnerFn } from "../indicators/keltner.js";
+import { detectSqueeze, type SqueezeResult } from "../indicators/detect-squeeze.js";
 
 const MS_1H = 3_600_000;
 const MS_1D = 86_400_000;
@@ -26,7 +29,7 @@ const DEFAULT_PARAMS: DonchianAdxParams = {
   atrStopMult: { value: 3.0, min: 3.0, max: 5.0, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop (KB §1.6: min 3.0 for breakout)" },
   volMult: { value: 1.5, min: 1.0, max: 3.0, step: 0.5, optimizable: true, description: "Volume spike multiplier vs SMA(vol, 20) — KB §3.1 rule 3" },
   maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
-  timeoutBars: { value: 20, min: 10, max: 40, step: 5, optimizable: true, description: "Bars before timeout exit" },
+  timeoutBars: { value: 24, min: 24, max: 96, step: 8, optimizable: true, description: "Bars before timeout exit (KB range: 24–96)" },
 };
 
 /**
@@ -51,6 +54,7 @@ export function createDonchianAdx(
   let htfAtrCache: number[] | null = null;
   let dailyEmaCache: number[] | null = null;
   let volSmaCache: number[] | null = null;
+  let squeezeCache: SqueezeResult | null = null;
   let htf1hCandles: Candle[] | null = null;
   let dailyCandles: Candle[] | null = null;
 
@@ -65,6 +69,12 @@ export function createDonchianAdx(
       dcFastCache = donchian(candles, params.dcFast.value);
       adxCache = adx(candles, 14);
       volSmaCache = sma(candles.map((c) => c.v), 20);
+
+      // Squeeze detection: BB(20, 2.0) inside KC(20, 1.5) — KB §7.1 rule 1
+      const closes = candles.map((c) => c.c);
+      const bbResult = bollingerBands(closes, 20, 2.0);
+      const kcResult = keltnerFn(candles, 20, 20, 1.5);
+      squeezeCache = detectSqueeze(bbResult, kcResult, 4);
 
       htf1hCandles = higherTimeframes["1h"] ?? [];
       if (htf1hCandles.length > 0) {
@@ -95,6 +105,9 @@ export function createDonchianAdx(
       const adxResult = adxCache ?? adx(candles.slice(0, index + 1), 14);
       const adxVal = adxResult.adx[index];
       if (isNaN(adxVal)) return null;
+
+      // Gate: Active squeeze blocks entries (KB §7.1 rule 1)
+      if (squeezeCache?.squeezeActive[index] ?? false) return null;
 
       // 1H ATR from higher timeframe — only use COMPLETED bars (Pine: [1] with lookahead_on)
       const htfCandlesRef = htf1hCandles ?? higherTimeframes["1h"];

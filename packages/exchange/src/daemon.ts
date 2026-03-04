@@ -264,6 +264,9 @@ async function main() {
     maxDailyLossR: config.guardrails.maxDailyLossR,
     riskPerTradeUsd: config.sizing.riskPerTradeUsd,
     maxTradesPerDay: config.guardrails.maxTradesPerDay,
+    volSpikeThresholdPct: config.guardrails.volSpikeThresholdPct,
+    volSpikeLookbackBars: config.guardrails.volSpikeLookbackBars,
+    volSpikeCooldownBars: config.guardrails.volSpikeCooldownBars,
   });
   syncDeps.orchestrator = orchestrator;
 

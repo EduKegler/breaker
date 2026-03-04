@@ -4,6 +4,9 @@ export interface OrchestratorConfig {
   maxDailyLossR: number;
   riskPerTradeUsd: number;
   maxTradesPerDay: number;
+  volSpikeThresholdPct: number;
+  volSpikeLookbackBars: number;
+  volSpikeCooldownBars: number;
 }
 
 export interface OrchestratorDecision {
@@ -45,6 +48,12 @@ export class Orchestrator {
   private barTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private barResolvers = new Map<string, Map<string, (r: SignalResolution) => void>>();
 
+  // Gate 3: Volatility spike state
+  private volatilitySpikeActive = false;
+  private spikeCooldownRemaining = 0;
+  private priceHistory = new Map<string, number[]>();
+  private lastTickBarTs = 0;
+
   private onDecisionCb?: (d: OrchestratorDecision) => void;
 
   constructor(private config: OrchestratorConfig) {
@@ -82,6 +91,15 @@ export class Orchestrator {
         maxTradesPerDay: this.maxTradesPerDay,
       });
       return { allowed: false, reason: "Max trades/day reached" };
+    }
+
+    // Gate 3: Volatility spike
+    if (this.volatilitySpikeActive) {
+      this.logDecision("signal_blocked", moduleId, {
+        gate: "volatility_spike",
+        spikeCooldownRemaining: this.spikeCooldownRemaining,
+      });
+      return { allowed: false, reason: "Volatility spike active" };
     }
 
     this.logDecision("signal_allowed", moduleId, {
@@ -145,6 +163,54 @@ export class Orchestrator {
     this.dailyPnl = 0;
     this.tradesToday = 0;
     this.logDecision("day_reset", "system", { day: currentDay });
+  }
+
+  reportPrice(coin: string, closePrice: number, barTs: number): void {
+    // Append to ring buffer (keep at most lookback + 1 entries)
+    const maxLen = this.config.volSpikeLookbackBars + 1;
+    let history = this.priceHistory.get(coin);
+    if (!history) {
+      history = [];
+      this.priceHistory.set(coin, history);
+    }
+    history.push(closePrice);
+    if (history.length > maxLen) {
+      history.splice(0, history.length - maxLen);
+    }
+
+    // Tick cooldown on new unique barTs (dedup across coins)
+    if (barTs > this.lastTickBarTs) {
+      this.lastTickBarTs = barTs;
+      if (this.volatilitySpikeActive) {
+        this.spikeCooldownRemaining--;
+        if (this.spikeCooldownRemaining <= 0) {
+          this.volatilitySpikeActive = false;
+          this.spikeCooldownRemaining = 0;
+          this.logDecision("signal_allowed", "system", { event: "spike_cleared" });
+        }
+      }
+    }
+
+    // Check for spike if enough history
+    if (history.length >= maxLen) {
+      const oldClose = history[0];
+      const changePct = Math.abs(closePrice / oldClose - 1) * 100;
+      if (changePct > this.config.volSpikeThresholdPct) {
+        this.volatilitySpikeActive = true;
+        this.spikeCooldownRemaining = this.config.volSpikeCooldownBars;
+        this.logDecision("signal_blocked", "system", {
+          event: "spike_detected",
+          coin,
+          changePct,
+          threshold: this.config.volSpikeThresholdPct,
+          cooldownBars: this.config.volSpikeCooldownBars,
+        });
+      }
+    }
+  }
+
+  isVolatilitySpikeActive(): boolean {
+    return this.volatilitySpikeActive;
   }
 
   private resolveBar(bufferKey: string): void {

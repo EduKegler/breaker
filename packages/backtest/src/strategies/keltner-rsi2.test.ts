@@ -76,7 +76,7 @@ describe("createKeltnerRsi2", () => {
     expect(strategy.params.rsi2Short.value).toBe(80);
     expect(strategy.params.adxThreshold.value).toBe(25);
     expect(strategy.params.maxTradesDay.value).toBe(3);
-    expect(strategy.params.timeoutBars.value).toBe(8);
+    expect(strategy.params.timeoutBars.value).toBe(12);
     expect(strategy.params.atrStopMult.value).toBe(3.0);
     expect(strategy.requiredTimeframes).toEqual(["1h"]);
   });
@@ -86,7 +86,7 @@ describe("createKeltnerRsi2", () => {
     expect(strategy.params.kcMultiplier.value).toBe(2.5);
     expect(strategy.params.rsi2Long.value).toBe(15);
     expect(strategy.params.rsi2Short.value).toBe(80); // Unchanged
-    expect(strategy.params.timeoutBars.value).toBe(8); // Unchanged
+    expect(strategy.params.timeoutBars.value).toBe(12); // Unchanged
     expect(strategy.params.atrStopMult.value).toBe(2.0);
   });
 
