@@ -137,7 +137,7 @@ describe("createKeltnerRsi2", () => {
     expect(strategy.onCandle(ctx)).toBeNull();
   });
 
-  it("generates long signal when close below KC lower + RSI2 oversold", () => {
+  it("generates long signal when close below KC lower + RSI2 oversold + volume spike", () => {
     const strategy = createKeltnerRsi2({ kcMultiplier: 1.5, rsi2Long: 30 });
 
     const base = new Date("2024-01-01T00:00:00Z").getTime();
@@ -147,15 +147,15 @@ describe("createKeltnerRsi2", () => {
     // Phase 1: stable period (~3 days = 288 bars) for indicators to warm up
     for (let i = 0; i < 288; i++) {
       price = 10000 + Math.sin(i * 0.1) * 15;
-      candles.push(makeCandle(base + i * 900_000, price, 30));
+      candles.push(makeCandle(base + i * 900_000, price, 30, 100));
     }
 
-    // Phase 2: sharp drop — three consecutive down bars to get RSI2 < 30
-    // and close below KC lower band
+    // Phase 2: sharp drop with volume spike — three consecutive down bars to get RSI2 < 30
+    // and close below KC lower band, with volume > 1.5 * SMA(20)
     const dropBase = base + 288 * 900_000;
-    candles.push(makeCandle(dropBase, price - 200, 30));
-    candles.push(makeCandle(dropBase + 900_000, price - 400, 30));
-    candles.push(makeCandle(dropBase + 2 * 900_000, price - 600, 30));
+    candles.push(makeCandle(dropBase, price - 200, 30, 300));
+    candles.push(makeCandle(dropBase + 900_000, price - 400, 30, 300));
+    candles.push(makeCandle(dropBase + 2 * 900_000, price - 600, 30, 300));
 
     const htf1h = generate1hCandles(candles);
     const htf = { "1h": htf1h };
@@ -178,6 +178,37 @@ describe("createKeltnerRsi2", () => {
       }
     }
     expect(foundSignal).toBe(true);
+  });
+
+  it("blocks long signal when volume is below threshold (quiet drift)", () => {
+    const strategy = createKeltnerRsi2({ kcMultiplier: 1.5, rsi2Long: 30 });
+
+    const base = new Date("2024-01-01T00:00:00Z").getTime();
+    const candles: Candle[] = [];
+    let price = 10000;
+
+    // Phase 1: stable period with moderate volume
+    for (let i = 0; i < 288; i++) {
+      price = 10000 + Math.sin(i * 0.1) * 15;
+      candles.push(makeCandle(base + i * 900_000, price, 30, 100));
+    }
+
+    // Phase 2: sharp drop but LOW volume — below 1.5 * SMA(20)
+    const dropBase = base + 288 * 900_000;
+    candles.push(makeCandle(dropBase, price - 200, 30, 80));
+    candles.push(makeCandle(dropBase + 900_000, price - 400, 30, 80));
+    candles.push(makeCandle(dropBase + 2 * 900_000, price - 600, 30, 80));
+
+    const htf1h = generate1hCandles(candles);
+    const htf = { "1h": htf1h };
+    strategy.init!(candles, htf);
+
+    // Scan last bars — should find NO long signal (volume too low)
+    for (let i = Math.max(candles.length - 10, 22); i < candles.length; i++) {
+      const ctx = makeCtx(candles, i, htf);
+      const signal = strategy.onCandle(ctx);
+      expect(signal).toBeNull();
+    }
   });
 
   it("generates short signal when close above KC upper + RSI2 overbought + volume spike", () => {
@@ -377,17 +408,17 @@ describe("createKeltnerRsi2", () => {
       });
     }
 
-    // Build 15m candles: stable period then sharp drop
+    // Build 15m candles: stable period then sharp drop with volume spike
     let price = 10000;
     for (let i = 0; i < 288; i++) {
       price = 10000 + Math.sin(i * 0.1) * 15;
-      candles.push(makeCandle(base + 120 * 3_600_000 + i * 900_000, price, 30));
+      candles.push(makeCandle(base + 120 * 3_600_000 + i * 900_000, price, 30, 100));
     }
-    // Sharp drop to trigger KC long + RSI2 oversold
+    // Sharp drop with volume spike to trigger KC long + RSI2 oversold
     const dropBase = base + 120 * 3_600_000 + 288 * 900_000;
-    candles.push(makeCandle(dropBase, price - 200, 30));
-    candles.push(makeCandle(dropBase + 900_000, price - 400, 30));
-    candles.push(makeCandle(dropBase + 2 * 900_000, price - 600, 30));
+    candles.push(makeCandle(dropBase, price - 200, 30, 300));
+    candles.push(makeCandle(dropBase + 900_000, price - 400, 30, 300));
+    candles.push(makeCandle(dropBase + 2 * 900_000, price - 600, 30, 300));
 
     // Extend 1H candles to cover the 15m range (still ranging)
     let htfT = htf1h[htf1h.length - 1].t + 3_600_000;

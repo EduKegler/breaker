@@ -31,7 +31,7 @@ const DEFAULT_PARAMS: KeltnerRsi2Params = {
 /**
  * Keltner RSI2 mean-reversion strategy — TypeScript port of Pine Script.
  *
- * Entry: Close outside Keltner Channel + extreme RSI(2) + volume filter (shorts).
+ * Entry: Close outside Keltner Channel + extreme RSI(2) + volume spike confirmation.
  * Exit: TP at KC mid (EMA20), SL at ATR×1.5, timeout at N bars.
  */
 export function createKeltnerRsi2(
@@ -122,8 +122,13 @@ export function createKeltnerRsi2(
       const stopDist = atr1h * params.atrStopMult.value;
       const close = currentCandle.c;
 
-      // LONG: close below KC lower + RSI2 oversold (no EMA200 direction gate — matches Pine)
-      if (close < kcLower && rsi2 < rsi2LongThresh) {
+      // LONG: close below KC lower + RSI2 oversold + volume spike (no EMA200 direction gate — matches Pine)
+      if (
+        close < kcLower &&
+        rsi2 < rsi2LongThresh &&
+        !isNaN(volAvg20) &&
+        currentCandle.v > 1.5 * volAvg20
+      ) {
         return {
           direction: "long",
           entryPrice: kcLower,
