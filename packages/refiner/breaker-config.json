@@ -36,7 +36,6 @@
         "ADX consolidation filter (adxThreshold < X)",
         "EMA200 daily regime filter (regimeBull/regimeBear)",
         "Volume confirmation (volume > X * SMA(vol,20))",
-        "Low-liquidity gate (no entries 02:00-06:00 UTC)",
         "ATR-based safety stop (atrStopMult)",
         "Timeout exit (timeoutBars)"
       ]

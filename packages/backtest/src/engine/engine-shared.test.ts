@@ -7,8 +7,6 @@ import type { Candle } from "../types/candle.js";
 const baseCanTrade = {
   barsSinceExit: 10,
   cooldownBars: 4,
-  consecutiveLosses: 0,
-  maxConsecutiveLosses: 2,
   dailyPnl: 0,
   maxDailyLossUsd: 20,
   tradesToday: 0,
@@ -23,10 +21,6 @@ describe("canTrade", () => {
 
   it("returns false when in cooldown", () => {
     expect(canTrade({ ...baseCanTrade, barsSinceExit: 2 })).toBe(false);
-  });
-
-  it("returns false when max consecutive losses reached", () => {
-    expect(canTrade({ ...baseCanTrade, consecutiveLosses: 2 })).toBe(false);
   });
 
   it("returns false when daily loss limit exceeded", () => {
@@ -65,7 +59,6 @@ describe("buildContext", () => {
       dailyPnl: -5,
       tradesToday: 1,
       barsSinceExit: 3,
-      consecutiveLosses: 0,
     });
 
     expect(ctx.currentCandle).toBe(candles[1]);
@@ -95,7 +88,6 @@ describe("buildContext", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
     });
 
     expect(ctx.positionDirection).toBe("long");

@@ -86,7 +86,6 @@ describe("runBacktest", () => {
     const config: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 1,
-      maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
       maxDailyLossR: 10000,
     };
@@ -101,7 +100,6 @@ describe("runBacktest", () => {
     const config: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 1,
-      maxConsecutiveLosses: 100,
       maxTradesPerDay: 100,
       maxDailyLossR: 10000,
     };
@@ -117,7 +115,6 @@ describe("runBacktest", () => {
     const config: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 100, // Very high cooldown
-      maxConsecutiveLosses: 100,
       maxTradesPerDay: 100,
       maxDailyLossR: 10000,
     };
@@ -131,7 +128,6 @@ describe("runBacktest", () => {
     const config: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 1,
-      maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
       maxDailyLossR: 10000,
     };
@@ -147,7 +143,6 @@ describe("runBacktest", () => {
       ...DEFAULT_BACKTEST_CONFIG,
       initialCapital: 1000,
       cooldownBars: 1,
-      maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
       maxDailyLossR: 10000,
     };
@@ -161,7 +156,6 @@ describe("runBacktest", () => {
     const config: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 1,
-      maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
       maxDailyLossR: 10000,
     };
@@ -218,7 +212,6 @@ describe("runBacktest", () => {
     const config: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 0,
-      maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
       maxTradesPerDay: Number.MAX_SAFE_INTEGER,
       maxDailyLossR: Number.MAX_SAFE_INTEGER,
       maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
@@ -244,14 +237,12 @@ describe("no-limits config", () => {
     const limitedConfig: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 4,
-      maxConsecutiveLosses: 2,
       maxDailyLossR: 20,
       maxTradesPerDay: 3,
     };
     const unlimitedConfig: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 0,
-      maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
       maxDailyLossR: Number.MAX_SAFE_INTEGER,
       maxTradesPerDay: Number.MAX_SAFE_INTEGER,
       maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
@@ -268,7 +259,6 @@ describe("no-limits config", () => {
     const config: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 1,
-      maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
       maxDailyLossR: Number.MAX_SAFE_INTEGER,
       maxTradesPerDay: 100,
       maxGlobalTradesDay: 2,
@@ -305,7 +295,6 @@ describe("cash sizing mode", () => {
     sizingMode: "cash",
     cashPerTrade: 100,
     cooldownBars: 1,
-    maxConsecutiveLosses: 100,
     maxTradesPerDay: 100,
     maxDailyLossR: 10000,
   };
@@ -346,7 +335,6 @@ describe("cash sizing mode", () => {
     const config: BacktestConfig = {
       ...DEFAULT_BACKTEST_CONFIG,
       cooldownBars: 1,
-      maxConsecutiveLosses: 10,
       maxTradesPerDay: 100,
       maxDailyLossR: 10000,
     };
@@ -448,7 +436,6 @@ describe("deferred exit (process_orders_on_close = false)", () => {
   const noLimitsConfig: BacktestConfig = {
     ...DEFAULT_BACKTEST_CONFIG,
     cooldownBars: 0,
-    maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
     maxTradesPerDay: Number.MAX_SAFE_INTEGER,
     maxDailyLossR: Number.MAX_SAFE_INTEGER,
     maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
@@ -593,7 +580,6 @@ describe("take-profit and partial close", () => {
   const noLimitsNoFees: BacktestConfig = {
     ...DEFAULT_BACKTEST_CONFIG,
     cooldownBars: 0,
-    maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
     maxTradesPerDay: Number.MAX_SAFE_INTEGER,
     maxDailyLossR: Number.MAX_SAFE_INTEGER,
     maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
@@ -633,7 +619,6 @@ describe("duplicate entry orders", () => {
   const noLimitsNoFees: BacktestConfig = {
     ...DEFAULT_BACKTEST_CONFIG,
     cooldownBars: 0,
-    maxConsecutiveLosses: Number.MAX_SAFE_INTEGER,
     maxTradesPerDay: Number.MAX_SAFE_INTEGER,
     maxDailyLossR: Number.MAX_SAFE_INTEGER,
     maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,

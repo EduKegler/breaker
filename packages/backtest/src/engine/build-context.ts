@@ -10,7 +10,6 @@ export interface BuildContextParams {
   dailyPnl: number;
   tradesToday: number;
   barsSinceExit: number;
-  consecutiveLosses: number;
 }
 
 export function buildContext(p: BuildContextParams): StrategyContext {
@@ -25,6 +24,5 @@ export function buildContext(p: BuildContextParams): StrategyContext {
     dailyPnl: p.dailyPnl,
     tradesToday: p.tradesToday,
     barsSinceExit: p.barsSinceExit,
-    consecutiveLosses: p.consecutiveLosses,
   };
 }

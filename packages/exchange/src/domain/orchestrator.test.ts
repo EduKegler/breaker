@@ -38,18 +38,6 @@ describe("Orchestrator", () => {
       expect(result.reason).toContain("2R");
     });
 
-    it("blocks module with 2 consecutive losses", () => {
-      orch.recordClose("BTC:donchian-adx", -5);
-      orch.recordClose("BTC:donchian-adx", -5);
-
-      const result = orch.canSignal("BTC:donchian-adx");
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toContain("consecutive losses");
-
-      // Other modules still allowed
-      expect(orch.canSignal("BTC:keltner-rsi2").allowed).toBe(true);
-    });
-
     it("blocks after max trades per day", () => {
       for (let i = 0; i < 5; i++) orch.recordEntry("BTC:donchian-adx");
 
@@ -70,23 +58,6 @@ describe("Orchestrator", () => {
   });
 
   describe("recordClose", () => {
-    it("increments consecutive losses and pauses at 2", () => {
-      orch.recordClose("BTC:donchian-adx", -5);
-      expect(orch.canSignal("BTC:donchian-adx").allowed).toBe(true);
-
-      orch.recordClose("BTC:donchian-adx", -5);
-      expect(orch.canSignal("BTC:donchian-adx").allowed).toBe(false);
-    });
-
-    it("resets consecutive losses and unpauses on profit", () => {
-      orch.recordClose("BTC:donchian-adx", -5);
-      orch.recordClose("BTC:donchian-adx", -5);
-      expect(orch.canSignal("BTC:donchian-adx").allowed).toBe(false);
-
-      orch.recordClose("BTC:donchian-adx", 10);
-      expect(orch.canSignal("BTC:donchian-adx").allowed).toBe(true);
-    });
-
     it("accumulates daily PnL across modules", () => {
       orch.recordClose("BTC:donchian-adx", -12);
       expect(orch.getDailyPnl()).toBe(-12);
@@ -114,9 +85,8 @@ describe("Orchestrator", () => {
   });
 
   describe("resetDayIfNeeded", () => {
-    it("resets all state and unpauses modules", () => {
-      orch.recordClose("BTC:donchian-adx", -5);
-      orch.recordClose("BTC:donchian-adx", -5);
+    it("resets daily PnL and trades counter", () => {
+      orch.recordClose("BTC:donchian-adx", -20);
       orch.recordEntry("BTC:donchian-adx");
       expect(orch.canSignal("BTC:donchian-adx").allowed).toBe(false);
 

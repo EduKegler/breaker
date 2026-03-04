@@ -28,7 +28,6 @@ export interface StrategyContext {
   dailyPnl: number;
   tradesToday: number;
   barsSinceExit: number;
-  consecutiveLosses: number;
 }
 
 export interface Strategy {

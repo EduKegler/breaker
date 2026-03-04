@@ -115,7 +115,7 @@ See `AGENTS.md` for detailed project structure, code patterns, and integration p
 Signal flow: `CandlePoller → Strategy.onCandle() → Signal → RiskEngine → OrderIntent → HyperliquidClient → Exchange`
 
 Safety layers:
-- **Strategy guardrails** (`canTrade`): cooldown, consecutive losses, daily limits
+- **Strategy guardrails** (`canTrade`): cooldown, daily limits
 - **Risk engine** (`checkRisk`): notional caps, leverage, price deviation
 - **Adapter truncation** (`truncateSize/truncatePrice`): SDK-compatible precision
 - **Reconcile loop**: periodic sync of local state vs Hyperliquid (safety net)

@@ -21,8 +21,6 @@ interface SignalResolution {
 interface ModuleState {
   type: ModuleType;
   priority: number;
-  consecutiveLosses: number;
-  paused: boolean;
 }
 
 const MODULE_PRIORITY: Record<ModuleType, number> = {
@@ -58,8 +56,6 @@ export class Orchestrator {
     this.modules.set(id, {
       type,
       priority: MODULE_PRIORITY[type],
-      consecutiveLosses: 0,
-      paused: false,
     });
   }
 
@@ -86,16 +82,6 @@ export class Orchestrator {
         maxTradesPerDay: this.maxTradesPerDay,
       });
       return { allowed: false, reason: "Max trades/day reached" };
-    }
-
-    // Gate 3: Module paused (2 consecutive losses)
-    const mod = this.modules.get(moduleId);
-    if (mod?.paused) {
-      this.logDecision("signal_blocked", moduleId, {
-        gate: "module_paused",
-        consecutiveLosses: mod.consecutiveLosses,
-      });
-      return { allowed: false, reason: "Module paused: 2 consecutive losses" };
     }
 
     this.logDecision("signal_allowed", moduleId, {
@@ -137,20 +123,8 @@ export class Orchestrator {
     this.tradesToday++;
   }
 
-  recordClose(moduleId: string, pnl: number): void {
+  recordClose(_moduleId: string, pnl: number): void {
     this.dailyPnl += pnl;
-    const mod = this.modules.get(moduleId);
-    if (!mod) return;
-
-    if (pnl < 0) {
-      mod.consecutiveLosses++;
-      if (mod.consecutiveLosses >= 2) {
-        mod.paused = true;
-      }
-    } else {
-      mod.consecutiveLosses = 0;
-      mod.paused = false;
-    }
   }
 
   shouldForceClose(): boolean {
@@ -170,10 +144,6 @@ export class Orchestrator {
     this.lastResetDay = currentDay;
     this.dailyPnl = 0;
     this.tradesToday = 0;
-    for (const mod of this.modules.values()) {
-      mod.consecutiveLosses = 0;
-      mod.paused = false;
-    }
     this.logDecision("day_reset", "system", { day: currentDay });
   }
 

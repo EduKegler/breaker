@@ -100,8 +100,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     expect(strategy.onCandle(ctx)).toBeNull();
   });
 
@@ -121,8 +120,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     expect(strategy.onCandle(ctx)).toBeNull();
   });
 
@@ -176,8 +174,7 @@ describe("createDonchianAdx", () => {
         dailyPnl: 0,
         tradesToday: 0,
         barsSinceExit: 999,
-        consecutiveLosses: 0,
-      };
+              };
       const signal = strategy.onCandle(ctx);
       if (signal) {
         expect(signal.direction).toBe("long");
@@ -236,8 +233,7 @@ describe("createDonchianAdx", () => {
         dailyPnl: 0,
         tradesToday: 0,
         barsSinceExit: 999,
-        consecutiveLosses: 0,
-      };
+              };
       const signal = strategy.onCandle(ctx);
       if (signal) {
         expect(signal.direction).toBe("short");
@@ -296,8 +292,7 @@ describe("createDonchianAdx", () => {
         dailyPnl: 0,
         tradesToday: 0,
         barsSinceExit: 999,
-        consecutiveLosses: 0,
-      };
+              };
       const signal = strategy.onCandle(ctx);
       if (signal) {
         foundSignal = true;
@@ -353,8 +348,7 @@ describe("createDonchianAdx", () => {
         dailyPnl: 0,
         tradesToday: 0,
         barsSinceExit: 999,
-        consecutiveLosses: 0,
-      };
+              };
       const signal = strategy.onCandle(ctx);
       if (signal) {
         expect(signal.direction).toBe("long");
@@ -385,8 +379,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     const result = strategy.shouldExit!(ctx);
     if (result) {
       expect(result.exit).toBe(true);
@@ -414,8 +407,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     const result = strategy.shouldExit!(ctx);
     // May or may not trigger depending on exact values
     if (result) {
@@ -440,8 +432,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     const result = strategy.shouldExit!(ctx);
     expect(result).not.toBeNull();
     expect(result!.exit).toBe(true);
@@ -464,8 +455,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     expect(strategy.shouldExit!(ctx)).toBeNull();
   });
 
@@ -490,8 +480,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     expect(strategy.getExitLevel!(ctx)).toBeNull();
   });
 
@@ -511,8 +500,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     const level = strategy.getExitLevel!(ctx);
     expect(level).toBeTypeOf("number");
     // For an uptrend, the fast DC lower should be below current price
@@ -535,8 +523,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     const level = strategy.getExitLevel!(ctx);
     expect(level).toBeTypeOf("number");
     // For a downtrend, the fast DC upper should be above current price
@@ -568,8 +555,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     const result = strategy.shouldExit!(ctx);
     expect(result).not.toBeNull();
     expect(result!.exit).toBe(true);
@@ -601,8 +587,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     const result = strategy.shouldExit!(ctx);
     expect(result).not.toBeNull();
     expect(result!.exit).toBe(true);
@@ -628,8 +613,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     expect(strategy.shouldExit!(ctx)).toBeNull();
   });
 
@@ -649,8 +633,7 @@ describe("createDonchianAdx", () => {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
-    };
+          };
     expect(strategy.getExitLevel!(ctx)).toBeNull();
   });
 });

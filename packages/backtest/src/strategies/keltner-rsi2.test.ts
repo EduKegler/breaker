@@ -63,7 +63,6 @@ function makeCtx(
     dailyPnl: 0,
     tradesToday: 0,
     barsSinceExit: 999,
-    consecutiveLosses: 0,
     ...overrides,
   };
 }

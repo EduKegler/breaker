@@ -74,7 +74,7 @@ src/
 
 ## Orchestrator (domain/orchestrator.ts)
 - Pure domain object (zero I/O, synchronous except `proposeSignal` Promise)
-- `canSignal()` is the central gate: daily loss >= 2R → block all; trades/day >= max → block; module paused (2 consecutive losses) → block
+- `canSignal()` is the central gate: daily loss >= 2R → block all; trades/day >= max → block
 - `proposeSignal()` buffers signals for 50ms to deconflict same-bar, same-coin signals: same direction → highest priority wins; opposite direction → both rejected
 - Module types and priority: breakout(4) > pullback(3) > mean-reversion(2) > trend-following(1)
 - Heartbeat in daemon.ts (30s interval) evaluates `shouldForceClose()` to force close positions between candle closes
@@ -95,7 +95,7 @@ src/
 ## Funding rate tracking
 - HL `getClearinghouseState()` (already called by reconcile loop) returns `cumFunding.sinceOpen` — cumulative USDC funding since position open (negative=paid, positive=received). Zero extra API calls needed
 - `PositionBook.updateFunding(coin, cumFunding)` receives absolute cumulative value (not delta) — auto-corrective after daemon restart
-- On position close: `totalPnl = unrealizedPnl + cumulativeFunding` — affects dailyPnl, consecutiveLosses, orchestrator.recordClose
+- On position close: `totalPnl = unrealizedPnl + cumulativeFunding` — affects dailyPnl, orchestrator.recordClose
 - SQLite: `signals.funding_paid` (per-signal), `equity_snapshots.cumulative_funding` (portfolio-wide). Additive migrations with `DEFAULT 0`
 - Position history PnL: `realizedPnl = exitValue - entryValue - totalFees + fundingPaid` (fundingPaid is signed)
 - Stale funding on close: last value is from previous reconcile (~30-60s). Max error ~$0.01 per $1000 notional. Acceptable

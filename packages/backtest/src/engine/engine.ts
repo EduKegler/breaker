@@ -26,7 +26,6 @@ export interface BacktestConfig {
   maxDailyLossR: number;
   maxGlobalTradesDay: number;
   cooldownBars: number;
-  maxConsecutiveLosses: number;
 }
 
 export const DEFAULT_BACKTEST_CONFIG: BacktestConfig = {
@@ -39,7 +38,6 @@ export const DEFAULT_BACKTEST_CONFIG: BacktestConfig = {
   maxDailyLossR: 2,
   maxGlobalTradesDay: 5,
   cooldownBars: 4,
-  maxConsecutiveLosses: 2,
 };
 
 export interface BacktestResult {
@@ -87,7 +85,6 @@ export function runBacktest(
 
   // State tracking
   let barsSinceExit = 999;
-  let consecutiveLosses = 0;
   let dailyPnl = 0;
   let tradesToday = 0;
   let lastTradeDay = "";
@@ -106,7 +103,6 @@ export function runBacktest(
     if (currentDay !== lastTradeDay) {
       dailyPnl = 0;
       tradesToday = 0;
-      consecutiveLosses = 0;
       lastTradeDay = currentDay;
     }
 
@@ -135,8 +131,6 @@ export function runBacktest(
           dailyPnl += trade.pnl;
           equityCurve.record(candle.t, i, trade.pnl);
           barsSinceExit = 0;
-          if (trade.pnl < 0) consecutiveLosses++;
-          else consecutiveLosses = 0;
           orderManager.clearOrders();
         }
       } else if (fill.tag === "sl" || fill.tag.startsWith("tp") || fill.tag === "trail") {
@@ -154,8 +148,6 @@ export function runBacktest(
           );
           dailyPnl += trade.pnl;
           equityCurve.record(candle.t, i, trade.pnl);
-          if (trade.pnl < 0) consecutiveLosses++;
-          else consecutiveLosses = 0;
           // Only clear all orders when position is fully closed
           // After partial close, keep remaining SL/TP active
           if (positionTracker.isFlat()) {
@@ -176,7 +168,7 @@ export function runBacktest(
     if (!positionTracker.isFlat() && strategy.shouldExit) {
       const ctx = buildCtx({
         candles, index: i, position: positionTracker.getPosition(),
-        higherTimeframes, dailyPnl, tradesToday, barsSinceExit, consecutiveLosses,
+        higherTimeframes, dailyPnl, tradesToday, barsSinceExit,
       });
       const exitSignal = strategy.shouldExit(ctx);
       if (exitSignal?.exit) {
@@ -205,7 +197,6 @@ export function runBacktest(
 
       const tradingAllowed = checkCanTrade({
         barsSinceExit, cooldownBars: config.cooldownBars,
-        consecutiveLosses, maxConsecutiveLosses: config.maxConsecutiveLosses,
         dailyPnl, maxDailyLossUsd: config.maxDailyLossR * config.initialCapital * 0.01,
         tradesToday, maxTradesPerDay: config.maxTradesPerDay,
         maxGlobalTradesDay: config.maxGlobalTradesDay,
@@ -214,7 +205,7 @@ export function runBacktest(
       if (tradingAllowed) {
         const ctx = buildCtx({
           candles, index: i, position: positionTracker.getPosition(),
-          higherTimeframes, dailyPnl, tradesToday, barsSinceExit, consecutiveLosses,
+          higherTimeframes, dailyPnl, tradesToday, barsSinceExit,
         });
         const signal = strategy.onCandle(ctx);
 

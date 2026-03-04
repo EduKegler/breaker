@@ -45,7 +45,6 @@ export function replayStrategy(params: ReplayParams): ReplaySignal[] {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
     });
 
     const signal = strategy.onCandle(ctx);

@@ -39,7 +39,6 @@ export class StrategyRunner {
   private deps: StrategyRunnerDeps;
   private running = false;
   private barsSinceExit = 999;
-  private consecutiveLosses = 0;
   private dailyPnl = 0;
   private tradesToday = 0;
   private lastTradeDay = "";
@@ -77,7 +76,6 @@ export class StrategyRunner {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
     });
 
     return this.deps.strategy.onCandle(ctx);
@@ -106,7 +104,6 @@ export class StrategyRunner {
       dailyPnl: 0,
       tradesToday: 0,
       barsSinceExit: 999,
-      consecutiveLosses: 0,
     });
 
     const levels = this.deps.strategy.computeLevels(ctx, direction);
@@ -186,7 +183,6 @@ export class StrategyRunner {
           dailyPnl: this.dailyPnl,
           tradesToday: this.tradesToday,
           barsSinceExit: this.barsSinceExit,
-          consecutiveLosses: this.consecutiveLosses,
         });
         this.lastExitLevel = this.deps.strategy.getExitLevel(ctx);
       }
@@ -231,7 +227,6 @@ export class StrategyRunner {
     if (currentDay !== this.lastTradeDay) {
       this.dailyPnl = 0;
       this.tradesToday = 0;
-      this.consecutiveLosses = 0;
       this.lastTradeDay = currentDay;
     }
     this.deps.orchestrator?.resetDayIfNeeded(currentDay);
@@ -288,7 +283,6 @@ export class StrategyRunner {
       dailyPnl: this.dailyPnl,
       tradesToday: this.tradesToday,
       barsSinceExit: this.barsSinceExit,
-      consecutiveLosses: this.consecutiveLosses,
     });
 
     const exitSignal = this.deps.strategy.shouldExit(ctx);
@@ -344,8 +338,6 @@ export class StrategyRunner {
       this.lastExitLevel = null;
       this.trailingSlOid = null;
       this.entryBarIndex = null;
-      if (totalPnl < 0) this.consecutiveLosses++;
-      else this.consecutiveLosses = 0;
       this.dailyPnl += totalPnl;
       this.deps.orchestrator?.recordClose(this.getModuleId(), totalPnl);
       log.info({
@@ -535,10 +527,6 @@ export class StrategyRunner {
     const tradingAllowed = canTrade({
       barsSinceExit: this.barsSinceExit,
       cooldownBars: this.deps.config.guardrails.cooldownBars,
-      consecutiveLosses: this.consecutiveLosses,
-      // Matches backtest engine default; keeps exchange behavior identical to
-      // backtested results. Not configurable to prevent config drift.
-      maxConsecutiveLosses: 2,
       dailyPnl: this.deps.orchestrator?.getDailyPnl() ?? this.dailyPnl,
       maxDailyLossUsd: this.deps.config.guardrails.maxDailyLossR * this.deps.config.sizing.riskPerTradeUsd,
       tradesToday: this.tradesToday,
@@ -551,7 +539,6 @@ export class StrategyRunner {
         action: "tradingBlocked",
         coin: this.deps.coin,
         barsSinceExit: this.barsSinceExit,
-        consecutiveLosses: this.consecutiveLosses,
         tradesToday: this.tradesToday,
         dailyPnl: this.dailyPnl,
       }, "Trading blocked by guardrails");
@@ -566,7 +553,6 @@ export class StrategyRunner {
       dailyPnl: this.dailyPnl,
       tradesToday: this.tradesToday,
       barsSinceExit: this.barsSinceExit,
-      consecutiveLosses: this.consecutiveLosses,
     });
 
     const signal = this.deps.strategy.onCandle(ctx);
