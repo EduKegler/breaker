@@ -14,6 +14,7 @@ import type { EventLog } from "../adapters/event-log.js";
 import type { Orchestrator } from "../domain/orchestrator.js";
 import { truncatePrice } from "@breaker/kit";
 import { logger } from "../lib/logger.js";
+import { diagnoseSignal } from "./diagnose-signal.js";
 
 const log = logger.createChild("strategyRunner");
 
@@ -48,6 +49,7 @@ export class StrategyRunner {
   private trailingSlOid: number | null = null;
   private lastCandleAt = 0;
   private entryBarIndex: number | null = null;
+  private lastSignalResult: { t: number; hadSignal: boolean } | null = null;
 
   constructor(deps: StrategyRunnerDeps) {
     this.deps = deps;
@@ -556,9 +558,11 @@ export class StrategyRunner {
     });
 
     const signal = this.deps.strategy.onCandle(ctx);
+    this.lastSignalResult = { t: candles[index].t, hadSignal: signal !== null };
     if (!signal) {
+      const diag = diagnoseSignal(ctx, this.deps.strategyConfigName, this.deps.interval);
       log.debug(
-        { action: "noSignal", coin: this.deps.coin, htfLengths: Object.fromEntries(Object.entries(higherTimeframes).map(([k, v]) => [k, v.length])) },
+        { action: "noSignal", coin: this.deps.coin, ...diag },
         "onCandle returned null",
       );
       return;
@@ -702,6 +706,10 @@ export class StrategyRunner {
 
   getModuleId(): string {
     return `${this.deps.coin}:${this.deps.strategyConfigName}`;
+  }
+
+  getLastSignalResult(): { t: number; hadSignal: boolean } | null {
+    return this.lastSignalResult;
   }
 
   setAutoTradingEnabled(enabled: boolean): void {

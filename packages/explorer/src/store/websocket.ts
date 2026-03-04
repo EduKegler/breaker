@@ -7,6 +7,7 @@ import type {
   EquitySnapshot,
   CandleData,
   SignalRow,
+  ReplaySignal,
   PricesEvent,
   PositionSummary,
   PendingEntry,
@@ -142,6 +143,17 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
     case "pending-entries":
       setState({ pendingEntries: msg.data as PendingEntry[] });
       break;
+    case "replay-signals": {
+      const d = msg.data as { coin: string; strategyName: string; signals: ReplaySignal[] };
+      if (!d.coin || !d.signals) break;
+      setState((s) => ({
+        coinReplaySignals: {
+          ...s.coinReplaySignals,
+          [d.coin]: replaceStrategySignals(s.coinReplaySignals[d.coin] ?? [], d.strategyName, d.signals),
+        },
+      }));
+      break;
+    }
     case "prices": {
       const p = msg.data as PricesEvent;
       const coin = p.coin;
@@ -164,4 +176,14 @@ function handleMessage(msg: WsMessage, store: StoreApi) {
       break;
     }
   }
+}
+
+/** Replace signals for a specific strategy, preserving signals from other strategies. */
+function replaceStrategySignals(
+  existing: ReplaySignal[],
+  strategyName: string,
+  incoming: ReplaySignal[],
+): ReplaySignal[] {
+  const kept = existing.filter((s) => s.strategyName !== strategyName);
+  return [...kept, ...incoming].sort((a, b) => a.t - b.t);
 }

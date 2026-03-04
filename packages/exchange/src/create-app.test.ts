@@ -117,7 +117,7 @@ afterEach(() => {
 
 describe("Exchange server", () => {
   it("GET /health returns status and config", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/health");
 
     expect(res.status).toBe(200);
@@ -132,7 +132,7 @@ describe("Exchange server", () => {
     const oldTimestamp = Date.now() - 90 * 60 * 1000;
     btcStreamer.getLatest.mockReturnValue({ t: oldTimestamp });
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/health");
 
     expect(res.status).toBe(200);
@@ -144,7 +144,7 @@ describe("Exchange server", () => {
     const recentTimestamp = Date.now() - 60_000; // 1 min ago
     btcStreamer.getLatest.mockReturnValue({ t: recentTimestamp });
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/health");
 
     expect(res.status).toBe(200);
@@ -152,7 +152,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /positions returns empty when no positions", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/positions");
 
     expect(res.status).toBe(200);
@@ -160,7 +160,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /orders returns empty when no orders", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/orders");
 
     expect(res.status).toBe(200);
@@ -168,7 +168,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /equity returns empty when no snapshots", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/equity");
 
     expect(res.status).toBe(200);
@@ -176,7 +176,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /account returns wallet and margin data", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/account");
 
     expect(res.status).toBe(200);
@@ -192,7 +192,7 @@ describe("Exchange server", () => {
   it("GET /account returns 500 on API failure", async () => {
     (deps.hlClient.getAccountState as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("HL down"));
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/account");
 
     expect(res.status).toBe(500);
@@ -200,7 +200,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /config returns exchange config with coins array", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/config");
 
     expect(res.status).toBe(200);
@@ -214,7 +214,7 @@ describe("Exchange server", () => {
   it("POST /signal accepts valid signal with coin and executes", async () => {
     btcStreamer.getLatest.mockReturnValue({ c: 95000 });
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/signal")
       .send({
@@ -233,7 +233,7 @@ describe("Exchange server", () => {
   });
 
   it("POST /signal rejects when no market price and entryPrice is null", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/signal")
       .send({
@@ -249,7 +249,7 @@ describe("Exchange server", () => {
   });
 
   it("POST /signal uses entryPrice as fallback when streamer has no data", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/signal")
       .send({
@@ -271,7 +271,7 @@ describe("Exchange server", () => {
     ];
     (deps.hlClient.getOpenOrders as ReturnType<typeof vi.fn>).mockResolvedValue(mockOrders);
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/open-orders");
 
     expect(res.status).toBe(200);
@@ -283,7 +283,7 @@ describe("Exchange server", () => {
   it("GET /open-orders returns 500 on API failure", async () => {
     (deps.hlClient.getOpenOrders as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("HL down"));
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/open-orders");
 
     expect(res.status).toBe(500);
@@ -297,7 +297,7 @@ describe("Exchange server", () => {
     ];
     btcStreamer.getCandles.mockReturnValue(mockCandles);
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/candles?coin=BTC");
 
     expect(res.status).toBe(200);
@@ -307,7 +307,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /candles returns empty when streamer has no candles", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/candles?coin=BTC");
 
     expect(res.status).toBe(200);
@@ -320,7 +320,7 @@ describe("Exchange server", () => {
     ];
     btcStreamer.fetchHistorical.mockResolvedValue(mockCandles);
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/candles?coin=BTC&before=1700000900000&limit=100");
 
     expect(res.status).toBe(200);
@@ -329,7 +329,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /candles returns 400 for unknown coin", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/candles?coin=UNKNOWN");
 
     expect(res.status).toBe(400);
@@ -337,7 +337,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /position-history returns empty when no positions", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/position-history");
 
     expect(res.status).toBe(200);
@@ -377,7 +377,7 @@ describe("Exchange server", () => {
       timestamp: "2024-01-10T10:30:00",
     });
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/position-history");
 
     expect(res.status).toBe(200);
@@ -405,7 +405,7 @@ describe("Exchange server", () => {
       strategy_name: "donchian-adx",
     });
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/signals");
 
     expect(res.status).toBe(200);
@@ -415,7 +415,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /signals returns empty when no signals", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/signals");
 
     expect(res.status).toBe(200);
@@ -445,7 +445,7 @@ describe("Exchange server", () => {
       },
     }) as Strategy;
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/strategy-signals?coin=BTC&strategy=donchian-adx");
 
     expect(res.status).toBe(200);
@@ -457,7 +457,7 @@ describe("Exchange server", () => {
 
   it("GET /strategy-signals returns empty when no candles", async () => {
     btcStreamer.fetchHistorical.mockResolvedValue([]);
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/strategy-signals?coin=BTC");
 
     expect(res.status).toBe(200);
@@ -471,7 +471,7 @@ describe("Exchange server", () => {
     }));
     btcStreamer.fetchHistorical.mockResolvedValue(candles);
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     await request(app).get("/strategy-signals?coin=BTC");
     await request(app).get("/strategy-signals?coin=BTC");
 
@@ -490,7 +490,7 @@ describe("Exchange server", () => {
       close: vi.fn(),
     } as any;
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/strategy-signals?coin=BTC");
 
     expect(res.status).toBe(200);
@@ -526,7 +526,7 @@ describe("Exchange server", () => {
     const onSignalProcessed = vi.fn();
     deps.signalHandlerDeps.onSignalProcessed = onSignalProcessed;
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/close-position")
       .send({ coin: "BTC" });
@@ -550,7 +550,7 @@ describe("Exchange server", () => {
   });
 
   it("POST /close-position returns 400 if no position", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/close-position")
       .send({ coin: "BTC" });
@@ -560,7 +560,7 @@ describe("Exchange server", () => {
   });
 
   it("POST /close-position returns 400 for missing coin", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/close-position")
       .send({});
@@ -597,7 +597,7 @@ describe("Exchange server", () => {
     });
 
     // Use a real HTTP server + native fetch for reliable concurrent requests
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const server = app.listen(0);
     const addr = server.address() as import("node:net").AddressInfo;
     const base = `http://127.0.0.1:${addr.port}`;
@@ -640,7 +640,7 @@ describe("Exchange server", () => {
     const onSignalProcessed = vi.fn();
     deps.signalHandlerDeps.onSignalProcessed = onSignalProcessed;
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).delete("/open-order/100");
 
     expect(res.status).toBe(200);
@@ -652,7 +652,7 @@ describe("Exchange server", () => {
   it("DELETE /open-order/:oid returns 404 if order not found", async () => {
     (deps.hlClient.getOpenOrders as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).delete("/open-order/999");
 
     expect(res.status).toBe(404);
@@ -660,7 +660,7 @@ describe("Exchange server", () => {
   });
 
   it("GET /config includes coins with autoTradingEnabled", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app).get("/config");
 
     expect(res.status).toBe(200);
@@ -669,7 +669,7 @@ describe("Exchange server", () => {
 
   it("POST /auto-trading enables auto-trading for coin", async () => {
     deps.config.coins[0].strategies[0].autoTradingEnabled = false;
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/auto-trading")
       .send({ coin: "BTC", enabled: true });
@@ -680,7 +680,7 @@ describe("Exchange server", () => {
   });
 
   it("POST /auto-trading disables auto-trading for coin", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/auto-trading")
       .send({ coin: "BTC", enabled: false });
@@ -700,7 +700,7 @@ describe("Exchange server", () => {
     };
     deps.runners = [mockRunner as any];
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     await request(app)
       .post("/auto-trading")
       .send({ coin: "BTC", enabled: false });
@@ -713,7 +713,7 @@ describe("Exchange server", () => {
     deps.persistConfig = persistConfig;
     deps.config.coins[0].strategies[0].autoTradingEnabled = false;
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     await request(app)
       .post("/auto-trading")
       .send({ coin: "BTC", enabled: true });
@@ -723,7 +723,7 @@ describe("Exchange server", () => {
   });
 
   it("POST /auto-trading rejects invalid payload", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/auto-trading")
       .send({ enabled: "yes" });
@@ -732,7 +732,7 @@ describe("Exchange server", () => {
   });
 
   it("POST /auto-trading rejects missing coin", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/auto-trading")
       .send({});
@@ -741,7 +741,7 @@ describe("Exchange server", () => {
   });
 
   it("POST /signal rejects invalid payload", async () => {
-    const app = createApp(deps);
+    const { app } = createApp(deps);
     const res = await request(app)
       .post("/signal")
       .send({ direction: "invalid" });
@@ -753,7 +753,7 @@ describe("Exchange server", () => {
   it("POST /signal returns 422 for duplicate alertId", async () => {
     btcStreamer.getLatest.mockReturnValue({ c: 95000 });
 
-    const app = createApp(deps);
+    const { app } = createApp(deps);
 
     await request(app).post("/signal").send({
       coin: "BTC",
@@ -792,7 +792,7 @@ describe("Exchange server", () => {
       const candles = makeCandles(30);
       btcStreamer.getCandles.mockReturnValue(candles);
 
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "BTC", direction: "long" });
@@ -809,7 +809,7 @@ describe("Exchange server", () => {
       const candles = makeCandles(30);
       btcStreamer.getCandles.mockReturnValue(candles);
 
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "BTC", direction: "short" });
@@ -823,7 +823,7 @@ describe("Exchange server", () => {
     it("rejects when not enough candles (<20)", async () => {
       btcStreamer.getCandles.mockReturnValue(makeCandles(10));
 
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "BTC", direction: "long" });
@@ -841,7 +841,7 @@ describe("Exchange server", () => {
       }));
       btcStreamer.getCandles.mockReturnValue(flatCandles);
 
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "BTC", direction: "long" });
@@ -853,7 +853,7 @@ describe("Exchange server", () => {
     });
 
     it("rejects invalid payload (missing direction)", async () => {
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "BTC" });
@@ -863,7 +863,7 @@ describe("Exchange server", () => {
     });
 
     it("rejects unknown coin", async () => {
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "UNKNOWN", direction: "long" });
@@ -882,7 +882,7 @@ describe("Exchange server", () => {
         onCandle: () => null,
       }) as Strategy;
 
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "BTC", direction: "long" });
@@ -908,7 +908,7 @@ describe("Exchange server", () => {
       };
       deps.runners = [mockRunner] as any;
 
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "BTC", direction: "long" });
@@ -930,7 +930,7 @@ describe("Exchange server", () => {
       };
       deps.runners = [mockRunner] as any;
 
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "BTC", direction: "long" });
@@ -951,7 +951,7 @@ describe("Exchange server", () => {
       };
       deps.runners = [mockRunner] as any;
 
-      const app = createApp(deps);
+      const { app } = createApp(deps);
       const res = await request(app)
         .post("/quick-signal")
         .send({ coin: "BTC", direction: "long" });

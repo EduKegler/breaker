@@ -38,6 +38,7 @@ export type { ReplaySignal, ReplayParams } from "./application/replay-strategy.j
 
 // Server
 export { createApp } from "./create-app.js";
+export type { AppResult, ServerDeps } from "./create-app.js";
 
 // WebSocket
 export { WsBroker } from "./lib/ws-broker.js";

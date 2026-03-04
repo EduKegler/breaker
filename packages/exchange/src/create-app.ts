@@ -9,6 +9,7 @@ import { replayStrategy } from "./application/replay-strategy.js";
 import type { CandleStreamer } from "./adapters/candle-streamer.js";
 import type { StrategyRunner } from "./application/strategy-runner.js";
 import { intervalToMs, CandleInterval, atr, computeMinWarmupBars, type Strategy, type CandleCache } from "@breaker/backtest";
+import { fetchCandlesForReplay, SIGNAL_WINDOW, type FetchCandlesForReplayDeps } from "./application/fetch-candles-for-replay.js";
 import { aggregatePositionHistory } from "./domain/aggregate-position-history.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -40,7 +41,13 @@ export interface ServerDeps {
   persistConfig?: () => void;
 }
 
-export function createApp(deps: ServerDeps): express.Express {
+export interface AppResult {
+  app: express.Express;
+  replayCache: Map<string, { cachedAt: number; signals: ReturnType<typeof replayStrategy> }>;
+  replayDeps: FetchCandlesForReplayDeps;
+}
+
+export function createApp(deps: ServerDeps): AppResult {
   const app = express();
   app.use(express.json({ limit: "100kb" }));
 
@@ -176,37 +183,11 @@ export function createApp(deps: ServerDeps): express.Express {
     res.json({ signals });
   });
 
-  // Signal window: how many bars of signals to display beyond warmup.
-  // ~104 days on 15m — enough for the explorer chart.
-  const SIGNAL_WINDOW = 10_000;
-
-  /** Fetch candles using SQLite cache (sync → read) or streamer fallback. */
-  async function fetchCandlesForReplay(coin: string, interval: CandleInterval, endTime: number, bars: number) {
-    const ivlMs = intervalToMs(interval);
-    const startTime = endTime - bars * ivlMs;
-
-    if (deps.candleCache) {
-      await deps.candleCache.sync(
-        coin,
-        interval,
-        startTime,
-        endTime,
-        { source: deps.config.dataSource },
-      );
-      return deps.candleCache.getCandles(
-        coin,
-        interval,
-        startTime,
-        endTime,
-        deps.config.dataSource,
-      );
-    }
-
-    const streamer = deps.streamers.get(`${coin}:${interval}`);
-    if (streamer) return streamer.fetchHistorical(endTime, bars);
-
-    return [];
-  }
+  const replayDeps = {
+    candleCache: deps.candleCache,
+    streamers: deps.streamers,
+    dataSource: deps.config.dataSource,
+  };
 
   // TTL cache per coin:interval
   const replayCache = new Map<string, { cachedAt: number; signals: ReturnType<typeof replayStrategy> }>();
@@ -236,7 +217,7 @@ export function createApp(deps: ServerDeps): express.Express {
       const strategy = deps.strategyFactory(stratCfg.name);
       const minWarmup = computeMinWarmupBars(strategy, interval);
       const replayBars = minWarmup + SIGNAL_WINDOW;
-      const candles = await fetchCandlesForReplay(coin, interval, now, replayBars);
+      const candles = await fetchCandlesForReplay(replayDeps, coin, interval, now, replayBars);
       const signals = replayStrategy({
         strategyFactory: () => deps.strategyFactory(stratCfg.name),
         candles,
@@ -539,5 +520,5 @@ export function createApp(deps: ServerDeps): express.Express {
     res.json({ positions });
   });
 
-  return app;
+  return { app, replayCache, replayDeps };
 }

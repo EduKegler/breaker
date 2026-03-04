@@ -28,6 +28,8 @@ import { StrategyRunner } from "./application/strategy-runner.js";
 import { ReconcileLoop } from "./application/reconcile-loop.js";
 import { resolveHistoricalStatuses } from "./application/resolve-historical-statuses.js";
 import { createApp } from "./create-app.js";
+import { replayStrategy } from "./application/replay-strategy.js";
+import { fetchCandlesForReplay, SIGNAL_WINDOW } from "./application/fetch-candles-for-replay.js";
 import { aggregatePositionHistory } from "./domain/aggregate-position-history.js";
 import { WsBroker } from "./lib/ws-broker.js";
 import type { HlClient } from "./types/hl-client.js";
@@ -413,7 +415,7 @@ async function main() {
   logger.info("All warmups complete");
 
   // Express server
-  const app = createApp({
+  const { app, replayCache, replayDeps } = createApp({
     config,
     store,
     positionBook,
@@ -457,6 +459,79 @@ async function main() {
     ws.send(JSON.stringify({ type: "snapshot", timestamp: new Date().toISOString(), data: snapshot }));
   });
   logger.info("WebSocket broker attached on /ws");
+
+  // Replay signal broadcast: on candle close, re-run replay for each strategy
+  // and push the results via WS so the explorer updates without F5.
+  const replayBroadcastedStreamers = new Set<string>();
+  for (const coinCfg of config.coins) {
+    for (const strat of coinCfg.strategies) {
+      const key = `${coinCfg.coin}:${strat.interval}`;
+      if (replayBroadcastedStreamers.has(key)) continue;
+      replayBroadcastedStreamers.add(key);
+      const streamer = streamers.get(key);
+      if (!streamer) continue;
+
+      streamer.on("candle:close", async () => {
+        const now = Date.now();
+        // Iterate all strategies for this coin+interval
+        const coinStrategies = coinCfg.strategies.filter((s) => s.interval === strat.interval);
+        for (const stratCfg of coinStrategies) {
+          try {
+            const interval = stratCfg.interval as CandleInterval;
+            const strategy = createStrategy(stratCfg.name);
+            const minWarmup = computeMinWarmupBars(strategy, interval);
+            const replayBars = minWarmup + SIGNAL_WINDOW;
+            const candles = await fetchCandlesForReplay(replayDeps, coinCfg.coin, interval, now, replayBars);
+            const signals = replayStrategy({
+              strategyFactory: () => createStrategy(stratCfg.name),
+              candles,
+              interval,
+              strategyName: stratCfg.name,
+            });
+
+            wsBroker.broadcastEvent("replay-signals", {
+              coin: coinCfg.coin,
+              strategyName: stratCfg.name,
+              signals,
+            });
+
+            // Invalidate HTTP cache for this strategy
+            const cacheKey = `${coinCfg.coin}:${stratCfg.name}:${interval}`;
+            replayCache.delete(cacheKey);
+
+            // Divergence detection: compare live runner result with replay
+            const coinRunners = coinRunnersMap.get(coinCfg.coin) ?? [];
+            const runner = coinRunners.find((r) => r.getStrategyName() === stratCfg.name);
+            if (runner) {
+              const liveResult = runner.getLastSignalResult();
+              const lastReplaySignal = signals.length > 0 ? signals[signals.length - 1] : null;
+              const replayHadSignal = lastReplaySignal != null &&
+                candles.length > 0 &&
+                lastReplaySignal.t === candles[candles.length - 1].t;
+
+              if (liveResult && replayHadSignal && !liveResult.hadSignal) {
+                log.warn({
+                  action: "liveReplayDivergence",
+                  coin: coinCfg.coin,
+                  strategy: stratCfg.name,
+                  liveHadSignal: liveResult.hadSignal,
+                  replayDirection: lastReplaySignal.direction,
+                  replayEntryPrice: lastReplaySignal.entryPrice,
+                  liveCandleT: liveResult.t,
+                  replayCandleT: lastReplaySignal.t,
+                }, "Live runner missed signal that replay found — possible WS/REST data divergence");
+              }
+            }
+          } catch (err) {
+            log.warn(
+              { action: "replayBroadcastFailed", coin: coinCfg.coin, strategy: stratCfg.name, err },
+              "Failed to broadcast replay signals",
+            );
+          }
+        }
+      });
+    }
+  }
 
   await eventLog.append({
     type: "daemon_started",
