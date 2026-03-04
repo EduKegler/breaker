@@ -43,7 +43,7 @@ export const ModelRoutingSchema = z.object({
 export const GuardrailsSchema = z.object({
   maxRiskTradeUsd: z.number().min(0),
   maxAtrMult: z.number().min(1).default(10),
-  minAtrMult: z.number().min(0).default(1.5),
+  minAtrMult: z.number().min(0).default(2.5),
   globalMaxTradesDay: z.number().int().min(1).default(5),
   protectedFields: z.array(z.string()),
 });

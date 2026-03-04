@@ -75,7 +75,7 @@
   "guardrails": {
     "maxRiskTradeUsd": 25,
     "maxAtrMult": 10,
-    "minAtrMult": 1.5,
+    "minAtrMult": 2.5,
     "globalMaxTradesDay": 5,
     "protectedFields": ["maxTradesDay"]
   },

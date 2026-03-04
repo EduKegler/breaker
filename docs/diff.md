@@ -105,22 +105,7 @@ PARTE 1 — Regras KB obrigatórias violadas
   Gravidade: BAIXA — mais conservador que o KB, o que é seguro. Mas limita a operação multi-asset.
 
   ---
-  8. Refiner minAtrMult: 1.5 permite violação do KB
-
-  KB §1.6:
-  ATR breakout mín 3.0, MR mín 3.0-5.0, pullback mín 2.5
-
-  breaker-config.json (guardrails):
-  "minAtrMult": 1.5
-
-  As strategies individuais respeitam o mínimo (atrStopMult.min = 3.0 no breakout e MR, 2.5 no pullback). Porém o guardrail global
-  do refiner permite 1.5. Se o refiner fizer restructure e criar uma nova versão da strategy com ATR mult 1.5, o guardrail não
-  rejeita.
-
-  Gravidade: MÉDIA — a proteção está nas strategies, mas o guardrail global é um safety net furado.
-
-  ---
-  9. Backtest funding rate: modelo simplificado vs KB
+  1. Backtest funding rate: modelo simplificado vs KB
 
   KB §1.6:
   "Avg BTC funding rate ~0.005-0.01%/hour. HL-specific: hourly settlement"

@@ -38,9 +38,9 @@ describe("validateParamGuardrails", () => {
   });
 
   it("detects atrStopMult below minAtrMult", () => {
-    const guardrails: Guardrails = { ...defaultGuardrails, minAtrMult: 1.5 };
+    const guardrails: Guardrails = { ...defaultGuardrails, minAtrMult: 2.5 };
     const before = { atrStopMult: mkParam(3, 0.5, 10) };
-    const after = { atrStopMult: mkParam(0.8, 0.5, 10) };
+    const after = { atrStopMult: mkParam(2.0, 0.5, 10) };
     const v = validateParamGuardrails(before, after, guardrails);
     expect(v.some((vi) => vi.field === "atrStopMult" && vi.reason.includes("Below min"))).toBe(true);
   });
@@ -94,9 +94,9 @@ describe("validateGuardrails (legacy)", () => {
   });
 
   it("detects atrMult below minAtrMult", () => {
-    const guardrails: Guardrails = { ...defaultGuardrails, minAtrMult: 1.5 };
+    const guardrails: Guardrails = { ...defaultGuardrails, minAtrMult: 2.5 };
     const before = `atrMult = 3.0`;
-    const after = `atrMult = 0.8`;
+    const after = `atrMult = 2.0`;
     const v = validateGuardrails(before, after, guardrails);
     expect(v).toHaveLength(1);
     expect(v[0].field).toBe("atrMult");
