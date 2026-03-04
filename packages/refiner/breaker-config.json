@@ -22,7 +22,7 @@
   },
   "strategyProfiles": {
     "breakout": {
-      "minPF": 1.3, "maxDD": 10, "minWR": 40, "minTrades": 50, "minAvgR": 0.15,
+      "minPF": 1.3, "maxDD": 10, "minTrades": 50, "minAvgR": 0.15,
       "maxIterations": 15, "maxFreeVariables": 8,
       "coreParameters": [
         { "name": "dcSlow",       "min": 30, "max": 60, "step": 5 },
