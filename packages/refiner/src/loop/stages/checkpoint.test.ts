@@ -78,6 +78,17 @@ describe("checkpoint.save / checkpoint.load", () => {
 
 });
 
+describe("checkpoint.save edge cases", () => {
+  it("save with empty trades produces checkpoint without trades CSV", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
+    checkpoint.save(tmpDir, "// code", sampleMetrics, 1, { dcSlow: 55 }, []);
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.iter).toBe(1);
+    expect(fs.existsSync(path.join(tmpDir, "best-trades.csv"))).toBe(false);
+  });
+});
+
 describe("checkpoint.rollback", () => {
   it("restores strategy file from checkpoint", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
@@ -99,6 +110,10 @@ describe("checkpoint.rollback", () => {
     expect(result).toBe(false);
   });
 
+  it("returns false when checkpoint dir does not exist", () => {
+    const result = checkpoint.rollback("/tmp/nonexistent-dir-" + Date.now(), "/tmp/target.ts");
+    expect(result).toBe(false);
+  });
 });
 
 describe("checkpoint.loadParams", () => {

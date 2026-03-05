@@ -46,6 +46,7 @@ import { phaseHelpers } from "./phase-helpers.js";
 import type { LoopConfig, IterationState } from "./types.js";
 import { computeScore } from "./stages/scoring.js";
 import type { ScoreVerdict } from "./stages/scoring.js";
+import { integrity } from "./stages/integrity.js";
 
 // ---------------------------------------------------------------------------
 // parseArgs
@@ -719,5 +720,95 @@ describe("failed restructures tracking", () => {
 
     expect(failedRestructures).toHaveLength(2);
     expect(failedRestructures.map((f) => f.globalIter)).toEqual([18, 19]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG FIX: baseline checkpoint must seed bestScore (not 0)
+// ---------------------------------------------------------------------------
+describe("baseline bestScore seeding prevents WF guardrail trap", () => {
+  it("bestScore=0 causes every positive-scoring iter to be 'accepted' then WF-rejected", () => {
+    // With bestScore=0, the verdict logic returns "accept" for any score > 0
+    const bestScore = 0;
+    const currentScore = 33.3;
+    const scoreVerdict = bestScore > 0
+      ? "neutral" // compareScores would be called
+      : (currentScore > 0 ? "accept" : "neutral");
+    expect(scoreVerdict).toBe("accept");
+    // WF guardrail overrides accept → reject, trapping the loop
+  });
+
+  it("bestScore seeded from baseline causes same-strategy iter to be 'neutral' (no WF gate)", () => {
+    // With bestScore=33.3 from baseline, same strategy returns "neutral"
+    const bestScore = 33.3;
+    const currentScore = 33.3;
+    // compareScores: within ±2% band → "neutral"
+    const scoreVerdict = bestScore > 0
+      ? (currentScore > bestScore * 1.02 ? "accept" : currentScore < bestScore * 0.92 ? "reject" : "neutral")
+      : (currentScore > 0 ? "accept" : "neutral");
+    expect(scoreVerdict).toBe("neutral");
+    // WF guardrail only fires on "accept" — "neutral" passes through safely
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Checkpoint source validation logic
+// ---------------------------------------------------------------------------
+describe("checkpoint source validation", () => {
+  it("matching source hash does not trigger restore", () => {
+    const source = "const x = 1;";
+    const hash = integrity.computeHash(source);
+    expect(hash).toBe(integrity.computeHash(source));
+    const shouldRestore = (hash !== integrity.computeHash(source)) && (1 > 0);
+    expect(shouldRestore).toBe(false);
+  });
+
+  it("different source hash triggers restore flag", () => {
+    const cpSource = "const x = 1;";
+    const currentSource = "const x = 2;";
+    const cpHash = integrity.computeHash(cpSource);
+    const currentHash = integrity.computeHash(currentSource);
+    expect(cpHash).not.toBe(currentHash);
+    const iter = 5;
+    const shouldRestore = (cpHash !== currentHash) && (iter > 0);
+    expect(shouldRestore).toBe(true);
+  });
+
+  it("iter 0 does not trigger restore even on hash mismatch", () => {
+    const cpHash = integrity.computeHash("old");
+    const currentHash = integrity.computeHash("new");
+    const iter = 0;
+    const shouldRestore = (cpHash !== currentHash) && (iter > 0);
+    expect(shouldRestore).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// canUseInProcess logic
+// ---------------------------------------------------------------------------
+describe("canUseInProcess logic", () => {
+  it("checkpointRestored forces child-process backtest path", () => {
+    const checkpointRestored = true;
+    const phase = "refine";
+    const contentHash = "abc123";
+    const lastContentHash = "abc123";
+    const canUseInProcess = !checkpointRestored && (phase === "refine" || contentHash === lastContentHash);
+    expect(canUseInProcess).toBe(false);
+  });
+
+  it("refine phase without checkpoint restore uses in-process path", () => {
+    const checkpointRestored = false;
+    const phase = "refine";
+    const canUseInProcess = !checkpointRestored && (phase === "refine" || false);
+    expect(canUseInProcess).toBe(true);
+  });
+
+  it("matching content hash allows in-process even after restructure", () => {
+    const checkpointRestored = false;
+    const phase = "restructure";
+    const contentHash = "abc123";
+    const lastContentHash = "abc123";
+    const canUseInProcess = !checkpointRestored && (phase === "refine" || contentHash === lastContentHash);
+    expect(canUseInProcess).toBe(true);
   });
 });

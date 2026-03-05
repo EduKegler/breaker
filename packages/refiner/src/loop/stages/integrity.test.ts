@@ -18,6 +18,10 @@ describe("integrity.computeHash", () => {
     const h2 = integrity.computeHash("same content");
     expect(h1).toBe(h2);
   });
+
+  it("trailing newline produces a different hash", () => {
+    expect(integrity.computeHash("code")).not.toBe(integrity.computeHash("code\n"));
+  });
 });
 
 describe("integrity.validateHash", () => {

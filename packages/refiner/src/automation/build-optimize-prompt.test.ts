@@ -324,4 +324,24 @@ describe("buildOptimizePrompt structural diagnostics", () => {
     });
     expect(prompt).not.toContain("FAILED RESTRUCTURE");
   });
+
+  it("handles metrics with 0 trades gracefully", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics({ numTrades: 0 }),
+      tradeAnalysis: null,
+    });
+    expect(prompt).toContain("0");
+    expect(prompt).not.toContain("undefined");
+  });
+
+  it("handles null walkForward in trade analysis", () => {
+    const analysis = makeAnalysisWithExits([{ signal: "signal", count: 50, pnl: -30, winRate: 40 }]);
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: { ...analysis, walkForward: null },
+    });
+    expect(prompt).toBeDefined();
+  });
 });

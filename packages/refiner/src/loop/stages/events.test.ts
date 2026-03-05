@@ -135,4 +135,25 @@ describe("emitEvent", () => {
     expect(event.dd).toBe(0);
     expect(event.trades).toBe(0);
   });
+
+  it("emits CHECKPOINT_RESTORED event with hash details", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pine-events-"));
+    emitEvent({
+      artifactsDir: tmpDir,
+      runId: "test",
+      asset: "BTC",
+      iter: 0,
+      stage: "CHECKPOINT_RESTORED",
+      status: "warn",
+      message: "Source hash mismatch: cp=ABC vs current=DEF",
+    });
+
+    const file = path.join(tmpDir, "events.ndjson");
+    const lines = fs.readFileSync(file, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const event = JSON.parse(lines[0]);
+    expect(event.stage).toBe("CHECKPOINT_RESTORED");
+    expect(event.status).toBe("warn");
+    expect(event.message).toContain("hash mismatch");
+  });
 });

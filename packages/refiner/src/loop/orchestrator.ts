@@ -181,9 +181,21 @@ export async function orchestrate(): Promise<void> {
     const cpSourceHash = integrity.computeHash(existingCheckpoint.strategyContent);
     const currentHash = integrity.computeHash(currentSource);
     if (cpSourceHash !== currentHash && existingCheckpoint.iter > 0) {
-      log("Checkpoint source differs from current strategy file — restoring checkpoint.");
-      checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
+      log(`Checkpoint source hash mismatch: checkpoint=${cpSourceHash} current=${currentHash} (iter ${existingCheckpoint.iter})`);
+      const rollbackOk = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
+      if (rollbackOk) {
+        log("Checkpoint source restored successfully.");
+      } else {
+        log("WARNING: Checkpoint rollback failed — no checkpoint file found.");
+      }
       checkpointRestored = true;
+      emitEvent({
+        artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter: 0,
+        stage: "CHECKPOINT_RESTORED", status: "warn",
+        message: `Source hash mismatch: cp=${cpSourceHash} vs current=${currentHash}. Restored from iter ${existingCheckpoint.iter}.`,
+      });
+    } else if (existingCheckpoint) {
+      log(`Checkpoint source matches current file (hash=${currentHash})`);
     }
 
     initialBestPnl = existingCheckpoint.metrics.totalPnl ?? 0;
@@ -196,6 +208,26 @@ export async function orchestrate(): Promise<void> {
     );
     initialBestScore = cpScore.weighted;
     log(`Loaded checkpoint: bestPnl=$${initialBestPnl.toFixed(2)} score=${initialBestScore.toFixed(1)} from iter ${initialBestIter}`);
+  } else {
+    // No checkpoint — run baseline backtest and save with real metrics.
+    // This ensures bestScore reflects the actual strategy performance, preventing
+    // the WF guardrail from trapping the loop when bestScore=0 causes every
+    // positive-scoring iteration to be "accepted" then immediately WF-rejected.
+    const baselineSource = fs.readFileSync(cfg.strategyFile, "utf8");
+    const baselineStrategy = factory(paramOverrides);
+    log("Running baseline backtest...");
+    const baselineResult = runEngineInProcess({
+      candles,
+      strategy: baselineStrategy,
+      sourceInterval: cfg.interval as CandleInterval,
+    });
+    const baselineMetrics = baselineResult.metrics;
+    checkpoint.save(cfg.checkpointDir, baselineSource, baselineMetrics, 0, paramOverrides, baselineResult.trades);
+
+    initialBestPnl = baselineMetrics.totalPnl ?? 0;
+    const baselineScoreResult = computeScore(baselineMetrics, paramCount, baselineMetrics.numTrades ?? 0, cfg.scoring.weights);
+    initialBestScore = baselineScoreResult.weighted;
+    log(`Saved baseline checkpoint (iter 0): PnL=$${initialBestPnl.toFixed(2)} score=${initialBestScore.toFixed(1)} trades=${baselineMetrics.numTrades}`);
   }
 
   // Create xstate actor for state management
@@ -247,12 +279,7 @@ export async function orchestrate(): Promise<void> {
     message: `strategy=${cfg.strategy} maxIter=${cfg.maxIter} bestPnl=${initialBestPnl} phase=${initialPhase}`,
   });
 
-  // Save baseline checkpoint (iter 0) if none exists — ensures rollback is always possible
-  if (!existingCheckpoint) {
-    const baselineSource = fs.readFileSync(cfg.strategyFile, "utf8");
-    checkpoint.save(cfg.checkpointDir, baselineSource, {} as Metrics, 0, paramOverrides);
-    log("Saved baseline checkpoint (iter 0) for rollback safety");
-  }
+  // Baseline checkpoint was already saved with real metrics in the else-branch above
 
   let lastContentHash: string | undefined;
   const failedRestructures: RestructureFailure[] = [];
@@ -282,7 +309,7 @@ export async function orchestrate(): Promise<void> {
     }
 
     if (phaseAfterEscalation !== prevPhase) {
-      log(`Escalating: ${prevPhase} -> ${phaseAfterEscalation} (neutralStreak=${mCtx.neutralStreak}, noChange=${mCtx.noChangeCount})`);
+      log(`Escalating: ${prevPhase} -> ${phaseAfterEscalation} | bestScore=${mCtx.bestScore.toFixed(1)} bestPnl=$${mCtx.bestPnl.toFixed(2)} bestIter=${mCtx.bestIter} (neutralStreak=${mCtx.neutralStreak}, noChange=${mCtx.noChangeCount})`);
       emitEvent({
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "PHASE_CHANGE", status: "info",
@@ -628,6 +655,7 @@ export async function orchestrate(): Promise<void> {
       state.bestPnl = currentPnl;
       state.bestIter = iter;
       checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, trades);
+      log(`Checkpoint saved: iter=${iter} score=${scoreResult.weighted.toFixed(1)} PnL=$${currentPnl.toFixed(2)} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)}`);
       log(`New best: Score=${scoreResult.weighted.toFixed(1)} PnL=$${currentPnl.toFixed(2)} at iter ${iter}`);
     } else if (scoreResult.weighted > bestScore && !meetsMinTrades) {
       log(`Score ${scoreResult.weighted.toFixed(1)} is best but trades=${metrics.numTrades} < minTrades=${cfg.criteria.minTrades} -- not saving checkpoint`);
@@ -642,6 +670,7 @@ export async function orchestrate(): Promise<void> {
           pf: metrics.profitFactor ?? 0,
           score: scoreResult.weighted,
         });
+        log(`Tracked failed restructure: globalIter=${state.globalIter} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)} score=${scoreResult.weighted.toFixed(1)}`);
       }
 
       // Restore best params
@@ -652,9 +681,12 @@ export async function orchestrate(): Promise<void> {
       // Restore best strategy source
       const restored = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
       if (!restored) {
-        log(`WARNING: Rollback failed -- no checkpoint found.`);
-      } else if (phase !== "refine") {
-        actor.send({ type: "SET_NEEDS_REBUILD", value: true });
+        log("WARNING: Rollback failed — no checkpoint found.");
+      } else {
+        log(`Rollback OK: restored strategy from checkpoint (iter ${state.bestIter})`);
+        if (phase !== "refine") {
+          actor.send({ type: "SET_NEEDS_REBUILD", value: true });
+        }
       }
 
       // Use checkpoint metrics so the optimizer prompt matches the restored source
