@@ -38,13 +38,14 @@ import { integrity } from "./stages/integrity.js";
 import { computeScore } from "./stages/scoring.js";
 import { compareScores } from "./stages/compare-scores.js";
 import { buildOptimizePrompt } from "../automation/build-optimize-prompt.js";
+import type { RestructureFailure } from "../automation/build-optimize-prompt.js";
 import { buildFixPrompt } from "../automation/build-fix-prompt.js";
 import { buildModuleContext, MODULE_CRITERIA } from "../lib/build-module-context.js";
 import { paramWriter } from "./stages/param-writer.js";
 import { conductResearch } from "./stages/research.js";
 import { safeJsonParse } from "../lib/safe-json.js";
 import { breakerMachine } from "./state-machine.js";
-import type { Candle, CandleInterval, Metrics, StrategyParam } from "@breaker/backtest";
+import type { Candle, CandleInterval, Metrics, StrategyParam, TradeAnalysis } from "@breaker/backtest";
 import type { IterationMetadata } from "./stages/param-writer.js";
 import type { IterationState, LoopPhase } from "./types.js";
 
@@ -238,6 +239,7 @@ export async function orchestrate(): Promise<void> {
   }
 
   let lastContentHash: string | undefined;
+  const failedRestructures: RestructureFailure[] = [];
 
   for (let iter = 1; iter <= cfg.maxIter; iter++) {
     state.iter = iter;
@@ -469,8 +471,10 @@ export async function orchestrate(): Promise<void> {
     }
 
     // Backtest succeeded — reset error counters via BACKTEST_OK
-    const { metrics, analysis, trades } = engineResult;
-    const currentPnl = metrics.totalPnl ?? 0;
+    let { metrics } = engineResult;
+    let analysis: TradeAnalysis | null = engineResult.analysis;
+    const { trades } = engineResult;
+    let currentPnl = metrics.totalPnl ?? 0;
 
     // Recompute param count (accurate in refine; stale in restructure due to ESM cache)
     paramCount = countOptimizableParams(factory(paramOverrides).params);
@@ -611,6 +615,17 @@ export async function orchestrate(): Promise<void> {
       log(`Score ${scoreResult.weighted.toFixed(1)} is best but trades=${metrics.numTrades} < minTrades=${cfg.criteria.minTrades} -- not saving checkpoint`);
     } else if (effectiveVerdict === "reject") {
       log(`Rolling back: ${effectiveVerdict === scoreVerdict ? "score degraded" : "guardrail rejected"} (score=${scoreResult.weighted.toFixed(1)} vs best=${bestScore.toFixed(1)})`);
+
+      // Track failed restructure for prompt feedback
+      if (phase !== "refine") {
+        failedRestructures.push({
+          globalIter: state.globalIter,
+          trades: metrics.numTrades ?? 0,
+          pf: metrics.profitFactor ?? 0,
+          score: scoreResult.weighted,
+        });
+      }
+
       // Restore best params
       const bestParams = checkpoint.loadParams(cfg.checkpointDir);
       if (bestParams) {
@@ -623,6 +638,18 @@ export async function orchestrate(): Promise<void> {
       } else if (phase !== "refine") {
         actor.send({ type: "SET_NEEDS_REBUILD", value: true });
       }
+
+      // Use checkpoint metrics so the optimizer prompt matches the restored source
+      if (phase !== "refine") {
+        const cpData = checkpoint.load(cfg.checkpointDir);
+        if (cpData?.metrics) {
+          metrics = cpData.metrics as Metrics;
+          analysis = null;
+          currentPnl = metrics.totalPnl ?? 0;
+          log(`Using checkpoint metrics after rollback: PnL=$${currentPnl.toFixed(2)} Trades=${metrics.numTrades}`);
+        }
+      }
+
       emitEvent({
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "ROLLBACK", status: "warn", pnl: currentPnl,
@@ -661,6 +688,7 @@ export async function orchestrate(): Promise<void> {
       paramHistoryPath: cfg.paramHistoryFile,
       artifactsDir: cfg.artifactsDir,
       researchBriefPath: currentResearchBriefPath,
+      failedRestructures: failedRestructures.length > 0 ? failedRestructures : undefined,
     });
 
     emitEvent({

@@ -298,4 +298,30 @@ describe("buildOptimizePrompt structural diagnostics", () => {
     expect(prompt).toContain("Sun");
     expect(prompt).toContain("Wed");
   });
+
+  it("includes failed restructure attempts in the prompt", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      failedRestructures: [
+        { globalIter: 18, trades: 1, pf: 0, score: 29.9 },
+        { globalIter: 19, trades: 3, pf: 0, score: 17.9 },
+      ],
+    });
+    expect(prompt).toContain("FAILED RESTRUCTURE");
+    expect(prompt).toContain("1 trades");
+    expect(prompt).toContain("3 trades");
+    expect(prompt).toContain("DO NOT repeat");
+  });
+
+  it("does not show failures section when list is empty", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      failedRestructures: [],
+    });
+    expect(prompt).not.toContain("FAILED RESTRUCTURE");
+  });
 });

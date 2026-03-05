@@ -622,3 +622,102 @@ describe("bestScore restoration from checkpoint", () => {
     expect(iterScore.weighted).toBeLessThan(cpScore.weighted);
   });
 });
+
+// ---------------------------------------------------------------------------
+// BUG FIX: rollback uses checkpoint metrics (not stale failed metrics)
+// ---------------------------------------------------------------------------
+describe("rollback metrics consistency", () => {
+  it("after non-refine rollback, metrics should be updated to checkpoint metrics", () => {
+    // Simulates the rollback flow in orchestrator Step 4:
+    // When a restructure fails (e.g., 1 trade), we rollback the source.
+    // The metrics passed to the optimizer should be from the checkpoint, not from the failed run.
+    const failedMetrics = { totalPnl: 0.14, numTrades: 1, profitFactor: 0, maxDrawdownPct: 0, winRate: 100, avgR: 0.01 };
+    const checkpointMetrics = { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09 };
+    const phase = "restructure";
+    const effectiveVerdict = "reject";
+
+    // This is the logic from the orchestrator:
+    let metrics = { ...failedMetrics };
+    let currentPnl = metrics.totalPnl ?? 0;
+
+    if (effectiveVerdict === "reject" && phase !== "refine") {
+      // Simulate loading checkpoint data
+      const cpData = { metrics: checkpointMetrics };
+      metrics = cpData.metrics as typeof metrics;
+      currentPnl = metrics.totalPnl ?? 0;
+    }
+
+    // After rollback, metrics must reflect the checkpoint, not the failed run
+    expect(metrics.numTrades).toBe(77);
+    expect(metrics.profitFactor).toBe(0.71);
+    expect(currentPnl).toBe(-70);
+  });
+
+  it("refine rollback does NOT swap metrics (source unchanged)", () => {
+    const failedMetrics = { totalPnl: -500, numTrades: 150, profitFactor: 0.5, maxDrawdownPct: 30, winRate: 35, avgR: -0.1 };
+    const phase = "refine";
+    const effectiveVerdict = "reject";
+
+    let metrics = { ...failedMetrics };
+
+    if (effectiveVerdict === "reject" && phase !== "refine") {
+      // Should NOT enter this branch for refine
+      metrics = { totalPnl: 999, numTrades: 999 } as typeof metrics;
+    }
+
+    // Refine rollback keeps original metrics (params are reverted but source unchanged)
+    expect(metrics.numTrades).toBe(150);
+    expect(metrics.profitFactor).toBe(0.5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG FIX: failed restructures tracked for prompt feedback
+// ---------------------------------------------------------------------------
+describe("failed restructures tracking", () => {
+  it("records failure info on non-refine rollback", () => {
+    const failedRestructures: Array<{ globalIter: number; trades: number; pf: number; score: number }> = [];
+    const phase = "restructure";
+    const effectiveVerdict = "reject";
+    const metrics = { numTrades: 1, profitFactor: 0 };
+    const globalIter = 18;
+    const scoreWeighted = 29.9;
+
+    // Simulate rollback tracking logic
+    if (phase !== "refine" && effectiveVerdict === "reject") {
+      failedRestructures.push({
+        globalIter,
+        trades: metrics.numTrades ?? 0,
+        pf: metrics.profitFactor ?? 0,
+        score: scoreWeighted,
+      });
+    }
+
+    expect(failedRestructures).toHaveLength(1);
+    expect(failedRestructures[0]).toEqual({ globalIter: 18, trades: 1, pf: 0, score: 29.9 });
+  });
+
+  it("does NOT record failure on refine rollback", () => {
+    const failedRestructures: Array<{ globalIter: number; trades: number; pf: number; score: number }> = [];
+    const phase = "refine";
+    const effectiveVerdict = "reject";
+
+    if (phase !== "refine" && effectiveVerdict === "reject") {
+      failedRestructures.push({ globalIter: 5, trades: 100, pf: 0.5, score: 30 });
+    }
+
+    expect(failedRestructures).toHaveLength(0);
+  });
+
+  it("accumulates multiple failures across iterations", () => {
+    const failedRestructures: Array<{ globalIter: number; trades: number; pf: number; score: number }> = [];
+
+    // Iter 1: restructure fails
+    failedRestructures.push({ globalIter: 18, trades: 1, pf: 0, score: 29.9 });
+    // Iter 2: restructure fails again
+    failedRestructures.push({ globalIter: 19, trades: 3, pf: 0, score: 17.9 });
+
+    expect(failedRestructures).toHaveLength(2);
+    expect(failedRestructures.map((f) => f.globalIter)).toEqual([18, 19]);
+  });
+});

@@ -23,6 +23,13 @@ import { safeJsonParse } from "../lib/safe-json.js";
 // Types
 // ---------------------------------------------------------------------------
 
+export interface RestructureFailure {
+  globalIter: number;
+  trades: number;
+  pf: number;
+  score: number;
+}
+
 interface BuildPromptOptions {
   metrics: Metrics;
   tradeAnalysis: TradeAnalysis | null;
@@ -39,6 +46,7 @@ interface BuildPromptOptions {
   paramHistoryPath: string;
   artifactsDir: string;
   researchBriefPath?: string;
+  failedRestructures?: RestructureFailure[];
 }
 
 // ---------------------------------------------------------------------------
@@ -49,7 +57,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const {
     metrics, tradeAnalysis, strategySourcePath, strategyParams, paramOverrides,
     criteria, asset, moduleContext, phase, iter, maxIter, globalIter,
-    paramHistoryPath, artifactsDir, researchBriefPath,
+    paramHistoryPath, artifactsDir, researchBriefPath, failedRestructures,
   } = opts;
 
   // Use KB-aligned criteria for this module, fallback to config
@@ -113,6 +121,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
 
   // Research brief — updated schema matching conduct-research.ts
   const researchSection = buildResearchSection(researchBriefPath);
+  const failedRestructuresSection = buildFailedRestructuresSection(failedRestructures);
 
   const metadataPath = `${artifactsDir}/iter${globalIter}-metadata.json`;
 
@@ -159,7 +168,7 @@ Avg Win: ${metrics.avgWinR != null ? `${metrics.avgWinR.toFixed(2)}R` : "N/A"} |
 
 ${designChecklistSection}${paramsSection}
 ${kbConstraintsBlock}${overfitSection}${tradeAnalysisSection}
-${filterSimsSection}${exploredSpaceSection}${coreParamsSection}${pendingHypothesesSection}${approachHistorySection}${researchSection}
+${filterSimsSection}${exploredSpaceSection}${coreParamsSection}${pendingHypothesesSection}${approachHistorySection}${researchSection}${failedRestructuresSection}
 ${phaseTask}
 
 ## STRATEGY INTERFACE REFERENCE
@@ -684,6 +693,22 @@ function buildStructuralDiagnostics(ta: TradeAnalysis): string {
 
   if (!warnings.length) return "";
   return "\n### Structural Diagnostics\n" + warnings.join("\n") + "\n";
+}
+
+function buildFailedRestructuresSection(failures?: RestructureFailure[]): string {
+  if (!failures || failures.length === 0) return "";
+  const lines = [
+    "\n## FAILED RESTRUCTURE ATTEMPTS THIS SESSION",
+    "The following restructure attempts were ROLLED BACK because they degraded performance:",
+  ];
+  for (const f of failures) {
+    lines.push(`  - globalIter ${f.globalIter}: ${f.trades} trades, PF=${f.pf.toFixed(2)}, Score=${f.score.toFixed(1)}`);
+  }
+  lines.push("");
+  lines.push("DO NOT repeat the same structural approach. Each attempt above produced catastrophically few trades.");
+  lines.push("Try a fundamentally different entry/exit structure, or make a LESS aggressive modification to the existing strategy.");
+  lines.push("");
+  return lines.join("\n");
 }
 
 function buildFilterSimsSection(tradeAnalysis: TradeAnalysis | null): string {
