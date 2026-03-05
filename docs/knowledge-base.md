@@ -21,7 +21,7 @@
 4. [Module 2: Mean Reversion](#4-module-2-mean-reversion)
 5. [Module 3: Pullback](#5-module-3-pullback)
 6. [Module 4: Trend Following](#6-module-4-trend-following)
-7. [Module 5: Do Not Trade](#7-module-5-do-not-trade) (includes volatility spike filter)
+7. [Blocking Gate Specifications](#7-blocking-gate-specifications) (volatility spike filter, squeeze detection)
 
 **Part 3 -- Operations**
 8. [Session Map](#8-session-map)
@@ -112,7 +112,7 @@ If a module says "risk $5 per trade" but Canonical Parameters says "$10", Canoni
 |--------|--------------|----------------|-----------|
 | Breakout (M1) | 1H | 3.0 | Avoids 15m noise on BTC |
 | Mean Reversion (M2) | 1H | 3.0-5.0 (wide/catastrophic) | MR needs room to revert. No stop also valid |
-| Pullback (M3) | 1H | 2.5 | Swing low + ATR cap |
+| Pullback (M3) | 1H | 2.5 | Below depth filter invalidation + buffer. ATR × 2.5 is entry filter (skip if stop wider), not cap |
 | Trend Following (M4) | Daily | 3.0 | Swing trades need wider stops. Daily ATR, not 1H |
 
 **Variable caps:**
@@ -136,7 +136,6 @@ If a module says "risk $5 per trade" but Canonical Parameters says "$10", Canoni
 | 2 | **Mean Reversion** | Active | Phase 1 (now) | Ranging |
 | 3 | **Pullback** | Active | Phase 4 | Trending (middle of move) |
 | 4 | **Trend Following** | Active | Phase 4 | Trending (duration of move) |
-| 5 | **Do Not Trade** | Active | Phase 1 | Uncertain regime |
 | -- | Reversal | Discarded | -- | Insufficient sample, highest degradation (~35%), too discretionary |
 | -- | Scalping | Out of scope | -- | Needs 1m/tick, low latency |
 | -- | Arbitrage | Out of scope | -- | Needs multi-exchange bots, no indicators |
@@ -145,7 +144,7 @@ If a module says "risk $5 per trade" but Canonical Parameters says "$10", Canoni
 | -- | Order Flow | Out of scope | -- | Needs tick/L2 data, not OHLCV |
 | -- | Event-Driven | Out of scope | -- | Edge in reaction, not backtestable |
 
-> **Uncertain regime = do not trade** (Module 5). The 4 active strategies cover trending + ranging. Nothing else needed.
+> **Uncertain regime = do not trade** (orchestrator blocking gates, section 7). The 4 active strategies cover trending + ranging. Uncertain/compressed regimes are handled by gates (squeeze, volatility spike), not by a separate module.
 
 ### 2.2 Active strategies (detail)
 
@@ -176,7 +175,7 @@ TRENDING REGIME    ->  Breakout -- captures START of the move
                        Pullback -- captures MIDDLE of the move (pullbacks)
                        Trend Following (4H/Daily, swing) -- captures DURATION of the move
 RANGING REGIME     ->  Mean Reversion
-UNCERTAIN REGIME   ->  Do not trade
+UNCERTAIN/COMPRESSED ->  Blocking gates (squeeze, volatility spike) -- no entries
 ```
 
 ### 2.5 Orchestrator specification
@@ -196,7 +195,7 @@ The orchestrator is the only component that sees all modules and all assets simu
 | Scenario | Resolution | Rationale |
 |----------|-----------|-----------|
 | Same direction, same bar | Static priority: M1 > M3 > M2 > M4 | Both agree on direction; faster modules get priority because their signals are more time-sensitive |
-| Opposite direction, same bar | No trade. Skip both signals | Conflicting regime read = uncertainty. Aligns with M5 (Do Not Trade) philosophy |
+| Opposite direction, same bar | No trade. Skip both signals | Conflicting regime read = uncertainty. Aligns with blocking gate philosophy (when in doubt, sit out) |
 | One module signals, others silent | Normal entry. No conflict | Most common case (~90%+ of signals) |
 
 **Static priority:** M1 Breakout > M3 Pullback > M2 MR > M4 TF. Rationale: faster modules (15m) get priority over slower (4H/Daily) because their signals are more time-sensitive. This is a fixed map — no dynamic PF lookup needed for an edge case that occurs on <1% of signals.
@@ -227,16 +226,17 @@ These gates are checked BEFORE any module signal is allowed to execute:
 ```
 1. Is daily loss >= maxDailyLossR? -> BLOCK all entries (all assets), close any open position  [GLOBAL]
 2. Is daily trade count >= 5? -> BLOCK all entries (all assets). Open positions may exit normally  [GLOBAL]
-3. Is volatility spike active? -> BLOCK all entries (all assets). See 7.1/7.2  [GLOBAL]
+3. Is volatility spike active? -> BLOCK all entries (all assets). See 7.2  [GLOBAL]
 4. Is there an open position on this asset? -> BLOCK new entries on this asset (mutex)  [PER-ASSET]
 5. Is cooldown active for this module on this asset? -> BLOCK (min 2-bar cooldown after stop, see 9.8)  [PER-ASSET]
+6. Is active squeeze detected? -> BLOCK all entries (all assets). See 7.1. Release (BB expanding outside KC) = resume, Breakout may enter  [GLOBAL]
 ```
 
-Order matters: check top to bottom. Gates 1-3 are global (affect all assets). Gates 4-5 are per-asset. Gate 1 is the most aggressive (force close all). Gates 2-5 only block new entries.
+Order matters: check top to bottom. Gates 1-3, 6 are global (affect all assets). Gates 4-5 are per-asset. Gate 1 is the most aggressive (force close all). Gates 2-6 only block new entries.
 
 #### 2.5.5 Implementation notes
 
-- **State:** The orchestrator maintains: current position per asset (module, direction, entry time, entry price), daily PnL across all assets (USD), daily trade count across all assets, per-module per-asset cooldown timestamps, volatility spike status
+- **State:** The orchestrator maintains: current position per asset (module, direction, entry time, entry price), daily PnL across all assets (USD), daily trade count across all assets, per-module per-asset cooldown timestamps, volatility spike status, squeeze status
 - **Signal loop:** Runs every 15m bar close (aligned with fastest module). Polls each module for signals, applies priority rules, executes entries/exits
 - **Risk loop:** Runs every 30s. Checks global gates (maxDailyLossR, volatility spike), force closes positions if needed. More frequent than signal loop because risk events don't wait for bar boundaries
 - **Logging:** Every decision (entry allowed, entry blocked + reason, forced exit) is logged with timestamp, module, and gate that triggered. This is the primary debugging tool
@@ -261,7 +261,7 @@ Order matters: check top to bottom. Gates 1-3 are global (affect all assets). Ga
 - Session transition
 - **-> DO NOT TRADE (until release)**
 
-> **Squeeze boundary rule:** The line between Module 5 (DNT) and Module 1 (Breakout) is the squeeze release moment. During active compression, no module trades. On release (BB crosses back outside KC with volume confirmation), Breakout may enter. This prevents DNT from blocking the exact setups Breakout is designed to capture.
+> **Squeeze boundary rule:** The line between the squeeze gate (2.5.4 gate 6) and Module 1 (Breakout) is the squeeze release moment. During active compression, no module trades. On release (BB crosses back outside KC with volume confirmation), Breakout may enter. This prevents the squeeze gate from blocking the exact setups Breakout is designed to capture.
 
 > **Note on ADX:** ADX is lagging by design -- when it confirms the market is ranging, the market may already be breaking out. ([source](https://www.avatrade.com/education/technical-analysis-indicators-strategies/adx-indicator-trading-strategies)) Use as ONE of the inputs, not as a single binary filter. Prefer price action (HH/HL) + volume as the first read.
 
@@ -286,7 +286,7 @@ Order matters: check top to bottom. Gates 1-3 are global (affect all assets). Ga
 4. **Candle close confirmation:** mandatory. Enter only when the 15m candle **closes** beyond the breakout level. Never enter on wick alone. ([Wyckoff upthrust](https://www.wyckoffanalytics.com/wyckoff-method), [Turtle divergence note](https://oxfordstrat.com/coasdfASD32/uploads/2016/01/turtle-rules.pdf))
 5. **Timeout exit:** mandatory. Forced exit after N bars to prevent funding bleed on failed breakouts.
 6. **ATR-based stop on 1H:** mandatory (not 15m).
-7. **Stopping criteria:** PF >= 1.3, DD <= 10%, trades >= 50, pfRatio >= 0.6, avgR >= 0.15. No minimum win rate. ([WR rationale](https://www.tradingview.com/chart/XAUUSD/tDeNSCEn-Breakout-Trading-How-Low-Win-Rate-Systems-Beat-the-Market/))
+7. **Stopping criteria:** PF >= 1.3, DD <= 10%, trades >= 50, pfRatio >= 0.6, avgR >= 0.15. No minimum win rate. Trade count evaluated over backtest window in section 12 (6-8 months for 15m modules). ([WR rationale](https://www.tradingview.com/chart/XAUUSD/tDeNSCEn-Breakout-Trading-How-Low-Win-Rate-Systems-Beat-the-Market/))
 
 #### Rationale (for human review, not consumed by BREAKER loop)
 
@@ -377,12 +377,12 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 1. **Max free variables:** 6
 2. **Must identify "extreme" and "mean."** Strategy needs a band/channel to define overextension and a center line to define the reversion target. Both must be explicit and mechanistic. ([Bollinger](https://www.bollingerbands.com/), [Keltner/Raschke](https://www.quantifiedstrategies.com/keltner-bands-trading-strategies/))
 3. **Must include a regime filter (ranging confirmation).** MR fails catastrophically in trending markets. Arda (2025, SSRN): systematic evaluation of BB MR vs breakout across BTC regimes found both approaches degraded during distribution phases and MR only achieved exceptional gains during calm/ranging regimes. Gate entries with ADX < threshold on 1H or equivalent ranging confirmation. Architecture locked per RESTRUCTURE, params tunable. ([SetupAlpha](https://setupalpha.com/blogs/articles/mean-reversion-strategy-failures-complete-fix-guide), [MQL5 Regime Detection](https://www.mql5.com/en/articles/17737), [Arda 2025](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5775962))
-4. **Stop loss: wide or none.** Tight stops destroy MR performance -- they lock in losses before reversion completes. Use either a very wide catastrophic stop (3-5x ATR on 1H) or no stop with strict position sizing + timeout. When using no stop, sizing must use a virtual stop for the position calculation (see 9.2 no-stop fallback). BREAKER must backtest both and pick the one with better expectancy. ([Robuxio](https://www.robuxio.com/algorithmic-crypto-trading-v-mean-reversion/), [QuantifiedStrategies/Curtis Faith](https://www.quantifiedstrategies.com/mean-reversion-trading-strategy/), [ScienceDirect naphtha MR](https://www.sciencedirect.com/science/article/pii/S0140988325004475))
+4. **Stop loss: wide or none.** Tight stops destroy MR performance -- they lock in losses before reversion completes. Use either a very wide catastrophic stop (3-5x ATR on 1H) or no stop with strict position sizing + timeout. **Perps constraint:** the no-stop variant is only permitted if the position has no liquidation risk — leverage and margin must satisfy the liq distance >= 2x widest stop rule (see 9.3). With riskPerTradeUsd = $10 and 3-5x leverage, positions are small enough that liquidation is near-impossible, but this must be verified per-asset. When using no stop, sizing must use a virtual stop for the position calculation (see 9.2 no-stop fallback). BREAKER must backtest both and pick the one with better expectancy. ([QuantifiedStrategies](https://www.quantifiedstrategies.com/mean-reversion-trading-strategy/), [ScienceDirect naphtha MR 2025 [CROSS-DOMAIN]](https://www.sciencedirect.com/science/article/pii/S0140988325004475))
 5. **Must include a timeout exit.** MR trades that don't revert within N bars must exit to prevent funding bleed and capital lock. This partially replaces the protective function of a tight stop.
 6. **Position sizing: conservative.** MR profile = many small wins, occasional large loss. The large loss IS coming -- it's structural, not avoidable. Use canonical risk per trade (see 1.6) and never increase size to "make up" for small average profit. The edge comes from frequency and consistency, not size. ([EnlightenedStockTrading](https://enlightenedstocktrading.com/mean-reversion/))
 7. **Long/short asymmetry: acknowledged.** Academic research shows BTC negative returns revert more frequently and with greater magnitude than positive returns. Long MR (buying dips) has a structural edge over short MR (fading rallies) in crypto, where short squeezes are common and uptrends can sustain "overbought" for extended periods. Short MR requires tighter risk controls and shorter timeouts. ([Corbet & Katsiampa 2020](https://www.sciencedirect.com/science/article/abs/pii/S1057521918306136), [QuantPedia](https://quantpedia.com/trend-following-and-mean-reversion-in-bitcoin/))
 8. **Operates 24/7** across all sessions. Monitor PF per session via BREAKER analysis to understand where the edge is strongest — this is diagnostic, not an active gate.
-9. **Stopping criteria:** PF >= 1.3, DD <= 8%, WR >= 50%, trades >= 80, pfRatio >= 0.6. WR >= 50% is mandatory -- MR profits from frequent small wins. Low WR means the strategy is not reverting reliably, which is a design failure.
+9. **Stopping criteria:** PF >= 1.3, DD <= 8%, WR >= 50%, trades >= 80, pfRatio >= 0.6. WR >= 50% is mandatory -- MR profits from frequent small wins. Low WR means the strategy is not reverting reliably, which is a design failure. Trade count is evaluated over the backtest window defined in section 12 (6-8 months for 15m modules). If 80 trades is unreachable in that window, see signal frequency mitigations in 4.2.
 
 #### Rationale (for human review, not consumed by BREAKER loop)
 
@@ -390,10 +390,10 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 <summary>Why these rules exist</summary>
 
 - **Regime filter (rule 3):** MR's #1 failure mode is trading against a trend. When markets trend, "overextended" prices keep extending. ADX below 25 indicates range-bound conditions where MR works. 200-day MA flat or price within 5% of it is another common filter. SetupAlpha: "This simple filter eliminates 40-60% of catastrophic losses." Academic research (MQL5 article) confirms: "ranging markets show negative autocorrelation in returns, meaning upward movements are likely to be followed by downward movements and vice versa" -- this IS mean reversion. Trending markets show positive autocorrelation -- the opposite.
-- **Wide/no stop (rule 4):** Multiple backtested sources converge on this. Robuxio: "In almost all backtests, stop-loss orders don't work well with mean-reverting strategies." Curtis Faith (The Way of the Turtle): "stop-losses for most systems don't improve profitability." ScienceDirect (2024, naphtha crack MR): "the no-stop-loss and no-take-profit strategy remains the best performing combination [...] the stop-loss locks in losses by stopping the reversion process before it is finished." EnlightenedStockTrading: "if you put your stop loss too close, you get more substantial losses and the system's profitability breaks down [...] for mean reversion, it's at vast stop loss levels -- 10-30% wide on daily charts." On 15m BTC, equivalent wide stop = 3-5x ATR(14) on 1H. This is a catastrophic stop -- it fires only in "regime changed, this isn't a range anymore" scenarios.
+- **Wide/no stop (rule 4):** Multiple backtested sources converge: tight stops lock in losses before reversion completes. ScienceDirect (2025, naphtha crack MR [CROSS-DOMAIN: commodity daily, not crypto intraday]): "the no-stop-loss and no-take-profit strategy remains the best performing combination." EnlightenedStockTrading: "for mean reversion, it's at vast stop loss levels -- 10-30% wide on daily charts." On 15m BTC, equivalent wide stop = 3-5x ATR(14) on 1H — a catastrophic stop that fires only when the range regime has broken.
 - **Position sizing (rule 6):** EnlightenedStockTrading's advice to "spread capital over 10-20 trades" applies to multi-asset stock portfolios, NOT to our system where only one net position exists per asset at a time (see mutex rule in section 2.5). In our system, the equivalent protection is: (a) riskPerTradeUsd (see 1.6), (b) the timeout exit (rule 5) limiting exposure duration, and (c) the wide catastrophic stop (rule 4) capping max loss per trade. MR's small average profit per trade means commission, slippage, and execution speed matter enormously -- oversizing to compensate for thin edges is the fastest way to blow up.
 - **Long/short asymmetry (rule 7):** Corbet & Katsiampa (2020) found "stronger reverting behaviour of negative price returns in terms of both reverting speed and magnitude compared to positive returns." QuantPedia: "BTC tends to trend when at its maximum and bounce back when at the minimum." QuantifiedStrategies: "Williams %R didn't work well for short trades in their tests." Robuxio: "Shorts are an exception to this rule [no stop]. You don't want to stay in a coin that makes 5X overnight." In practice: long MR has wider tolerance, short MR needs faster timeout and tighter catastrophic stop.
-- **WR gate (rule 10):** MR is the mirror of breakout: high WR, small wins, occasional big loss. If WR drops below 50%, the strategy isn't reverting -- it's losing more often than winning AND losing bigger when it loses. That's catastrophic. PF alone can mask this (a few lucky big wins inflate PF even with 40% WR), but the MR archetype requires consistent wins.
+- **WR gate (rule 9):** MR is the mirror of breakout: high WR, small wins, occasional big loss. If WR drops below 50%, the strategy isn't reverting -- it's losing more often than winning AND losing bigger when it loses. That's catastrophic. PF alone can mask this (a few lucky big wins inflate PF even with 40% WR), but the MR archetype requires consistent wins.
 - **Funding rate consideration:** On HL perps, funding settles hourly (see 1.6 for rates). For MR (1-2h holds), impact is minimal. Extreme positive funding often signals overcrowded longs (good for short MR). Extreme negative funding signals overcrowded shorts (good for long MR). Funding is both a cost and a signal, but BREAKER should track it as optional context, not a primary entry signal (adds complexity, noisy on 15m).
 
 </details>
@@ -404,15 +404,17 @@ BREAKER can explore any combination fitting the MR archetype (price overextended
 
 **Recommended first iteration (starting point, not mandatory):**
 
-> Bollinger Bands(20, 2.0) on 15m + RSI(2) < 20 for longs / > 80 for shorts + ADX(14) < 25 on 1H as regime gate + Exit at BB midline (SMA 20) + Timeout 24 bars (6h) + No fixed stop (use timeout + position sizing as risk control).
-> 6 free vars: (1) BB period, (2) BB multiplier, (3) RSI period, (4) RSI threshold, (5) ADX threshold, (6) timeout bars. ADX period fixed at 14 (Wilder default, see 1.6). At cap -- adding a catastrophic stop (1 var) requires fixing one of the above.
+> Keltner Channels(20, 2.0) on 15m + RSI(2) < 20 for longs / > 85 for shorts + ADX(14) < 25 on 1H as regime gate + Exit at KC midline (EMA 20) + Timeout 24 bars longs / 16 bars shorts + No fixed stop (use timeout + position sizing as risk control).
+> 6 free vars: (1) KC period, (2) KC ATR multiplier, (3) RSI threshold long, (4) RSI threshold short, (5) ADX threshold, (6) timeout bars (long). RSI period fixed at 2 (Connors canonical). ADX period fixed at 14 (Wilder default). Short timeout derived: timeout_short = timeout_long × 0.67 (not independently optimized — saves 1 var). Starting values are asymmetric per rule 7: shorts use tighter RSI and shorter timeout because crypto short MR has weaker edge.
+
+> **KC vs BB:** Current implementation uses KC (smoother, fewer false signals). BB has stronger statistical grounding for MR (close outside 2σ = significant deviation) and is generally preferred for MR in literature ([Mudrex](https://mudrex.com/learn/keltner-channels-vs-bollinger-bands-crypto/), [FTMO](https://academy.ftmo.com/lesson/keltner-channels-technical-indicator/)). When BB is implemented, BREAKER should test both. Note: BB midline = SMA, KC midline = EMA — different exit behavior.
 
 **Variable budget (6 max):**
 
 | Component | Typical vars | Example |
 |-----------|-------------|---------|
 | Band/channel (extreme) | 1-2 | BB period + multiplier; KC period + ATR mult |
-| Exhaustion confirmation | 1-2 | RSI period + threshold; Williams %R lookback + threshold |
+| Exhaustion confirmation | 1-2 | RSI threshold long + short (period fixed at 2); Williams %R lookback + threshold |
 | Regime filter | 1-2 | ADX period + threshold; ATR ratio |
 | Timeout | 1 | bars |
 | Catastrophic stop (optional) | 0-1 | ATR multiplier (wide); or 0 vars if no stop |
@@ -431,7 +433,7 @@ BREAKER can explore any combination fitting the MR archetype (price overextended
 
 | Approach | How it works | Typical range | Notes |
 |----------|-------------|---------------|-------|
-| RSI(2) | Ultra-short RSI. < 10 = oversold, > 90 = overbought | Period: 2; Thresholds: 5-15 / 85-95 | Larry Connors' canonical MR signal. "The lower the RSI, the higher the return on subsequent long positions." On equities: 60%+ WR. Extremely fast reaction -- designed for MR, not trend. ([Connors RSI2](https://chartschool.stockcharts.com/table-of-contents/trading-strategies-and-models/trading-strategies/rsi-2), [MQL5 backtest](https://www.mql5.com/en/articles/17636)) |
+| RSI(2) | Ultra-short RSI. < 10 = deep oversold, > 90 = deep overbought | Period: 2; Thresholds: 5-25 / 75-95 | Larry Connors' canonical MR signal. Tighter thresholds (5-10) produce higher edge per trade but fewer signals; wider thresholds (15-25) produce more signals with lower per-trade edge but better recent performance. Quantitativo (2024): "entries at 15 and 20 are actually better" in 2010-2024 data vs 10 in full 1998-2024 history. On equities: 60%+ WR. Extremely fast reaction -- designed for MR, not trend. ([Connors RSI2](https://chartschool.stockcharts.com/table-of-contents/trading-strategies-and-models/trading-strategies/rsi-2), [MQL5 backtest](https://www.mql5.com/en/articles/17636), [Quantitativo MR Curve](https://www.quantitativo.com/p/trading-the-mean-reversion-curve)) |
 | Williams %R | Close relative to high-low range, inverted. < -90 = oversold, > -10 = overbought | Period: 2-5; Thresholds: -90/-10 or -95/-5 | QuantifiedStrategies: "one of the best mean reversion indicators." Outperformed RSI in their S&P 500 backtests (81% WR, PF 3.2). Unsmoothed (faster than RSI but noisier). Mathematically inverse of fast stochastic. ([QuantifiedStrategies Williams %R](https://www.quantifiedstrategies.com/williams-r-trading-strategy/)) |
 | RSI(3-5) | Slightly smoother RSI. < 20 = oversold, > 80 = overbought | Period: 3-5; Thresholds: 10-25 / 75-90 | Fewer entries, more reliable per trade. Connors found RSI < 5 produces better returns than RSI < 10 |
 | Stochastic | %K/%D crossover in extreme zones | Period: 5-14; Thresholds: 20/80 | Similar to RSI but momentum-based. %K/%D cross adds confirmation but also lag |
@@ -448,19 +450,17 @@ BREAKER can explore any combination fitting the MR archetype (price overextended
 
 | Approach | What it does | Typical range | Vars consumed | Notes |
 |----------|-------------|---------------|---------------|-------|
-| Channel midline | Exit at center (SMA/EMA) of the band | -- (determined by band params) | 0 | Conservative, highest WR. Canonical MR exit. Connors: "exit at 5-day MA close" |
-| Opposite band | Exit at opposite extreme of band | -- | 0 | Aggressive, lower WR, higher R:R. Risk: price may not reach opposite band |
+| Channel midline | Exit when bar closes beyond center (SMA/EMA) of the band. Evaluated on bar close, exit at market (taker) — midline moves every bar so static limit orders are impractical | -- (determined by band params) | 0 | Conservative, highest WR. Canonical MR exit. Connors: "exit at 5-day MA close" |
+| Opposite band | Exit when bar closes beyond opposite extreme. Same mechanic: bar close evaluation, market exit | -- | 0 | Aggressive, lower WR, higher R:R. Risk: price may not reach opposite band |
 | First up/down close | Exit at first close in the direction of reversion | -- | 0 | Ultra-fast exit. Maximizes WR, minimizes per-trade profit. Connors: "exit when close > yesterday's high" |
 | Timeout | Forced exit after N bars | N: 12-48 bars (3-12h on 15m) | 1 | Safety net. MR trades should resolve quickly -- if not, regime may have changed |
 | Catastrophic stop (optional) | Wide ATR-based stop. Fires only when reversion has clearly failed | Multiplier: 3.0-5.0x ATR(14) 1H | 0-1 | Not a tight stop -- a "this isn't a range anymore" emergency exit. Backtest with and without |
 
 **Key research insights for BREAKER:**
 
-- **MR works better in bear/volatile markets** for longs: "most mean reversion strategies perform best during a bear market" (QuantifiedStrategies). Buying dips in panics has strong historical edge.
-- **Short MR in crypto is harder.** QuantifiedStrategies: "Williams %R didn't work well for short trades." Robuxio: "Shorts are an exception -- you don't want to stay in a coin that makes 5X overnight." If short MR underperforms in backtests, consider long-only or asymmetric rules (shorter timeout for shorts, tighter catastrophic stop for shorts).
-- **Average profit per trade is small.** EnlightenedStockTrading: "the average profit per trade is typically very low [...] if you're paying too much in commission or getting too much slippage, it can erode profitability." BREAKER must account for commission + slippage realistically.
-- **Diversification is key.** Robuxio: "BTC alone cannot generate many trades [...] let's trade the liquid universe of Binance pairs." On BTC 15m alone, MR signals will be infrequent. Consider whether the frequency of valid signals justifies a standalone BTC-only MR module or whether MR is better as a multi-asset strategy.
-- **MR + Trend following combined = portfolio gold.** Robuxio: "Profit just explodes, while volatility on equity curve decreases. Max drawdown is now down to -20%." The KB's modular approach (Breakout + MR + DNT) is directionally correct for this.
+- **Signal frequency is the critical risk.** Robuxio: "BTC alone cannot generate many trades." Stopping criteria requires >= 80 trades. If M2 on BTC alone cannot reach 80 trades in 6-8 months: (a) add SOL/ETH to increase sample — preferred, tests MR archetype across assets rather than overfitting to BTC, (b) widen RSI thresholds further (e.g., 25/75 instead of current 20/85) for more signals at lower per-trade edge, or (c) relax to 50 trades with wider confidence intervals.
+- **RSI MR on crypto has weaker evidence than equities.** QuantifiedStrategies (2024): "the traditional mean reversion strategy of buying the dip and selling strength doesn't work on Bitcoin and cryptos" — RSI as momentum showed better results. The ADX regime filter (rule 3) is critical — it restricts MR to ranging periods where positive expectancy exists. If BREAKER cannot achieve PF >= 1.3 after thorough optimization, that is a valid result. ([QuantifiedStrategies BTC RSI](https://www.quantifiedstrategies.com/bitcoin-rsi/))
+- **MR + Trend following combined = portfolio gold.** Robuxio: "Profit just explodes, while volatility on equity curve decreases. Max drawdown is now down to -20%." The KB's modular approach (Breakout + MR + blocking gates) is directionally correct for this.
 
 ---
 
@@ -476,12 +476,12 @@ BREAKER can explore any combination fitting the MR archetype (price overextended
 
 1. **Max free variables:** 8
 2. **HTF trend confirmation:** mandatory. Must confirm trend exists on a higher TF (4H minimum) before looking for any pullback on 15m. Without an established trend, a "pullback" is just noise. Architecture locked per RESTRUCTURE, params tunable (count toward 8-var cap). ([Capital.com](https://capital.com/en-int/learn/trading-strategies/pullback-trading), [HighStrike](https://highstrike.com/pullback-trading/))
-3. **Pullback confirmation:** mandatory. Do NOT enter the moment price touches a support zone. Wait for a confirmation signal that the pullback is ending and the trend is resuming: candle close above pullback high (longs) / below pullback low (shorts), or bullish/bearish engulfing/hammer pattern. [UNVERIFIED] LuxAlgo blog claims 62% of amateur traders enter too early vs 22% of professionals -- treat as directional insight, not hard data. ([LuxAlgo pullback vs reversal](https://www.luxalgo.com/blog/pullback-trading-vs-trend-reversals-2/))
-4. **Pullback depth filter:** mandatory. Define what constitutes a valid pullback vs noise vs reversal. Too shallow (< ~23% of prior move) = noise, not worth entering. Too deep (> ~78.6% Fib) = likely reversal, not a pullback. Valid zone: approximately 23.6%-78.6% Fibonacci retracement or equivalent mechanical rule. Threshold is tunable. ([Stoic.ai Fib](https://stoic.ai/blog/complete-fibonacci-trading-strategy-guide-for-cryptocurrency/), [Changelly](https://changelly.com/blog/how-to-use-fibonacci-retracement-in-crypto-trading/))
+3. **Pullback confirmation:** mandatory. Do NOT enter the moment price touches a support zone. Wait for a confirmation signal that the pullback is ending and the trend is resuming. **Confirmation type is architecture, locked per RESTRUCTURE** — pick one: (a) structural: candle close above pullback high (longs) / below pullback low (shorts), or (b) pattern: bullish/bearish engulfing/hammer with mathematical definition (body/wick ratio). Do not alternate between types during REFINE — they have different statistical behavior (timing, WR, R:R) and mixing them creates overfit risk. Params within the chosen type are tunable. [UNVERIFIED] LuxAlgo blog claims 62% of amateur traders enter too early vs 22% of professionals -- treat as directional insight, not hard data. ([LuxAlgo pullback vs reversal](https://www.luxalgo.com/blog/pullback-trading-vs-trend-reversals-2/))
+4. **Pullback depth filter:** mandatory. Define what constitutes a valid pullback vs noise vs reversal. Too shallow (< ~23% of prior move) = noise, not worth entering. Too deep (> ~78.6% Fib) = likely reversal, not a pullback. Valid zone: approximately 23.6%-78.6% Fibonacci retracement or equivalent mechanical rule. Threshold is tunable. **Zone type is architecture, locked per RESTRUCTURE** — pick one: (a) Fibonacci retracement (requires swing detection), or (b) distance-from-MA (simpler, no swing detection needed). **Implementation constraint:** if using Fibonacci, swing detection must be causal — only confirmed with past bars (e.g., fractal with N-left bars only, no N-right). Any method that uses future bars to confirm a swing introduces look-ahead bias and invalidates the backtest. Distance-from-MA is preferred as default because it avoids this entirely. **Swing definition consistency:** whichever swing detection is used, it must be the same definition for depth filter, stop placement (rule 6), and TP target. Different definitions measuring different things = inconsistent strategy. ([Stoic.ai Fib](https://stoic.ai/blog/complete-fibonacci-trading-strategy-guide-for-cryptocurrency/), [Changelly](https://changelly.com/blog/how-to-use-fibonacci-retracement-in-crypto-trading/))
 5. **Volume pattern:** encouraged but not mandatory as a fixed rule. Ideal: declining volume during pullback (weak counter-move), rising volume on resumption (conviction). BREAKER should test with and without volume confirmation. ([LuxAlgo](https://www.luxalgo.com/blog/pullback-trading-vs-trend-reversals-2/), [XS.com](https://www.xs.com/en/blog/pullback/))
-6. **ATR-based stop on 1H:** mandatory (not 15m). Place stop below the pullback swing low (longs) or above swing high (shorts). If swing-based stop is wider than ATR-based, use ATR cap.
+6. **ATR-based stop on 1H:** mandatory (not 15m). Stop = pullback zone invalidation level + small buffer (e.g., 0.2 × ATR 1H) below the depth filter cutoff for longs, above for shorts. The logic: if price breaches the depth filter boundary, the "pullback" is a reversal — exit. **Entry filter:** if distance from entry to invalidation stop > ATR(14) 1H × hardCap (e.g., 2.5), skip the trade — the pullback is too deep to offer acceptable R:R. Do NOT cap the stop to a shorter distance; that creates whipsaws inside valid pullback zones. Sizing always uses the real distance to the stop (in price), not ATR-normalized.
 7. **Must include a timeout exit.** Pullback trades should resolve relatively quickly. If the trend doesn't resume within N bars, the "pullback" may actually be a reversal or consolidation.
-8. **Stopping criteria:** PF >= 1.4, DD <= 10%, trades >= 50, pfRatio >= 0.6, avgR >= 0.15. No strict WR gate -- pullbacks tend to have higher WR than raw breakout (entering with confirmed trend), but this varies. Estimated WR range: 35-55%. PF and avgR remain the primary quality gates.
+8. **Stopping criteria:** PF >= 1.4, DD <= 10%, trades >= 50, pfRatio >= 0.6, avgR >= 0.15. No strict WR gate -- pullbacks tend to have higher WR than raw breakout (entering with confirmed trend), but this varies. Estimated WR range: 35-55%. PF and avgR remain the primary quality gates. Trade count evaluated over backtest window in section 12 (6-8 months for 15m modules).
 
 #### Rationale (for human review, not consumed by BREAKER loop)
 
@@ -490,7 +490,7 @@ BREAKER can explore any combination fitting the MR archetype (price overextended
 
 - **HTF trend confirmation (rule 2):** Pullback trading IS trend following with better entries. Without confirming the trend first, you're just buying random dips. Capital.com: "The first step to trading a pullback is to identify the main trend. For this, you can use a higher timeframe chart, as this removes market noise." HighStrike: "Before anything else, confirm the market trend. Is price making higher highs and higher lows (bullish) or the reverse (bearish)?" The higher TF (4H) provides the trend context; the lower TF (15m) provides entry precision.
 - **Pullback confirmation (rule 3):** The #1 mistake in pullback trading is entering too early. [UNVERIFIED] LuxAlgo claims "62% of amateur traders enter too early vs only 22% of experienced professionals" -- sourced from marketing blogs, not peer-reviewed research. The directional point stands regardless of exact numbers: waiting for confirmation improves outcomes. Confirmation types: candlestick pattern (bullish engulfing, hammer) at support zone, price close above pullback high, RSI reversing out of neutral zone, or volume expanding on resumption candle. The specific confirmation method is tunable; requiring SOME confirmation is not.
-- **Pullback depth filter (rule 4):** Not all retracements are equal. Shallow pullbacks (< 23.6%) often represent noise or micro-consolidation -- not worth the entry. Deep pullbacks (> 78.6%) indicate the trend may be broken. The sweet spot for crypto tends to be deeper than equities. Stoic.ai: "Bitcoin respects deeper retracements (61.8%, 78.6%), while high-momentum crypto assets reverse at shallower levels (38.2%, 50%)." The "golden pocket" (61.8%-65%) is the most-watched zone. Mechanically, Fibonacci retracement or equivalent distance-from-MA metric works -- the point is filtering out noise and reversals.
+- **Pullback depth filter (rule 4):** Not all retracements are equal. Shallow pullbacks (< 23.6%) often represent noise or micro-consolidation -- not worth the entry. Deep pullbacks (> 78.6%) indicate the trend may be broken. The sweet spot for crypto tends to be deeper than equities. Stoic.ai: "Bitcoin respects deeper retracements (61.8%, 78.6%), while high-momentum crypto assets reverse at shallower levels (38.2%, 50%)." The "golden pocket" (61.8%-65%) is the most-watched zone. **Long/short asymmetry:** BTC uptrend pullbacks tend to be deeper (38-65%) because dip-buyers provide support at lower levels. Downtrend rallies (short pullbacks) tend to be shallower and faster (23-50%) due to short squeezes and FOMO. BREAKER should test separate depth thresholds for longs vs shorts. Mechanically, Fibonacci retracement or equivalent distance-from-MA metric works -- the point is filtering out noise and reversals.
 - **Volume pattern (rule 5):** LuxAlgo: "Pullbacks typically last 3-5 candles, with volume dropping 20-30%. Reversals break key support/resistance levels, often with a 50%+ spike in volume." XS.com: "A pullback with declining volume followed by an increase on the breakout can confirm that the correction is temporary." This is the single best distinguisher between pullback and reversal, but it's hard to mechanize cleanly on 15m crypto, so it's encouraged rather than mandatory.
 - **Pullback vs reversal distinction:** This is the core risk of the strategy. Pullbacks: HH/HL structure intact, volume declining, RSI resetting to neutral (40-60), typically 3-5 candles duration. Reversals: key S/R broken, volume spiking 50%+, RSI making divergence, structure broken (lower lows in uptrend). If the stop hits, the assumption is reversal -- exit, don't average down.
 - **WR expectation:** Pullback strategies sit between breakout (low WR, high R:R) and mean reversion (high WR, low R:R). You're entering with the trend (like breakout) but at a better price with confirmed direction. Typical WR 35-55% with R:R 1.5-3:1. PF is the real quality gate, not WR.
@@ -503,8 +503,8 @@ BREAKER can explore any combination fitting the pullback archetype (established 
 
 **Recommended first iteration (starting point, not mandatory):**
 
-> EMA 50 on 4H as trend direction (price above = uptrend, below = downtrend) + Fibonacci retracement 38.2%-61.8% zone on 15m as pullback zone + RSI(14) dip to 40-50 (longs) or rise to 50-60 (shorts) as confirmation + Enter on close above pullback high (longs) / below pullback low (shorts) + ATR(14) 1H stop x 2.5 below swing low + Timeout 32 bars (8h) + TP at prior swing high/low (1R minimum [FIXED]).
-> 7 free vars: (1) EMA period, (2) Fib upper threshold, (3) Fib lower threshold, (4) RSI period, (5) RSI threshold, (6) ATR multiplier, (7) timeout bars. TP target is structural (prior swing), minimum R:R fixed at 1. Room for 1 more var (e.g. volume confirmation or partial TP).
+> EMA 50 on 4H as trend direction (price above = uptrend, below = downtrend) + Fibonacci retracement 38.2%-61.8% zone on 15m as pullback zone + RSI(14) dip to 40-50 (longs) or rise to 50-60 (shorts) as confirmation + Enter on close above pullback high (longs) / below pullback low (shorts) + Stop at invalidation level + buffer (skip if stop > ATR(14) 1H × 2.5) + Timeout 32 bars (8h) + TP at prior swing high/low (skip trade if projected R:R < 1.0).
+> 7 free vars: (1) EMA period, (2) Fib upper threshold, (3) Fib lower threshold, (4) RSI period, (5) RSI threshold, (6) ATR multiplier, (7) timeout bars. TP target is structural (prior swing), minimum R:R fixed at 1 (entry filter, not TP override — see exits). Room for 1 more var (e.g. volume confirmation or partial TP). To free vars: replace RSI confirmation (2 vars) with candlestick pattern (0 vars), or replace Fib zone (2 vars) with distance-from-MA (1 var).
 
 **Variable budget (8 max):**
 
@@ -526,7 +526,7 @@ BREAKER can explore any combination fitting the pullback archetype (established 
 | HH/HL structure | 4H | Confirm price is making higher highs and higher lows (up) or LH/LL (down) | Lookback period | More precise than EMA but harder to mechanize. Requires swing detection algorithm |
 | ADX > threshold | 4H | ADX above 25 = established trend (good for pullback). Below = no trend, skip | ADX period, threshold | Opposite usage vs MR module (where low ADX = good). Here, HIGH ADX = confirmed trend |
 
-**Pullback zone candidates (defines "where to enter"):**
+**Pullback zone candidates (pick one, lock per RESTRUCTURE):**
 
 | Approach | How it works | Typical range | Notes |
 |----------|-------------|---------------|-------|
@@ -535,7 +535,7 @@ BREAKER can explore any combination fitting the pullback archetype (established 
 | 9/30 pullback zone | Price enters zone between 9 EMA and 30 WMA. Enter on break above pullback candle high | 9 EMA period, 30 WMA period | QuantifiedStrategies backtested on SPY: lower total return than B&H but lower drawdowns, less time in market. ([QuantifiedStrategies 9/30](https://www.quantifiedstrategies.com/9-30-trading-strategy/)) |
 | Prior S/R level | Price pulls back to previous resistance (now support) or vice versa | N/A (manual or horizontal levels) | "Role reversal" concept. Hard to automate on 15m but powerful when combined with Fib confluence |
 
-**Pullback confirmation candidates (pick max 1):**
+**Pullback confirmation candidates (pick one, lock per RESTRUCTURE):**
 
 | Approach | How it works | Typical range | Notes |
 |----------|-------------|---------------|-------|
@@ -554,13 +554,13 @@ BREAKER can explore any combination fitting the pullback archetype (established 
 | Time-based timeout | Forced exit after N bars | N: 16-64 bars (4-16h on 15m) | 1 | Pullbacks should resolve faster than breakouts. If not resuming, regime may have changed |
 | Partial TP + trail | Partial profit at 1R, trail rest with ATR or at breakeven | 25-75% at R:R 1.0-2.0 | 1-2 | Secures quick profit, lets rest ride for bigger move |
 
+> **R:R vs confirmation tradeoff:** Structural confirmation (close above pullback high) enters late, eating into the margin between entry and prior swing TP. If entry is at 75% of the move and TP is at 100%, R:R may be < 1.0 and the trade gets filtered out. Two solutions: (a) use earlier confirmation (candle pattern at zone) to preserve R:R to prior swing, or (b) use Fibonacci extension (127.2%, 161.8%) as TP to compensate for late entry. Match TP ambition to confirmation timing — late confirmation needs a further target.
+
 **Key research insights for BREAKER:**
 
 - **Pullback = trend following with better entry.** You get the benefit of an established trend (higher probability) PLUS a better price (tighter stop, better R:R). The tradeoff is you MISS moves that never pull back.
-- **The #1 risk is confusing pullback with reversal.** Signs of reversal vs pullback: volume spike (>50% above avg) on the counter-move, key S/R broken, RSI divergence, candle structure breaking HH/HL. If in doubt, skip the trade.
-- **Deeper pullbacks are more common in BTC than equities.** Stoic.ai: "Bitcoin respects deeper retracements (61.8%, 78.6%)." Don't expect 23.6% bounces -- BTC tends to retrace to the golden pocket (61.8%-65%) or the 50% level before resuming.
 - **EMA pullback alone has low WR without filter.** Trader Dale backtested EMA 20 pullback on EUR/USD: 48.5% WR with 1:1 R:R. Adding a VWAP trend filter improved results dramatically. The lesson: the pullback zone (EMA touch) is necessary but not sufficient -- you need a trend filter AND a confirmation signal.
-- **Confluence = higher probability.** The more signals that align at a single level (Fib level + EMA + candlestick pattern + volume), the stronger the setup. LuxAlgo: "Trades using triple confirmation show 90% higher success rates than single-indicator strategies." BREAKER should prioritize setups with 2+ confluent signals.
+- **Confluence = higher probability.** [UNVERIFIED] LuxAlgo: "Trades using triple confirmation show 90% higher success rates than single-indicator strategies" -- sourced from marketing blog for paid indicator product, no methodology disclosed. The directional insight (confluence > single signal) is universally supported; the specific "90%" number is unsubstantiated. BREAKER should prioritize setups with 2+ confluent signals.
 - **Pullbacks typically last 3-5 candles** with declining volume (LuxAlgo). On 15m BTC, that's 45-75 minutes. Anything longer may be consolidation or early reversal. This informs timeout length.
 
 ---
@@ -576,13 +576,13 @@ BREAKER can explore any combination fitting the pullback archetype (established 
 ### 6.1 Fixed rules (BREAKER cannot change)
 
 1. **Max free variables:** 6
-2. **This is swing trading, not day trading.** Trades last hours to days, sometimes weeks. Different risk profile from 15m modules. Expect 10-20 trades per year, not per month. Patience IS the edge. Heuristic: markets trend only ~20-30% of the time (varies by asset/timeframe -- use ADX filter as the operational gate, not this percentage). ([TOS Indicators](https://tosindicators.com/research/modern-turtle-trading-strategy-rules-and-backtest), [Robuxio](https://www.robuxio.com/systematic-trading-iv-trend-following/))
-3. **Must account for funding rate costs.** Holding Hyperliquid perps for multiple days means funding rate is no longer negligible. HL settles funding hourly (see 1.6 for interval and rate ranges). At calm-market rates, a 5-day hold costs ~1.2% of position. At bull-market spike rates, costs can reach 0.72-1.20% daily, or 3.6-6.0% over a 5-day hold. BREAKER must subtract estimated funding from PnL. ([Hyperliquid Docs](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/funding), [OneKey guide](https://onekey.so/blog/ecosystem/understanding-hyperliquid-funding-rates-a-traders-guide-49a5c9/), [XT.com](https://www.xt.com/en/blog/post/what-are-funding-rates-how-perpetual-futures-really-cost-traders))
-4. **Must include ATR-based stop** (Daily ATR, not 1H -- wider stops for swing). Tight stops kill trend following. The market needs room to breathe so the trend can develop. ATR multiplier must be >= 3.0 on Daily. Robuxio: "Do not use stop-losses, or use very wide stop-losses [...] the market needs enough room to breathe." ([Robuxio](https://www.robuxio.com/systematic-trading-iv-trend-following/))
+2. **This is swing trading, not day trading.** Trades last hours to days, up to ~3 weeks max (constrained by funding costs on perps — see rule 3). Different risk profile from 15m modules. Expect 10-20 trades per year, not per month. Patience IS the edge. Heuristic: markets trend only ~20-30% of the time (varies by asset/timeframe -- use ADX filter as the operational gate, not this percentage). ([TOS Indicators](https://tosindicators.com/research/modern-turtle-trading-strategy-rules-and-backtest), Robuxio [URL DEAD])
+3. **Must account for funding rate costs.** Holding Hyperliquid perps for multiple days means funding rate is no longer negligible. HL settles funding hourly (see 1.6 for interval and rate ranges). **Cost tiers:** calm market (premium ≈ 0, interest rate only): ~0.03%/day, ~0.15% over 5 days — minor. Typical market (moderate premium): ~0.10-0.24%/day, ~0.5-1.2% over 5 days — material for thin-edge trades. Bull-market spike: 0.72-1.20%/day, 3.6-6.0% over 5 days — can erase entire trade profit. BREAKER must subtract estimated funding from PnL using at minimum the "typical" tier, not calm-market. ([Hyperliquid Docs](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/funding), [OneKey guide](https://onekey.so/blog/ecosystem/understanding-hyperliquid-funding-rates-a-traders-guide-49a5c9/), [XT.com](https://www.xt.com/en/blog/post/what-are-funding-rates-how-perpetual-futures-really-cost-traders))
+4. **Must include ATR-based stop** (Daily ATR, not 1H -- wider stops for swing). Tight stops kill trend following. The market needs room to breathe so the trend can develop. ATR multiplier must be >= 3.0 on Daily. Robuxio: "Do not use stop-losses, or use very wide stop-losses [...] the market needs enough room to breathe." (Robuxio [URL DEAD])
 5. **Prefer trailing exits over fixed TP.** Fixed TP caps upside. Trend following profits come from the few big winners that pay for all the small losses. Use trailing stop (ATR-based, Chandelier Exit, or SuperTrend flip) instead of fixed R:R targets. Let winners run. ([StockCharts Chandelier](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-overlays/chandelier-exit))
-6. **Must include a timeout exit** (longer than 15m modules -- days, not weeks). If a trade hasn't moved after N days, the trend thesis is wrong.
-7. **ADX as regime filter:** mandatory. Only enter when ADX (Daily) confirms trend strength. Prevents entries in choppy/sideways markets that produce whipsaws. Threshold tunable (20-30), direction via +DI/-DI. ADX below 20 = no trend, skip. ADX rising above 25 = confirmed trend, valid entry. ([Fidelity](https://www.fidelity.com/viewpoints/active-investor/average-directional-index-ADX), [Capital.com ADX](https://capital.com/en-int/learn/technical-analysis/average-directional-index))
-8. **Stopping criteria:** PF >= 1.4, DD <= 12%, trades >= 30, pfRatio >= 0.6, avgR >= 0.20. No minimum win rate -- trend following is the canonical low-WR, high-R:R archetype (Turtle Traders: ~38% WR but highly profitable). WR of 30-50% is normal. PF and avgR are the real quality gates.
+6. **Must include a timeout exit** (longer than 15m modules — default 10-25 days, tunable). If a trade hasn't moved after the timeout period, the trend thesis is wrong or the move has stalled into consolidation bleeding funding.
+7. **ADX as regime filter:** mandatory. ADX (Daily) is a **strength gate only** — confirms a trend exists, does not determine direction. Direction comes exclusively from the entry signal (SuperTrend flip, MA cross, etc.). If ADX says "trend" but DI direction conflicts with entry signal, the entry signal wins — ADX only gates whether to trade at all, not which side. Threshold tunable (20-30). ADX below 20 = no trend, skip. ADX rising above 25 = confirmed trend, valid entry. **Anti-lookahead:** ADX and all Daily indicators must use only the last fully closed Daily candle. A 4H signal at 14:00 uses the Daily candle that closed at 00:00, not the partially formed current day. ([Fidelity](https://www.fidelity.com/viewpoints/active-investor/average-directional-index-ADX), [Capital.com ADX](https://capital.com/en-int/learn/technical-analysis/average-directional-index))
+8. **Stopping criteria:** PF >= 1.4, DD <= 12%, trades >= 30, pfRatio >= 0.6, avgR >= 0.20. No minimum win rate -- trend following is the canonical low-WR, high-R:R archetype (Turtle Traders: ~38% WR but highly profitable). WR of 30-50% is normal. PF and avgR are the real quality gates. Trade count evaluated over backtest window in section 12 (2-3 years for M4 — longer than 15m modules because TF generates only 10-20 trades/year).
 
 #### Rationale (for human review, not consumed by BREAKER loop)
 
@@ -590,10 +590,10 @@ BREAKER can explore any combination fitting the pullback archetype (established 
 <summary>Why these rules exist</summary>
 
 - **Swing trading, not day trading (rule 2):** This module operates on a fundamentally different timescale. On 15m, we look for moves lasting bars to hours. On 4H/Daily, we look for moves lasting days to weeks. QuantifiedStrategies backtested BTC with 100/250 SMA crossover: CAGR of 115% vs 94% buy-and-hold, with max drawdown of 65%. Simple MAs keep you out of the worst drawdowns. Robuxio: "Trend following on crypto is probably the most profitable approach, but also the most psychologically challenging -- many losing trades, long waiting periods, and deep drawdowns."
-- **Funding rate costs (rule 3):** This is the biggest hidden risk of swing trading perps. See 1.6 for HL funding interval and rate ranges. At calm-market rates, daily cost is ~0.24%; at spike rates, 0.72-1.20%/day. A 5-day hold in a bull market can cost 3.6-6.0% of position. For comparison, CEX examples (8h settlement): XT.com: "$10,000 long at 0.05% per 8h = ~$450/month." Note: HL hourly rates are NOT equivalent to CEX 8h rates. BREAKER must model this or results are fiction.
+- **Funding rate costs (rule 3):** This is the biggest hidden risk of swing trading perps. See 1.6 for HL funding interval and rate ranges. Cost depends heavily on premium component: calm market (interest only) ~0.03%/day is negligible; typical market with moderate premium ~0.10-0.24%/day is material for multi-day holds; bull-market spikes 0.72-1.20%/day can erase entire trade profit. For comparison, CEX examples (8h settlement): XT.com: "$10,000 long at 0.05% per 8h = ~$450/month." Note: HL hourly rates are NOT equivalent to CEX 8h rates — HL pays 1/8 of the 8h rate each hour, but the premium component updates continuously. BREAKER must model this or results are fiction.
 - **Wide ATR stops (rule 4):** Tight stops are the #1 killer of trend following strategies. The Turtle system's true edge came from position sizing and wide stops, not the entry signal. TOS Indicators: "The Turtle system's true edge comes from ATR-based position sizing and disciplined stop placement, not the breakout entry signal. Risk management converts a modest 38% win rate into consistent profitability." Robuxio recommends no stop-loss or very wide stops for crypto trend following. We compromise with ATR >= 3.0 on Daily.
 - **Trailing exits over fixed TP (rule 5):** The math of trend following requires a few big winners to cover many small losses. A fixed 2R TP would have exited many of the biggest BTC moves prematurely. Chandelier Exit (developed by Charles Le Beau): sets trailing stop N ATR values below the highest high of the period. Binance research used a 10-period ATR Chandelier with 2x multiplier on BTC with 15-day timeout. SuperTrend flip (price crosses the SuperTrend line) serves the same function. The key insight: you don't know how far a trend will go, so don't cap it.
-- **ADX regime filter (rule 7):** Trend following in sideways markets = death by a thousand whipsaws. ADX separates trending environments (ADX > 25, trade) from ranging environments (ADX < 20, sit). Fidelity: "A reading above 25 typically indicates a strong trend; below 20, no trend." StatOasis backtests show adding ADX filter to RSI strategy dramatically improved return-to-drawdown ratio. But note the counter-intuitive finding from QuantifiedStrategies: on BTC daily, entering when ADX < 25 (consolidation) caught explosive breakouts. This works for breakout module (Module 2) but NOT here -- for trend following, we want confirmed trends, not potential ones.
+- **ADX regime filter (rule 7):** Trend following in sideways markets = death by a thousand whipsaws. ADX separates trending environments (ADX > 25, trade) from ranging environments (ADX < 20, sit). Fidelity: "A reading above 25 typically indicates a strong trend; below 20, no trend." StatOasis backtests show adding ADX filter to RSI strategy dramatically improved return-to-drawdown ratio. But note the counter-intuitive finding from QuantifiedStrategies: on BTC daily, entering when ADX < 25 (consolidation) caught explosive breakouts. This works for breakout module (Module 1) but NOT here -- for trend following, we want confirmed trends, not potential ones.
 - **Low WR expectation:** Trend following produces 30-50% WR typically. This is psychologically brutal. QuantifiedStrategies: "Trend following often experiences many whipsaws that feel like bleeding to death. Most humans want the pleasure of winning frequently." Curtis Faith (Turtle Trader): "No matter how good you are, it takes lots of experience to fight the most common trading biases." The edge is entirely in the R:R -- average winner must be 2-5x average loser.
 
 </details>
@@ -604,8 +604,10 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 
 **Recommended first iteration (starting point, not mandatory):**
 
-> SuperTrend (ATR 10, Multiplier 3.0) on 4H as signal + ADX(14) > 25 on Daily as regime filter + Enter on SuperTrend flip (price crosses above/below line) + ATR(14) Daily stop x 3.5 below entry + Chandelier trailing exit (22-period lookback fixed, 3.0 ATR multiplier) + Timeout 15 days (90 bars on 4H) + Estimated funding cost subtracted from PnL.
-> 6 vars (SuperTrend ATR period, SuperTrend multiplier, ADX threshold, stop ATR multiplier, Chandelier ATR multiplier, timeout bars). ADX period fixed at 14 (Wilder default), Chandelier lookback fixed at 22. Canonical trend following -- simplest module by design.
+> SuperTrend (ATR 10, Multiplier 3.0) on 4H as signal + ADX(14) > 25 on Daily as regime filter + Enter on SuperTrend flip (price crosses above/below line) + Exit on opposite SuperTrend flip (reuses entry params, 0 extra vars) + ATR(14) Daily stop x 3.5 as initial stop only (before SuperTrend trail takes over) + Timeout 20 days (120 bars on 4H) + Funding cost subtracted bar-by-bar from equity.
+> 5 vars (SuperTrend ATR period, SuperTrend multiplier, ADX threshold, initial stop ATR multiplier, timeout bars). ADX period fixed at 14 (Wilder default). SuperTrend flip serves as both entry and trailing exit — the purest form of trend following with zero redundancy. Chandelier Exit is an alternative trailing exit if BREAKER finds SuperTrend flip exits too late (costs 1-2 extra vars). Canonical trend following — simplest module by design.
+
+> **Long/short asymmetry:** BTC has a long-term upward drift and shorting incurs funding costs in bull markets. BREAKER should test three modes: (a) long-only (no short trades), (b) asymmetric sizing (full riskPerTradeUsd for longs, half for shorts), (c) symmetric (baseline comparison). If long-only PF exceeds symmetric PF, prefer long-only — fewer trades, simpler, avoids fighting structural drift. Short-only mode should also be tested separately to determine if short TF has any edge on BTC.
 
 **Variable budget (6 max):**
 
@@ -614,7 +616,7 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 | Trend signal (entry trigger) | 1-2 | SuperTrend params; MA crossover periods |
 | Regime filter (ADX) | 1 | ADX threshold (period fixed at 14) |
 | Stop loss (ATR-based) | 1 | ATR multiplier (>= 3.0 on Daily) |
-| Trailing exit | 1 | Chandelier ATR mult (lookback fixed at 22); or SuperTrend flip (0 extra vars) |
+| Trailing exit | 0-1 | SuperTrend flip (0 vars, reuses entry — default); or Chandelier ATR mult (1-2 vars, alternative) |
 | Timeout | 1 | days/bars |
 | Funding cost model | 0 | Fixed estimate, not a tunable variable |
 | **Typical total** | **5-6** | Tight budget forces simplicity. Trend following should be the simplest module -- Turtle Traders profited with ~4 vars |
@@ -632,9 +634,10 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 
 | Approach | Timeframe | What it does | Tunable params | Notes |
 |----------|-----------|-------------|----------------|-------|
-| ADX > threshold | Daily | ADX rising above threshold = confirmed trend. Below = no trade | ADX period (14-20), threshold (20-30) | Standard: ADX 14, threshold 25. Fidelity: "Above 25 = strong trend, below 20 = no trend." StatOasis: adding ADX filter increased profitability and reduced drawdowns. Use +DI vs -DI for direction. ([Fidelity](https://www.fidelity.com/viewpoints/active-investor/average-directional-index-ADX), [StatOasis](https://statoasis.com/post/how-to-use-the-adx-indicator-like-a-pro-step-by-step-guide)) |
-| ADX < threshold (contrarian) | Daily | Enter when ADX is LOW (< 25), anticipating explosive breakout from compression | ADX period, threshold | Counter-intuitive but backtested by QuantifiedStrategies on BTC daily with Donchian: "Bitcoin often breaks out explosively from low-volatility conditions." Works because BTC consolidates then erupts. CAUTION: this is breakout logic, not trend following -- use only if strategy is designed for early trend capture |
+| ADX > threshold | Daily | ADX rising above threshold = confirmed trend. Below = no trade. **Strength gate only** — direction from entry signal, not DI | ADX period (14-20), threshold (20-30) | Standard: ADX 14, threshold 25. Fidelity: "Above 25 = strong trend, below 20 = no trend." StatOasis: adding ADX filter increased profitability and reduced drawdowns. ([Fidelity](https://www.fidelity.com/viewpoints/active-investor/average-directional-index-ADX), [StatOasis](https://statoasis.com/post/how-to-use-the-adx-indicator-like-a-pro-step-by-step-guide)) |
 | EMA slope + price position | Daily | Price above rising 200 EMA = bullish regime. Below falling 200 EMA = bearish regime | EMA period (100-200) | CryptoProfitCalc: "Trade only long when daily 200 EMA slope is up; only short when it's down." Simple, no extra indicator needed. Slightly lagging but very robust |
+
+> **Research note (not a candidate):** QuantifiedStrategies found that entering when ADX is LOW (< 25) on BTC daily with Donchian caught explosive breakouts. This is breakout logic (Module 1), not trend following — included here only as cross-reference. M4 requires confirmed trends (high ADX), not compression anticipation.
 
 **Trailing exit candidates (prefer trailing over fixed TP):**
 
@@ -650,9 +653,9 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 
 | Rule | Description |
 |------|-------------|
-| Estimate hourly funding cost | Use rate ranges from 1.6 (canonical), or derive from HL API `fundingHistory` endpoint for more accuracy |
-| Subtract from backtest PnL | After each trade, deduct (hours_held x position_size x avg_funding_rate) |
-| Funding spike exit | Optional: if funding exceeds spike threshold (see 1.6) for 3+ consecutive readings, consider closing -- extreme funding often precedes reversal |
+| Estimate hourly funding cost | Use rate ranges from 1.6 (canonical), or derive from HL API `fundingHistory` endpoint for more accuracy. **HL mechanics:** funding = 1/8 of 8h rate paid every hour. Premium sampled every 5s, averaged over the hour. Notional uses **oracle_price** (not mark) — backtest must match this. Cap: 4%/hour (extreme but exists; relevant for stress testing funding spike exit) |
+| Subtract from backtest PnL | **Bar-by-bar during the trade**, not just at close. Each bar: deduct (bar_duration_hours × position_size_at_oracle_price × funding_rate). Update equity curve dynamically so DD calculations reflect real-time funding erosion. Deducting only at trade close masks intra-trade drawdown and produces optimistic DD metrics |
+| Funding spike exit | Recommended: if funding exceeds spike threshold (see 1.6) for 3+ consecutive readings, close the position — extreme funding often precedes reversal AND erodes PnL rapidly. With M4 holds lasting days, even 2-3 hours of spike funding can cost more than the expected R |
 | Direction awareness | Positive funding = longs pay shorts. If long in high positive funding, you're paying. If short, you're receiving. Factor into directional bias |
 
 **Key research insights for BREAKER:**
@@ -661,29 +664,27 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 - **Markets trend only ~20-30% of the time [HEURISTIC].** TOS Indicators: "Studies show markets trend only about 30% of the time." This is a common rule of thumb, not a measured constant -- it varies by asset, timeframe, and definition of "trend." The operational gate is ADX (Wilder, 1978: New Concepts in Technical Trading Systems -- original source for ADX thresholds: <20 = no trend, >25 = trending, >40 = strong), not this percentage.
 - **Bitcoin is uniquely suited for trend following.** QuantifiedStrategies: "Simple MA strategies beat buy-and-hold on BTC. Volatility is the prey a trader wants." BTC consolidates for weeks/months then moves explosively -- perfect for trend catching. QuantPedia: "Cryptocurrencies like Bitcoin exhibit a long-term upward bias" (favors long-only or long-biased strategies).
 - **Long-only may outperform long/short on BTC.** QuantifiedStrategies: "Bitcoin has historically been biased to the upside, and trend-following tends to work best on the long side." QuantPedia designed their entire multi-TF strategy as long-only for this reason. Shorting BTC incurs negative funding in bear markets AND fights the long-term upward drift. Consider long-only or asymmetric sizing (larger longs, smaller shorts).
-- **Funding rate is the silent killer of swing trades.** See 1.6 for rate ranges. At calm-market rates: ~0.24%/day, 1.2% over 5 days. At spike rates: 0.72-1.20%/day, 3.6-6.0% over 5 days. This is why Module 4 requires explicit funding modeling. In strong bull markets, funding is highest exactly when you want to be long.
+- **Funding rate is the silent killer of swing trades.** See 1.6 for rate ranges. Calm market: ~0.03%/day (negligible). Typical market with moderate premium: ~0.10-0.24%/day, 0.5-1.2% over 5 days (material). Bull-market spikes: 0.72-1.20%/day, 3.6-6.0% over 5 days (can erase trade profit). This is why Module 4 requires explicit funding modeling. In strong bull markets, funding is highest exactly when you want to be long.
 - **SuperTrend on 4H is the highest-signal setup for crypto.** TradingView backtest (DefinedEdge): SuperTrend ATR 10, Mult 3.0 on BTCUSDT 4H: PF 1.94, WR 46%, 154 trades over 10 years, +2091% compounded. Academic support: PMC study (2023) found SuperTrend and MACD "achieved results more than two times higher than RSI trend detection" across multiple cryptocurrencies 2018-2022. MDPI (2025) warns of period bias: SuperTrend on BTC Daily performed well in bear markets but poorly in bull markets -- regime filter (ADX) is essential. Mudrex: "Start with default (10,3) -- it's a good middle ground." FXOpen recommends multiplier 5 for crypto swing trading to reduce false flips.
 - **Wide stops are non-negotiable.** The Turtle system's edge wasn't the entry -- it was the position sizing and wide stops that let trends develop. Modern adaptation: TOS Indicators recommends smaller risk per trade to account for higher whipsaw frequency in modern markets. ATR multiplier of 3.0-6.0 on Daily for BTC.
-- **Multiple simple strategies > one complex strategy.** This aligns with the core KB philosophy. Module 4 should be ONE simple trend-following approach, not a Swiss Army knife. The sophistication comes from combining it with Modules 1-3 and 5, each handling a different regime.
+- **Multiple simple strategies > one complex strategy.** This aligns with the core KB philosophy. Module 4 should be ONE simple trend-following approach, not a Swiss Army knife. The sophistication comes from combining it with Modules 1-3 and the blocking gates (section 7), each handling a different regime.
 
 ---
 
-## 7. Module 5: Do Not Trade
-<!-- v2.1 | Updated: 2026-03-03 | Depends on: 1.6 (params), 9.5 (daily limits) -->
+## 7. Blocking Gate Specifications
+<!-- v3.0 | Updated: 2026-03-04 | Depends on: 1.6 (params), 2.5.4 (orchestrator gates), 9.5 (daily limits) -->
 
-> **When:** Uncertain regime, extreme compression, risk limits hit
-> **Objective:** Preserve capital. This module has veto power over all others.
+> These are not strategies — they do not generate signals. They are orchestrator-level blocking gates that prevent entries when conditions are unfavorable. Enforced automatically by the orchestrator (see 2.5.4 gates 3 and 6). Human discipline is not relied upon.
 
-### 7.1 When NOT to trade
+### 7.1 Squeeze detection (gate 6)
 
-| # | Condition | Mechanical detection | Scope |
-|---|-----------|---------------------|-------|
-| 1 | **Active squeeze** | BB(20, 2.0) inside KC(20, 1.5) on 15m AND BB width decreasing or flat for >= 4 bars. Release (BB expanding outside KC) = Breakout signal, NOT a DNT. ([TTM Squeeze methodology](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/ttm-squeeze), [PyQuantLab BBKC on BTC](https://pyquantlab.medium.com/optimizing-the-bollinger-band-keltner-channel-squeeze-strategy-volatility-breakout-trading-in-70b49101cb30)) | All modules blocked |
-| 2 | **Volatility spike** | Price moved > X% in Y bars (e.g. > 1.5% in 4 bars on 15m = 1 hour). Pause new entries for Z bars after spike ends. Detects the *effect* of any disruptive event (CPI, FOMC, hacks, liquidation cascades) without needing to predict the *cause*. Thresholds X, Y, Z are tunable | All modules blocked for new entries. Open positions managed by their own exit rules (stop/trail/timeout) |
-| 3 | **Daily loss limit** | Cumulative daily PnL (across all modules) >= maxDailyLossR | All modules blocked. Force close any open position. See 9.5 |
-| 4 | **Weekend** | Saturday 00:00 UTC to Sunday 23:59 UTC. Weekend volume is ~13% of weekday (Kaiko 2025). Spreads widen, false signals increase | Optional block. If enabled: block M1/M3 (need momentum). Allow M2 (ranges common on weekends). M4 unaffected |
+| Detection | BB(20, 2.0) inside KC(20, 1.5) on 15m AND BB width decreasing or flat for >= 4 bars |
+|-----------|---|
+| **Scope** | All modules blocked for new entries |
+| **Release** | BB expanding back outside KC = squeeze over. Breakout (M1) may enter on release with volume confirmation |
+| **Sources** | [TTM Squeeze methodology](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/ttm-squeeze), [PyQuantLab BBKC on BTC](https://pyquantlab.medium.com/optimizing-the-bollinger-band-keltner-channel-squeeze-strategy-volatility-breakout-trading-in-70b49101cb30) |
 
-### 7.2 Volatility spike filter
+### 7.2 Volatility spike filter (gate 3)
 
 Detects abnormal price movement and pauses entries until conditions normalize. This replaces a macro calendar approach — instead of predicting which events matter, detect the market impact directly. Catches scheduled events (CPI, FOMC, NFP) AND unscheduled ones (exchange hacks, regulatory announcements, liquidation cascades).
 
@@ -709,7 +710,7 @@ Detects abnormal price movement and pauses entries until conditions normalize. T
 
 ### 7.3 Rationale
 
-**This is not weakness, it is discipline.** Overtrading usually destroys capital faster than losing on individual trades. The DNT module exists because the expected value of trading in uncertain conditions is negative after fees. The orchestrator enforces these gates automatically (see 2.5.4) -- human discipline is not relied upon.
+**This is not weakness, it is discipline.** Overtrading usually destroys capital faster than losing on individual trades. Blocking gates exist because the expected value of trading in uncertain/compressed conditions is negative after fees. The orchestrator enforces these gates automatically (see 2.5.4) — human discipline is not relied upon.
 
 ---
 
@@ -847,7 +848,8 @@ Some rules are enforceable per-module in the BREAKER engine. Others require the 
 | Global 5 trades/day across modules | **No** -- strategies don't share state | Orchestrator -- **global** (all assets) |
 | One position at a time per asset | **No** -- strategies don't see each other | Orchestrator -- **per-asset** |
 | Daily loss maxDailyLossR shutdown | **No** -- strategies don't share P&L | Orchestrator -- **global** (all assets) |
-| Volatility spike pause (7.1/7.2) | **Yes** -- computable from price data alone | Orchestrator -- **global** (all assets) |
+| Volatility spike pause (7.2) | **Yes** -- computable from price data alone | Orchestrator -- **global** (all assets) |
+| Squeeze detection (7.1) | **Yes** -- computable from BB/KC indicators | Orchestrator -- **global** (all assets) |
 | Leverage cap (per-asset, max 5x) | **No** -- backtests don't model leverage/margin | Orchestrator -- per-asset config via Hyperliquid API |
 
 > **Implication:** The orchestrator is implemented (TypeScript). Handles mutex, daily P&L limits, volatility spike detection, leverage enforcement via Hyperliquid API.
@@ -862,7 +864,7 @@ Every trade follows this exact sequence. No step may be skipped.
    Output: { module, direction, entryPrice, stopDistance, confidence }
 
 2. ORCHESTRATOR GATES (see 2.5.4)
-   Check: daily loss < maxDailyLossR? trades < 5? no volatility spike? no open position on this asset? cooldown clear?
+   Check: daily loss < maxDailyLossR? trades < 5? no volatility spike? no squeeze? no open position on this asset? cooldown clear?
    If ANY gate fails -> LOG(blocked, reason) -> STOP
 
 3. SIZING
@@ -961,7 +963,7 @@ Daily limits (9.5) protect against single-day blowups. If you're hitting the dai
 | PB | 1.4 | ~25% | ~1.05 |
 | TF | 1.4 | ~30% | ~0.98 |
 
-> **Warning:** At PF 1.3 backtest, live PF after degradation is near breakeven. PF 1.5+ in backtest is needed for real margin (~1.05-1.12 live). Strategies that converge at PF 1.3-1.4 should be treated as marginal. MR degrades less (frequent trades, predictable fills). TF degrades more (longer holds, regime changes mid-trade).
+> **Warning:** At PF 1.3 backtest, live PF after degradation is near breakeven. PF 1.5+ in backtest is needed for real margin (~1.05-1.12 live). Strategies that converge at PF 1.3-1.4 should be treated as marginal. MR degrades less in WR (frequent trades, predictable fills) but its thin per-trade edge is highly sensitive to execution costs — the 0.03% maker vs taker saving documented in 9.8 can materially affect net PF. TF degrades more (longer holds, regime changes mid-trade).
 
 > **KB vs BREAKER config:** The criteria above are the **minimum floor** defined by this playbook. The BREAKER operational config (`breaker-config.json`) may use stricter thresholds (e.g. PF 1.6 instead of 1.3 for breakout, DD 6% instead of 10%). If the config is stricter than the KB, the config prevails. If the config is less strict than the KB, that is a bug -- fix the config.
 
@@ -1141,7 +1143,7 @@ const sessions = {
 - Run modules in parallel (paper trading first)
 - Verify signal overlap and mutex behavior
 - Measure combined result (portfolio PF, combined DD)
-- DNT module (7.1) gates enforced automatically
+- Blocking gates (7.1, 7.2) enforced automatically
 
 ### Phase 4 -- Expand coverage
 - Pullback: 15m signal, 4H regime. BREAKER profile `pullback`. **Research complete (v4.1).**
@@ -1211,16 +1213,16 @@ When BREAKER stalls and goes to the research phase, it searches the web. The pro
 - When reviewing research phase output, verify: does the idea make logical sense? Or is it just "add indicator X because a blog said so"?
 - Whitelist: domain on the list -> finding goes directly. Domain not on the list -> marked as `[UNVERIFIED SOURCE]`
 
-### 16.6 "Do Not Trade" is the hardest to follow
+### 16.6 "Not trading" is the hardest to follow
 
 Psychologically, it is much harder NOT to trade than to trade poorly. Especially when:
 - BREAKER found a strategy that "works" in backtest
 - You are looking at the chart and "see" a setup
 - You had 2 losses and want to recover
 
-**Real risk:** Ignoring the no-trade rule and trading in an uncertain regime, destroying the edge of the other modules.
+**Real risk:** Ignoring blocking gates and trading in an uncertain/compressed regime, destroying the edge of the other modules.
 
-**Mitigation:** The orchestrator is the solution. If the system did not generate a signal, do not trade. No discretionary trading. The system decides, not the human. The orchestrator enforces this automatically.
+**Mitigation:** The orchestrator is the solution. If the system did not generate a signal, do not trade. No discretionary trading. The system decides, not the human. Blocking gates (section 7) enforce this automatically.
 
 ### 16.7 Temporal overfit risk
 
@@ -1312,7 +1314,7 @@ Leverage is a capital efficiency tool, not a profit multiplier. But psychologica
 - [QuantPedia: Trend-following and Mean-Reversion in Bitcoin](https://quantpedia.com/trend-following-and-mean-reversion-in-bitcoin/) -- BTC at local maxima tends to continue trending (momentum). BTC at local minima tends to mean-revert (bounce). Both effects coexist. References: Rohrbach et al. (2017), Detzel et al. (2020), Cong et al. (2021)
 - [SSRN: Revisiting Trend-following and Mean-Reversion in Bitcoin (Beluska & Vojtko, 2024)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4955617) -- Extended analysis to Aug 2024 including war, inflation, halving effects. Confirms persistence of both momentum and reversion in BTC under changing macro conditions
 
-### BB/KC squeeze and DNT
+### BB/KC squeeze and blocking gates
 - [StockCharts: TTM Squeeze](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/ttm-squeeze) -- Canonical reference for BB(20,2) inside KC(20,1.5) squeeze detection. John Carter's original methodology: buy first green dot after red dots, use momentum histogram for direction
 - [PyQuantLab: Optimizing BBKC Squeeze on BTC/USDT (2025)](https://pyquantlab.medium.com/optimizing-the-bollinger-band-keltner-channel-squeeze-strategy-volatility-breakout-trading-in-70b49101cb30) -- 243 parameter combinations tested. Achieved Sharpe ratios >1.0 on BTC. Confirms squeeze captures boom-bust cycles
 - [QuantifiedStrategies: Keltner Channel Trading Strategy](https://www.quantifiedstrategies.com/keltner-bands-trading-strategies/) -- S&P 500 backtest: 80% WR with 6-period/1.3 ATR (though performance declined post-2016). KC smoother than BB due to ATR vs standard deviation basis
