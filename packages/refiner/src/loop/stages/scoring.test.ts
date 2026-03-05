@@ -121,4 +121,11 @@ describe("computeScore", () => {
     const score = computeScore(negAvgR, 3, 180);
     expect(score.raw.avgR).toBe(0);
   });
+
+  it("handles NaN maxDrawdownPct as worst case (100)", () => {
+    const nanDD: Metrics = { ...goodMetrics, maxDrawdownPct: NaN };
+    const score = computeScore(nanDD, 3, 180);
+    expect(score.raw.dd).toBe(0);
+    expect(score.breakdown).toContain("DD: 0.0/15");
+  });
 });

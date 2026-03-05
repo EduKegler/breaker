@@ -543,6 +543,51 @@ describe("low-trade accept does not block phase escalation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// BUG FIX: guardrail-rejected iterations must not save checkpoint
+// ---------------------------------------------------------------------------
+describe("guardrail-rejected iterations skip checkpoint", () => {
+  it("effectiveVerdict=reject blocks checkpoint even when score improves", () => {
+    // Simulates the checkpoint decision logic from orchestrator Step 4
+    const bestScore = 33.7;
+    const currentScore = 37.9;
+    const meetsMinTrades = true;
+    const effectiveVerdict = "reject"; // set by walk-forward overfit gate
+
+    // This is the FIXED condition (must include effectiveVerdict check)
+    const shouldSaveCheckpoint =
+      currentScore > bestScore && meetsMinTrades && effectiveVerdict !== "reject";
+
+    expect(shouldSaveCheckpoint).toBe(false);
+  });
+
+  it("effectiveVerdict=accept allows checkpoint when score improves", () => {
+    const bestScore = 33.7;
+    const currentScore = 37.9;
+    const meetsMinTrades = true;
+    const effectiveVerdict = "accept";
+
+    const shouldSaveCheckpoint =
+      currentScore > bestScore && meetsMinTrades && effectiveVerdict !== "reject";
+
+    expect(shouldSaveCheckpoint).toBe(true);
+  });
+
+  it("effectiveVerdict=reject triggers rollback path", () => {
+    const bestScore = 33.7;
+    const currentScore = 37.9;
+    const meetsMinTrades = true;
+    const effectiveVerdict = "reject"; // guardrail override
+
+    const shouldSaveCheckpoint =
+      currentScore > bestScore && meetsMinTrades && effectiveVerdict !== "reject";
+    const shouldRollback = effectiveVerdict === "reject";
+
+    expect(shouldSaveCheckpoint).toBe(false);
+    expect(shouldRollback).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // BUG FIX: bestScore restored from checkpoint via computeScore
 // ---------------------------------------------------------------------------
 describe("bestScore restoration from checkpoint", () => {

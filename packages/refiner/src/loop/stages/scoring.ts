@@ -43,7 +43,8 @@ export function computeScore(
   const pf = metrics.profitFactor ?? 0;
   const avgR = metrics.avgR ?? 0;
   const wr = metrics.winRate ?? 0;
-  const dd = metrics.maxDrawdownPct ?? 100;
+  const rawDd = metrics.maxDrawdownPct ?? 100;
+  const dd = Number.isFinite(rawDd) ? rawDd : 100;
 
   // Component scores (clamped to 0-1 range before weighting)
   const pfScore = Math.max(0, Math.min(pf / 2.0, 1.0));

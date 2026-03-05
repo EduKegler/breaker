@@ -594,8 +594,11 @@ export async function orchestrate(): Promise<void> {
     }
 
     // ---- Step 4: Checkpoint / Rollback (score-based) ----
+    // effectiveVerdict may have been overridden to "reject" by guardrails
+    // (walk-forward overfit gate, free variable count gate).
+    // Never promote an iteration that was guardrail-rejected, even if score improved.
     const bestScore = actor.getSnapshot().context.bestScore;
-    if (scoreResult.weighted > bestScore && meetsMinTrades) {
+    if (scoreResult.weighted > bestScore && meetsMinTrades && effectiveVerdict !== "reject") {
       actor.send({ type: "CHECKPOINT_SAVED", bestScore: scoreResult.weighted, bestPnl: currentPnl, bestIter: iter });
       state.bestScore = scoreResult.weighted;
       state.bestPnl = currentPnl;
@@ -604,8 +607,8 @@ export async function orchestrate(): Promise<void> {
       log(`New best: Score=${scoreResult.weighted.toFixed(1)} PnL=$${currentPnl.toFixed(2)} at iter ${iter}`);
     } else if (scoreResult.weighted > bestScore && !meetsMinTrades) {
       log(`Score ${scoreResult.weighted.toFixed(1)} is best but trades=${metrics.numTrades} < minTrades=${cfg.criteria.minTrades} -- not saving checkpoint`);
-    } else if (scoreVerdict === "reject") {
-      log(`Rolling back: Score ${scoreResult.weighted.toFixed(1)} dropped below threshold vs best ${bestScore.toFixed(1)}`);
+    } else if (effectiveVerdict === "reject") {
+      log(`Rolling back: ${effectiveVerdict === scoreVerdict ? "score degraded" : "guardrail rejected"} (score=${scoreResult.weighted.toFixed(1)} vs best=${bestScore.toFixed(1)})`);
       // Restore best params
       const bestParams = checkpoint.loadParams(cfg.checkpointDir);
       if (bestParams) {
@@ -864,7 +867,9 @@ export async function orchestrate(): Promise<void> {
     });
     log("WhatsApp summary sent");
   } catch (err) {
-    log(`WhatsApp send failed: ${(err as Error).message}`);
+    const e = err as Record<string, unknown>;
+    const msg = e.message || e.code || e.response?.toString?.() || JSON.stringify(err);
+    log(`WhatsApp send failed: ${msg}`);
   }
 
   // Stop the actor
