@@ -172,7 +172,20 @@ export async function orchestrate(): Promise<void> {
   let initialBestIter = 0;
   let initialBestScore = 0;
   const existingCheckpoint = checkpoint.load(cfg.checkpointDir);
+  let checkpointRestored = false;
   if (existingCheckpoint) {
+    // Validate checkpoint source matches current strategy source.
+    // If they differ (e.g., git checkout reverted the file), restore checkpoint source
+    // and rebuild dist/ so the in-process backtest matches checkpoint metrics.
+    const currentSource = fs.readFileSync(cfg.strategyFile, "utf8");
+    const cpSourceHash = integrity.computeHash(existingCheckpoint.strategyContent);
+    const currentHash = integrity.computeHash(currentSource);
+    if (cpSourceHash !== currentHash && existingCheckpoint.iter > 0) {
+      log("Checkpoint source differs from current strategy file — restoring checkpoint.");
+      checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
+      checkpointRestored = true;
+    }
+
     initialBestPnl = existingCheckpoint.metrics.totalPnl ?? 0;
     initialBestIter = existingCheckpoint.iter;
     const cpScore = computeScore(
@@ -186,6 +199,8 @@ export async function orchestrate(): Promise<void> {
   }
 
   // Create xstate actor for state management
+  // If checkpoint was restored, set needsRebuild so first iteration uses child-process
+  // path (ESM cache prevents factory() from picking up the rebuilt dist/).
   const actor = createActor(breakerMachine, {
     input: {
       initialPhase,
@@ -193,6 +208,7 @@ export async function orchestrate(): Promise<void> {
       bestScore: initialBestScore,
       bestPnl: initialBestPnl,
       bestIter: initialBestIter,
+      needsRebuild: checkpointRestored,
     },
   });
   actor.start();
@@ -387,8 +403,10 @@ export async function orchestrate(): Promise<void> {
 
     let engineResult;
     try {
-      if (phase === "refine" || contentHash === lastContentHash) {
-        // In-process: fast path (~2s)
+      const canUseInProcess = !checkpointRestored && (phase === "refine" || contentHash === lastContentHash);
+      if (canUseInProcess) {
+        // In-process: fast path (~2s). Disabled when checkpoint source was restored
+        // at startup (ESM cache means factory() still loads the old compiled code).
         const strategy = factory(paramOverrides);
         log(`Running in-process backtest (params: ${JSON.stringify(paramOverrides)})...`);
         engineResult = runEngineInProcess({
