@@ -26,7 +26,7 @@ const DEFAULT_PARAMS: EmaPullbackParams = {
 };
 
 /**
- * EMA Pullback Continuation strategy.
+ * BTC 15m Pullback — EMA Pullback strategy.
  *
  * Entry: Identify trend on 4H (EMA 21), wait for pullback on 15m (price crosses
  * below EMA fast), enter on resumption (price crosses back above EMA fast) with
@@ -52,7 +52,7 @@ export function createEmaPullback(
   let htf1hCandles: Candle[] | null = null;
 
   return {
-    name: "EMA Pullback Continuation",
+    name: "BTC 15m Pullback — EMA Pullback",
     params,
     requiredTimeframes: ["1h", "4h"],
     requiredWarmup: { source: 22, "1h": 15, "4h": 22 },

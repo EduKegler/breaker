@@ -23,7 +23,7 @@ describe("strategyRegistry.get", () => {
     const factory = strategyRegistry.get("createEmaPullback");
     expect(typeof factory).toBe("function");
     const strategy = factory();
-    expect(strategy.name).toBe("EMA Pullback Continuation");
+    expect(strategy.name).toBe("BTC 15m Pullback — EMA Pullback");
     expect(strategy.params).toBeDefined();
   });
 
