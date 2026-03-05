@@ -152,9 +152,11 @@ export async function orchestrate(): Promise<void> {
   });
   log(`Candles loaded: ${candles.length} bars (${new Date(candles[0].t).toISOString()} -> ${new Date(candles[candles.length - 1].t).toISOString()})`);
 
-  // Determine initial phase from param history or CLI
+  // Determine initial phase: CLI flag overrides, otherwise always start from refine.
+  // Previous sessions may have ended in restructure, but a fresh run should re-evaluate
+  // from refine and escalate organically if refine plateaus.
   const existingHistory = paramWriter.loadHistory(cfg.paramHistoryFile);
-  const initialPhase: LoopPhase = (partial as { initialPhase?: LoopPhase }).initialPhase || existingHistory.currentPhase || "refine";
+  const initialPhase: LoopPhase = (partial as { initialPhase?: LoopPhase }).initialPhase || "refine";
 
   // Load initial param overrides from checkpoint
   let paramOverrides: Record<string, number> = checkpoint.loadParams(cfg.checkpointDir) ?? {};

@@ -109,16 +109,19 @@ describe("buildOptimizePrompt session sanity (KB §13.2)", () => {
     };
   }
 
-  function makeAnalysis(sessions: Record<string, { count: number; pnl: number; winRate: number; profitFactor: number }>): TradeAnalysis {
+  function makeAnalysis(sessions: Record<string, { count: number; pnl: number; winRate: number; profitFactor: number }>, overrides?: Partial<TradeAnalysis>): TradeAnalysis {
     return {
-      byDirection: { long: { count: 30, pnl: 300, winRate: 50, profitFactor: 1.5 }, short: { count: 30, pnl: 200, winRate: 40, profitFactor: 1.3 } },
+      totalExitRows: 60,
+      byDirection: { long: { count: 30, pnl: 300, winRate: 50, profitFactor: 1.5, avgTrade: 10 }, short: { count: 30, pnl: 200, winRate: 40, profitFactor: 1.3, avgTrade: 6.67 } },
       bySession: sessions as any,
       byExitType: [],
+      byDayOfWeek: {},
       best3TradesPnl: [50, 40, 30],
       worst3TradesPnl: [-30, -25, -20],
       avgBarsWinners: 10,
       avgBarsLosers: 5,
       walkForward: null,
+      ...overrides,
     };
   }
 
@@ -212,5 +215,87 @@ describe("buildOptimizePrompt session sanity (KB §13.2)", () => {
     expect(prompt).toContain("SESSION IMBALANCE");
     expect(prompt).not.toContain("MR SESSION");
     expect(prompt).not.toContain("BREAKOUT SESSION");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Structural diagnostics
+// ---------------------------------------------------------------------------
+
+describe("buildOptimizePrompt structural diagnostics", () => {
+  function makeMetrics(overrides?: Partial<Metrics>): Metrics {
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, ...overrides };
+  }
+
+  function makeAnalysisWithExits(exitTypes: Array<{ signal: string; count: number; pnl: number; winRate: number }>): TradeAnalysis {
+    const total = exitTypes.reduce((s, e) => s + e.count, 0);
+    return {
+      totalExitRows: total,
+      byDirection: { long: { count: 24, pnl: -15, winRate: 45, profitFactor: 0.8, avgTrade: -0.6 }, short: { count: 53, pnl: -56, winRate: 39, profitFactor: 0.67, avgTrade: -1.06 } },
+      bySession: { Asia: { count: 18, pnl: -21, winRate: 33, profitFactor: 0.59 }, London: { count: 9, pnl: -21, winRate: 33, profitFactor: 0.41 }, NY: { count: 47, pnl: -18, winRate: 46, profitFactor: 0.87 }, "Off-peak": { count: 3, pnl: -10, winRate: 33, profitFactor: 0.24 } },
+      byExitType: exitTypes,
+      byDayOfWeek: { Mon: { count: 16, pnl: -3 }, Sun: { count: 10, pnl: -50 }, Wed: { count: 8, pnl: 20 } },
+      best3TradesPnl: [20, 16, 11],
+      worst3TradesPnl: [-12, -11, -11],
+      avgBarsWinners: 22,
+      avgBarsLosers: 21,
+      walkForward: null,
+    };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 1, maxIter: 10, globalIter: 1,
+    paramHistoryPath: "/fake/history.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      moduleId: "M1", moduleName: "Breakout", profile: "breakout",
+      signalTF: "15m", regimeTF: "4h", varCap: 8,
+      fixedRules: "", stoppingCriteria: "", restructureLocks: "",
+      catalog: { slots: [] },
+    } as ModuleContext,
+  };
+
+  it("flags timeout-dominant exit structure (>60% non-TP/SL)", () => {
+    const analysis = makeAnalysisWithExits([
+      { signal: "signal", count: 69, pnl: -48, winRate: 42 },
+      { signal: "tp1", count: 4, pnl: 23, winRate: 75 },
+      { signal: "sl", count: 4, pnl: -47, winRate: 0 },
+    ]);
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: analysis });
+    expect(prompt).toContain("EXIT STRUCTURE");
+    expect(prompt).toContain("89%");
+  });
+
+  it("flags day anomaly when one day has >40% of losses", () => {
+    const analysis = makeAnalysisWithExits([
+      { signal: "signal", count: 34, pnl: -33, winRate: 40 },
+    ]);
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: analysis });
+    expect(prompt).toContain("DAY ANOMALY");
+    expect(prompt).toContain("Sun");
+  });
+
+  it("shows R:R ratio warning for symmetric wins/losses", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics({ avgWinR: 0.51, avgLossR: -0.51 }),
+      tradeAnalysis: makeAnalysisWithExits([{ signal: "signal", count: 77, pnl: -70, winRate: 41 }]),
+    });
+    expect(prompt).toContain("R:R ratio: 1.00");
+    expect(prompt).toContain("near-symmetric");
+  });
+
+  it("shows day-of-week breakdown in trade analysis", () => {
+    const analysis = makeAnalysisWithExits([{ signal: "signal", count: 34, pnl: -33, winRate: 40 }]);
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: analysis });
+    expect(prompt).toContain("By day of week:");
+    expect(prompt).toContain("Sun");
+    expect(prompt).toContain("Wed");
   });
 });

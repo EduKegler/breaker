@@ -155,6 +155,7 @@ ${unmetCriteria.length ? unmetCriteria.join("\n") : "All criteria met!"}
 
 ## LAST BACKTEST METRICS
 PnL: ${pnlStr} | Trades: ${tradesStr} | PF: ${pfStr} | DD: ${ddStr} | WR: ${wrStr} | AvgR: ${avgRStr}
+Avg Win: ${metrics.avgWinR != null ? `${metrics.avgWinR.toFixed(2)}R` : "N/A"} | Avg Loss: ${metrics.avgLossR != null ? `${metrics.avgLossR.toFixed(2)}R` : "N/A"} | Max Loss: ${metrics.maxLossR != null ? `${metrics.maxLossR.toFixed(2)}R` : "N/A"} | Expectancy: ${metrics.expectancy != null ? `${metrics.expectancy.toFixed(3)}R/trade` : "N/A"}${metrics.avgWinR != null && metrics.avgLossR != null && Math.abs(metrics.avgLossR) > 0 ? `\nR:R ratio: ${(metrics.avgWinR / Math.abs(metrics.avgLossR)).toFixed(2)} (${metrics.avgWinR / Math.abs(metrics.avgLossR) < 1.2 ? "⚠️ near-symmetric — breakout/trend strategies need R:R > 1.5" : "OK"})` : ""}
 
 ${designChecklistSection}${paramsSection}
 ${kbConstraintsBlock}${overfitSection}${tradeAnalysisSection}
@@ -591,11 +592,16 @@ function buildResearchSection(researchBriefPath?: string): string {
 }
 
 function buildTradeAnalysisSection(ta: TradeAnalysis): string {
+  const exitLines = (ta.byExitType ?? [])
+    .map((e) => `  ${e.signal.padEnd(18)}: ${String(e.count).padStart(3)}t | WR=${String(e.winRate).padStart(5)}% | PnL=${e.pnl >= 0 ? "+" : ""}${e.pnl} USD`)
+    .join("\n") || "  (no data)";
+
+  // Structural diagnostics derived from trade data
+  const diagnostics = buildStructuralDiagnostics(ta);
+
   return `## TRADE ANALYSIS
 By exit type:
-${(ta.byExitType ?? [])
-  .map((e) => `  ${e.signal.padEnd(18)}: ${String(e.count).padStart(3)}t | WR=${String(e.winRate).padStart(5)}% | PnL=${e.pnl >= 0 ? "+" : ""}${e.pnl} USD`)
-  .join("\n") || "  (no data)"}
+${exitLines}
 
 Average duration: winners=${ta.avgBarsWinners ?? "?"} bars | losers=${ta.avgBarsLosers ?? "?"} bars
 
@@ -608,8 +614,76 @@ ${ta.bySession ? `By session:\n${(["Asia", "London", "NY", "Off-peak"] as Sessio
   const ss = ta.bySession![s];
   return `  ${s.padEnd(9)}: ${String(ss.count).padStart(3)}t | WR=${String(ss.winRate).padStart(5)}% | PF=${String(ss.profitFactor).padStart(5)} | PnL=${ss.pnl >= 0 ? "+" : ""}${ss.pnl} USD`;
 }).join("\n")}` : ""}
+
+By day of week:
+${Object.entries(ta.byDayOfWeek ?? {})
+  .sort((a, b) => b[1].pnl - a[1].pnl)
+  .map(([day, stats]) => `  ${day.padEnd(4)}: ${String(stats.count).padStart(3)}t | PnL=${stats.pnl >= 0 ? "+" : ""}${stats.pnl.toFixed(2)} USD`)
+  .join("\n") || "  (no data)"}
+
 Best trades: ${ta.best3TradesPnl.join(", ")} USD | Worst: ${ta.worst3TradesPnl.join(", ")} USD
-`;
+${diagnostics}`;
+}
+
+/**
+ * Build explicit structural diagnostic warnings from trade analysis.
+ * These highlight patterns Claude should address — timeout dominance, R:R symmetry, etc.
+ */
+function buildStructuralDiagnostics(ta: TradeAnalysis): string {
+  const warnings: string[] = [];
+  const totalTrades = ta.totalExitRows ?? 0;
+  if (totalTrades === 0) return "";
+
+  // 1. Timeout dominance: if timeout exits > 50%, the strategy isn't capturing moves
+  const timeoutExit = (ta.byExitType ?? []).find((e) => e.signal === "timeout" || e.signal === "signal");
+  const tpExits = (ta.byExitType ?? []).filter((e) => e.signal.startsWith("tp"));
+  const tpCount = tpExits.reduce((sum, e) => sum + e.count, 0);
+  const slExits = (ta.byExitType ?? []).filter((e) => e.signal === "sl");
+  const slCount = slExits.reduce((sum, e) => sum + e.count, 0);
+
+  // Check for "signal" exits which are typically trail/timeout
+  const signalExit = (ta.byExitType ?? []).find((e) => e.signal === "signal");
+  const timeoutExitEntry = (ta.byExitType ?? []).find((e) => e.signal === "timeout");
+  const nonTpSlCount = totalTrades - tpCount - slCount;
+  const nonTpSlPct = (nonTpSlCount / totalTrades) * 100;
+
+  if (nonTpSlPct > 60) {
+    warnings.push(
+      `⚠️ EXIT STRUCTURE: ${Math.floor(nonTpSlPct)}% of trades exit via timeout/trail (not TP or SL). ` +
+      `Only ${tpCount} TPs hit out of ${totalTrades} trades. ` +
+      `Possible fixes: increase timeout bars, widen TP target, or improve entry timing.`,
+    );
+  }
+
+  if (tpCount > 0 && slCount > 0) {
+    const tpPnl = tpExits.reduce((sum, e) => sum + e.pnl, 0);
+    const slPnl = slExits.reduce((sum, e) => sum + e.pnl, 0);
+    if (Math.abs(slPnl) > tpPnl * 2) {
+      warnings.push(
+        `⚠️ SL DAMAGE: ${slCount} stop losses cost ${slPnl.toFixed(2)} USD while ${tpCount} TPs earned only ${tpPnl.toFixed(2)} USD. ` +
+        `SL exits destroy more value than TPs create. Consider widening stops or improving entry quality.`,
+      );
+    }
+  }
+
+  // 2. Day-of-week analysis: flag catastrophic days
+  if (ta.byDayOfWeek) {
+    const days = Object.entries(ta.byDayOfWeek).sort((a, b) => a[1].pnl - b[1].pnl);
+    const worst = days[0];
+    if (worst) {
+      const totalPnl = days.reduce((sum, [, s]) => sum + s.pnl, 0);
+      if (totalPnl < 0 && worst[1].pnl < totalPnl * 0.4 && worst[1].count >= 5) {
+        warnings.push(
+          `⚠️ DAY ANOMALY: ${worst[0]} accounts for ${Math.floor((worst[1].pnl / totalPnl) * 100)}% of total losses ` +
+          `(${worst[1].pnl.toFixed(2)} USD on ${worst[1].count} trades). ` +
+          `Investigate what's different about ${worst[0]} entries — use volatility/volume conditions, NOT day-of-week filters.`,
+        );
+      }
+    }
+  }
+
+  if (!warnings.length) return "";
+  return "\n### Structural Diagnostics\n" + warnings.join("\n") + "\n";
 }
 
 function buildFilterSimsSection(tradeAnalysis: TradeAnalysis | null): string {
