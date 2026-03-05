@@ -4,6 +4,9 @@ import {
   createUtcDayFormatter,
   aggregateCandles,
   intervalToMs,
+  bollingerBands,
+  keltner,
+  detectSqueeze,
 } from "@breaker/backtest";
 import type { Strategy, Signal, Candle, CandleInterval, StrategyContext } from "@breaker/backtest";
 import type { CandleStreamer } from "../adapters/candle-streamer.js";
@@ -233,6 +236,7 @@ export class StrategyRunner {
     }
     this.deps.orchestrator?.resetDayIfNeeded(currentDay);
     this.deps.orchestrator?.reportPrice(this.deps.coin, newCandle.c, newCandle.t);
+    this.reportSqueezeState(candles, newCandle.t);
 
     const higherTimeframes = this.buildHigherTimeframes(candles);
 
@@ -672,6 +676,23 @@ export class StrategyRunner {
     }
     // Entry was after all candles — use last index
     return candles.length - 1;
+  }
+
+  private reportSqueezeState(candles: Candle[], barTs: number): void {
+    if (!this.deps.orchestrator) return;
+    if (candles.length < 20) return;
+
+    const closes = candles.map((c) => c.c);
+    const bb = bollingerBands(closes, 20, 2.0);
+    const kc = keltner(candles, 20, 20, 1.5);
+    const squeeze = detectSqueeze(bb, kc, 4);
+    const lastIndex = squeeze.squeezeActive.length - 1;
+
+    this.deps.orchestrator.reportSqueeze(
+      this.deps.coin,
+      squeeze.squeezeActive[lastIndex],
+      barTs,
+    );
   }
 
   private buildHigherTimeframes(candles: Candle[]): Record<string, Candle[]> {

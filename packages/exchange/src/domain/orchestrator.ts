@@ -50,6 +50,9 @@ export class Orchestrator {
 
   // Gate 3: Volatility spike state
   private volatilitySpikeActive = false;
+
+  // Gate 6: Squeeze state (BB inside KC with declining width)
+  private squeezeState = new Map<string, { active: boolean; lastBarTs: number }>();
   private spikeCooldownRemaining = 0;
   private priceHistory = new Map<string, number[]>();
   private lastTickBarTs = 0;
@@ -100,6 +103,14 @@ export class Orchestrator {
         spikeCooldownRemaining: this.spikeCooldownRemaining,
       });
       return { allowed: false, reason: "Volatility spike active" };
+    }
+
+    // Gate 6: Squeeze (BB inside KC with declining width)
+    if (this.isSqueezeActive()) {
+      this.logDecision("signal_blocked", moduleId, {
+        gate: "squeeze",
+      });
+      return { allowed: false, reason: "Squeeze active" };
     }
 
     this.logDecision("signal_allowed", moduleId, {
@@ -216,6 +227,39 @@ export class Orchestrator {
 
   isVolatilitySpikeActive(): boolean {
     return this.volatilitySpikeActive;
+  }
+
+  reportSqueeze(coin: string, active: boolean, barTs: number): void {
+    const current = this.squeezeState.get(coin);
+
+    // Dedup: ignore reports with barTs <= last seen for this coin
+    if (current && barTs <= current.lastBarTs) return;
+
+    const wasActive = current?.active ?? false;
+
+    this.squeezeState.set(coin, { active, lastBarTs: barTs });
+
+    // Log transitions only
+    if (!wasActive && active) {
+      this.logDecision("signal_blocked", "system", {
+        event: "squeeze_detected",
+        coin,
+        barTs,
+      });
+    } else if (wasActive && !active) {
+      this.logDecision("signal_allowed", "system", {
+        event: "squeeze_released",
+        coin,
+        barTs,
+      });
+    }
+  }
+
+  isSqueezeActive(): boolean {
+    for (const state of this.squeezeState.values()) {
+      if (state.active) return true;
+    }
+    return false;
   }
 
   private resolveBar(bufferKey: string): void {

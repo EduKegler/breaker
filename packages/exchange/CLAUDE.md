@@ -82,6 +82,7 @@ src/
 - `proposeSignal()` buffers signals for 50ms to deconflict same-bar, same-coin signals: same direction → highest priority wins; opposite direction → both rejected
 - Module types and priority: breakout(4) > pullback(3) > mean-reversion(2) > trend-following(1)
 - Heartbeat in daemon.ts (30s interval) evaluates `shouldForceClose()` to force close positions between candle closes
+- Gate 6: Squeeze — `reportSqueeze(coin, active, barTs)` fed by StrategyRunner (computes BB(20,2)/KC(20,20,1.5)/detectSqueeze(4) on each candle close), GLOBAL gate (any coin squeezed → all entries blocked), dedup by barTs per coin, day reset does NOT clear squeeze state, logs `squeeze_detected`/`squeeze_released` transitions
 - Decision callback persists every decision to EventLog NDJSON (type: `orchestrator_*`)
 - Orchestrator is **optional** in `StrategyRunnerDeps` → existing tests don't break
 - `seedDailyPnl(pnl)` initializes orchestrator from SQLite on daemon startup — prevents stale dailyPnl after restarts

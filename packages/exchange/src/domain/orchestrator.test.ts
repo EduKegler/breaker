@@ -462,4 +462,122 @@ describe("Orchestrator", () => {
       expect(blocked!.moduleId).toBe("BTC:donchian-adx");
     });
   });
+
+  describe("Gate 6: Squeeze", () => {
+    it("allows signal when no squeeze reported", () => {
+      const result = orch.canSignal("BTC:donchian-adx");
+      expect(result.allowed).toBe(true);
+    });
+
+    it("blocks signal when squeeze is active", () => {
+      orch.reportSqueeze("BTC", true, 1000);
+      const result = orch.canSignal("BTC:donchian-adx");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("Squeeze active");
+    });
+
+    it("is a GLOBAL gate: squeeze on BTC blocks SOL entry", () => {
+      orch.reportSqueeze("BTC", true, 1000);
+      const result = orch.canSignal("SOL:ema-pullback");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("Squeeze active");
+    });
+
+    it("allows signal after squeeze is released", () => {
+      orch.reportSqueeze("BTC", true, 1000);
+      expect(orch.canSignal("BTC:donchian-adx").allowed).toBe(false);
+
+      orch.reportSqueeze("BTC", false, 2000);
+      expect(orch.canSignal("BTC:donchian-adx").allowed).toBe(true);
+    });
+
+    it("stays blocked if one coin still squeezed (multi-coin)", () => {
+      orch.reportSqueeze("BTC", true, 1000);
+      orch.reportSqueeze("SOL", true, 1000);
+
+      // Release BTC but SOL still squeezed
+      orch.reportSqueeze("BTC", false, 2000);
+      expect(orch.canSignal("BTC:donchian-adx").allowed).toBe(false);
+    });
+
+    it("dedup: ignores report with same barTs for same coin", () => {
+      orch.reportSqueeze("BTC", true, 1000);
+      // Second report with same barTs should be ignored
+      orch.reportSqueeze("BTC", false, 1000);
+      expect(orch.isSqueezeActive()).toBe(true);
+    });
+
+    it("dedup: ignores report with older barTs for same coin", () => {
+      orch.reportSqueeze("BTC", true, 2000);
+      // Older barTs should be ignored
+      orch.reportSqueeze("BTC", false, 1000);
+      expect(orch.isSqueezeActive()).toBe(true);
+    });
+
+    it("accepts reports from different coins with same barTs", () => {
+      orch.reportSqueeze("BTC", true, 1000);
+      orch.reportSqueeze("SOL", false, 1000);
+      expect(orch.isSqueezeActive()).toBe(true);
+    });
+
+    it("cold start: no reports → squeeze inactive", () => {
+      expect(orch.isSqueezeActive()).toBe(false);
+    });
+
+    it("day reset does NOT clear squeeze state", () => {
+      orch.reportSqueeze("BTC", true, 1000);
+      orch.resetDayIfNeeded("2026-03-04");
+      expect(orch.isSqueezeActive()).toBe(true);
+    });
+
+    it("gate priority: daily loss checked before squeeze", () => {
+      orch.recordClose("BTC:donchian-adx", -20); // hit daily loss
+      orch.reportSqueeze("BTC", true, 1000);
+
+      const result = orch.canSignal("BTC:donchian-adx");
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain("2R"); // daily loss, not squeeze
+    });
+
+    it("logs squeeze_detected on false→true transition", () => {
+      const decisions: OrchestratorDecision[] = [];
+      orch.setDecisionCallback((d) => decisions.push(d));
+
+      orch.reportSqueeze("BTC", true, 1000);
+
+      const detected = decisions.find((d) => d.data.event === "squeeze_detected");
+      expect(detected).toBeDefined();
+      expect(detected!.data.coin).toBe("BTC");
+    });
+
+    it("logs squeeze_released on true→false transition", () => {
+      const decisions: OrchestratorDecision[] = [];
+      orch.setDecisionCallback((d) => decisions.push(d));
+
+      orch.reportSqueeze("BTC", true, 1000);
+      orch.reportSqueeze("BTC", false, 2000);
+
+      const released = decisions.find((d) => d.data.event === "squeeze_released");
+      expect(released).toBeDefined();
+      expect(released!.data.coin).toBe("BTC");
+    });
+
+    it("does NOT log on same-state report (true→true)", () => {
+      const decisions: OrchestratorDecision[] = [];
+      orch.reportSqueeze("BTC", true, 1000);
+      orch.setDecisionCallback((d) => decisions.push(d));
+
+      orch.reportSqueeze("BTC", true, 2000);
+
+      const squeezeEvents = decisions.filter(
+        (d) => d.data.event === "squeeze_detected" || d.data.event === "squeeze_released",
+      );
+      expect(squeezeEvents).toHaveLength(0);
+    });
+
+    it("shouldForceClose is NOT affected by squeeze", () => {
+      orch.reportSqueeze("BTC", true, 1000);
+      expect(orch.shouldForceClose()).toBe(false);
+    });
+  });
 });

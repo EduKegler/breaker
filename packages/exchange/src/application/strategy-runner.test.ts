@@ -1611,4 +1611,81 @@ describe("StrategyRunner", () => {
       expect(deps.signalHandlerDeps.hlClient.placeMarketOrder).not.toHaveBeenCalled();
     });
   });
+
+  describe("squeeze reporting", () => {
+    it("calls orchestrator.reportSqueeze on candle close", async () => {
+      // Need ≥ 20 candles for BB/KC computation
+      const candles = Array.from({ length: 25 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+
+      const orch = new Orchestrator({
+        maxDailyLossR: 2,
+        riskPerTradeUsd: 10,
+        maxTradesPerDay: 5,
+        volSpikeThresholdPct: 100,
+        volSpikeLookbackBars: 4,
+        volSpikeCooldownBars: 4,
+      });
+      orch.registerModule("BTC:donchian-adx", "breakout");
+      const reportSqueezeSpy = vi.spyOn(orch, "reportSqueeze");
+      deps.orchestrator = orch;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      streamer.addCandle(makeCandle(25));
+      await runner.tick();
+
+      expect(reportSqueezeSpy).toHaveBeenCalledOnce();
+      expect(reportSqueezeSpy).toHaveBeenCalledWith(
+        "BTC",
+        expect.any(Boolean),
+        expect.any(Number),
+      );
+    });
+
+    it("does not call reportSqueeze when orchestrator is undefined", async () => {
+      const candles = Array.from({ length: 25 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+      // orchestrator is undefined by default in createDeps
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      streamer.addCandle(makeCandle(25));
+      // Should not throw
+      await runner.tick();
+    });
+
+    it("does not call reportSqueeze with <20 candles", async () => {
+      const candles = Array.from({ length: 15 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+
+      const orch = new Orchestrator({
+        maxDailyLossR: 2,
+        riskPerTradeUsd: 10,
+        maxTradesPerDay: 5,
+        volSpikeThresholdPct: 100,
+        volSpikeLookbackBars: 4,
+        volSpikeCooldownBars: 4,
+      });
+      orch.registerModule("BTC:donchian-adx", "breakout");
+      const reportSqueezeSpy = vi.spyOn(orch, "reportSqueeze");
+      deps.orchestrator = orch;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      streamer.addCandle(makeCandle(15));
+      await runner.tick();
+
+      expect(reportSqueezeSpy).not.toHaveBeenCalled();
+    });
+  });
 });
