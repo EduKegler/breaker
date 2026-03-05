@@ -108,7 +108,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   );
   const designChecklistSection = buildDesignChecklistSection(criteria.designChecklist, globalIter);
   const filterSimsSection = buildFilterSimsSection(tradeAnalysis);
-  const overfitSection = buildOverfitSection(paramHistory, tradeAnalysis, mc.minPfRatio);
+  const overfitSection = buildOverfitSection(paramHistory, tradeAnalysis, mc.minPfRatio, metrics);
 
   // Research brief — updated schema matching conduct-research.ts
   const researchSection = buildResearchSection(researchBriefPath);
@@ -175,7 +175,12 @@ interface StrategyContext {
   index: number;
   currentCandle: Candle;
   positionDirection: "long" | "short" | null;
+  positionEntryPrice: number | null;       // entry price of current position
+  positionEntryBarIndex: number | null;    // bar index at entry (for barsInTrade calc)
   higherTimeframes: Record<string, Candle[]>;
+  dailyPnl: number;                        // realized PnL for the current day
+  tradesToday: number;                     // trades taken today
+  barsSinceExit: number;                   // bars since last exit (cooldown)
   track(name: string, passed: boolean, value?: number, threshold?: number): boolean;
   indicator(name: string, value: number): void;
 }
@@ -184,7 +189,7 @@ interface Strategy {
   params: Record<string, StrategyParam>;
   requiredTimeframes: string[];          // MANDATORY — runner loads these HTFs
   requiredWarmup?: Record<string, number>;
-  init?(candles: Candle[], htf: Record<string, Candle[]>): void;
+  init?(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void;
   onCandle(ctx: StrategyContext): Signal | null;
   shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null; // MANDATORY
   computeLevels(ctx: StrategyContext, direction: "long" | "short"): { stopLoss: number; takeProfits: { price: number; pctOfPosition: number }[] } | null; // MANDATORY
@@ -197,7 +202,7 @@ interface Strategy {
 - **Variable cap: ${moduleContext.varCap}** — current optimizable params must not exceed this. Adding a param requires dropping another.
 - **Core parameters first**: fully sweep core parameter ranges before secondary params.
 - **FORBIDDEN: day-of-week filters**. No dayofweek conditions.
-- **FORBIDDEN: hour-of-day filters**. Volume confirmation (M1 rule 3) handles low-liquidity periods adaptively.
+- **FORBIDDEN: hour-of-day filters**. Use adaptive volume/volatility filters instead of time gates.
 - **Axis exhaustion**: a core param is only EXHAUSTED when every value in min/max/step has been tested.
 - **Directional bias**: if one direction PF < 0.5, diagnosis is STRUCTURAL.
 - **Next steps are conditionals**: use format "if [metric X] then [action Y]".
@@ -513,6 +518,7 @@ function buildOverfitSection(
   paramHistory: ParameterHistory | null,
   tradeAnalysis: TradeAnalysis | null,
   minPfRatio: number,
+  metrics: Metrics,
 ): string {
   const warnings: string[] = [];
 
@@ -573,6 +579,26 @@ function buildOverfitSection(
         );
       }
     }
+  }
+
+  // KB §13.3 red flags
+  if ((metrics.profitFactor ?? 0) > 3.0) {
+    warnings.push(
+      `OVERFIT SIGNAL: PF=${metrics.profitFactor!.toFixed(2)} > 3.0. ` +
+      `Extremely high PF in crypto is suspicious — verify walk-forward pfRatio.`,
+    );
+  }
+  if (metrics.maxDrawdownPct !== null && metrics.maxDrawdownPct < 1) {
+    warnings.push(
+      `OVERFIT SIGNAL: DD=${metrics.maxDrawdownPct.toFixed(1)}% < 1%. ` +
+      `Real crypto strategies have drawdowns — suspiciously low DD suggests curve fitting.`,
+    );
+  }
+  if ((metrics.winRate ?? 0) > 80) {
+    warnings.push(
+      `OVERFIT SIGNAL: WR=${metrics.winRate!.toFixed(1)}% > 80%. ` +
+      `Investigate look-ahead bias or excessive curve fitting.`,
+    );
   }
 
   if (!warnings.length) return "";

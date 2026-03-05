@@ -104,7 +104,7 @@ export function extractFixedRules(kbContent: string, sectionNumber: number): str
   const lines = rest.split("\n");
   const ruleLines: string[] = [];
   for (const line of lines) {
-    if (/^###\s/.test(line) || /^---\s*$/.test(line)) break;
+    if (/^#{3,4}\s/.test(line) || /^---\s*$/.test(line)) break;
     ruleLines.push(line);
   }
 
@@ -125,6 +125,7 @@ function formatStoppingCriteria(moduleId: string): string {
   if (!mc) return "(unknown module)";
 
   const lines = [
+    `- PnL > 0`,
     `- Trades >= ${mc.minTrades}`,
     `- PF >= ${mc.minPF}`,
     `- DD <= ${mc.maxDD}%`,
