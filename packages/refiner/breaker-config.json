@@ -81,7 +81,7 @@
     "maxAtrMult": 10,
     "minAtrMult": 2.5,
     "globalMaxTradesDay": 5,
-    "protectedFields": ["maxTradesDay"]
+    "protectedFields": []
   },
   "assets": {
     "BTC": {

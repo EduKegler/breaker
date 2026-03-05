@@ -14,7 +14,6 @@ interface EmaPullbackParams {
   rsiOversold: StrategyParam;
   atrStopMult: StrategyParam;
   timeoutBars: StrategyParam;
-  maxTradesDay: StrategyParam;
 }
 
 const DEFAULT_PARAMS: EmaPullbackParams = {
@@ -24,7 +23,6 @@ const DEFAULT_PARAMS: EmaPullbackParams = {
   rsiOversold: { value: 40, min: 30, max: 50, step: 5, optimizable: true, description: "RSI oversold threshold (overbought = 100 - this)" },
   atrStopMult: { value: 2.5, min: 2.5, max: 5.0, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop (KB §1.6: min 2.5 for pullback)" },
   timeoutBars: { value: 30, min: 15, max: 50, step: 5, optimizable: true, description: "Bars before timeout exit" },
-  maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
 };
 
 /**

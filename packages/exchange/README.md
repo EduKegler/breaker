@@ -78,7 +78,7 @@ WebSocket at `/ws` streams real-time: candles, positions, orders, equity, signal
 | `maxLeverage` | `5` | Moderate leverage for crypto. Higher increases liquidation risk on volatile moves. |
 | `maxOpenPositions` | `1` | One position per asset (KB §2.5.1). Each coin can have at most 1 open position; different coins trade independently. |
 | `maxDailyLossUsd` | `100` | ~10% of equity. Circuit breaker: stops trading for the day after $100 in realized losses. |
-| `maxTradesPerDay` | `999` | Effectively unlimited — strategy-level `maxTradesDay` param (default: 3) is the real limiter. Set to `0` to act as a kill switch (blocks all trades). |
+| `maxTradesPerDay` | `999` | Global daily trade limit across all coins. Set to `0` to act as a kill switch (blocks all trades). |
 | `cooldownBars` | `4` | 4 × 15m = 1 hour between trades. Prevents rapid re-entry after stop-outs. |
 
 ### Hardcoded safety caps (in `risk-engine.ts`, cannot be overridden)

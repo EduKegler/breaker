@@ -18,7 +18,6 @@ interface DonchianAdxParams {
   adxThreshold: StrategyParam;
   atrStopMult: StrategyParam;
   volMult: StrategyParam;
-  maxTradesDay: StrategyParam;
   timeoutBars: StrategyParam;
 }
 
@@ -28,7 +27,6 @@ const DEFAULT_PARAMS: DonchianAdxParams = {
   adxThreshold: { value: 25, min: 20, max: 35, step: 5, optimizable: true, description: "ADX below this = consolidation" },
   atrStopMult: { value: 3.0, min: 3.0, max: 5.0, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop (KB §1.6: min 3.0 for breakout)" },
   volMult: { value: 1.5, min: 1.0, max: 3.0, step: 0.5, optimizable: true, description: "Volume spike multiplier vs SMA(vol, 20) — KB §3.1 rule 3" },
-  maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
   timeoutBars: { value: 24, min: 24, max: 96, step: 8, optimizable: true, description: "Bars before timeout exit (KB range: 24–96)" },
 };
 
