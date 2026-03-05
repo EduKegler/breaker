@@ -31,7 +31,7 @@ const DEFAULT_PARAMS: DonchianAdxParams = {
 };
 
 /**
- * Donchian ADX breakout strategy — TypeScript port of Pine Script.
+ * Donchian ADX breakout strategy.
  *
  * Entry: Donchian breakout + low ADX (consolidation) + daily EMA regime filter.
  * Exit: Fast Donchian trailing channel.
@@ -137,43 +137,51 @@ export function createDonchianAdx(
       }
       if (isNaN(dailyEma)) return null;
 
-      const regimeBull = currentCandle.c > dailyEma;
-      const regimeBear = currentCandle.c < dailyEma;
+      const close = currentCandle.c;
+      const volMult = params.volMult.value;
 
       // Volume confirmation (KB §3.1 rule 3): breakout bar must exceed recent avg
       const volSmaArr = volSmaCache ?? sma(candles.slice(0, index + 1).map((c) => c.v), 20);
       const avgVol = volSmaArr[index - 1]; // Previous bar SMA to avoid look-ahead
-      const volConfirmed = !isNaN(avgVol) && currentCandle.v > avgVol * params.volMult.value;
+      const volConfirmed = !isNaN(avgVol) && currentCandle.v > avgVol * volMult;
 
       const stopDist = atr1h * atrStopMultVal;
 
-      // LONG signal: breakout above slow Donchian upper, low ADX, bullish regime, volume spike
-      if (
-        currentCandle.c > prevSlowUpper &&
-        adxVal < adxThresholdVal &&
-        regimeBull &&
-        volConfirmed
-      ) {
+      // Register indicator values for diagnostics
+      ctx.indicator('adx', adxVal);
+      ctx.indicator('atr1h', atr1h);
+      ctx.indicator('dailyEma', dailyEma);
+      ctx.indicator('close', close);
+      ctx.indicator('prevSlowUpper', prevSlowUpper);
+      ctx.indicator('prevSlowLower', prevSlowLower);
+
+      // LONG conditions
+      const longBreakout = ctx.track('L:breakout', close > prevSlowUpper, close, prevSlowUpper);
+      const longAdx = ctx.track('L:adx_low', adxVal < adxThresholdVal, adxVal, adxThresholdVal);
+      const longRegime = ctx.track('L:regime_bull', close > dailyEma, close, dailyEma);
+      const longVol = ctx.track('L:vol_confirmed', volConfirmed, currentCandle.v, !isNaN(avgVol) ? avgVol * volMult : NaN);
+
+      if (longBreakout && longAdx && longRegime && longVol) {
         return {
           direction: "long",
           entryPrice: prevSlowUpper,
-          stopLoss: currentCandle.c - stopDist,
+          stopLoss: close - stopDist,
           takeProfits: [], // Uses trailing exit instead
           comment: "DC breakout long",
         };
       }
 
-      // SHORT signal: breakout below slow Donchian lower, low ADX, bearish regime, volume spike
-      if (
-        currentCandle.c < prevSlowLower &&
-        adxVal < adxThresholdVal &&
-        regimeBear &&
-        volConfirmed
-      ) {
+      // SHORT conditions
+      const shortBreakout = ctx.track('S:breakout', close < prevSlowLower, close, prevSlowLower);
+      const shortAdx = ctx.track('S:adx_low', adxVal < adxThresholdVal, adxVal, adxThresholdVal);
+      const shortRegime = ctx.track('S:regime_bear', close < dailyEma, close, dailyEma);
+      const shortVol = ctx.track('S:vol_confirmed', volConfirmed, currentCandle.v, !isNaN(avgVol) ? avgVol * volMult : NaN);
+
+      if (shortBreakout && shortAdx && shortRegime && shortVol) {
         return {
           direction: "short",
           entryPrice: prevSlowLower,
-          stopLoss: currentCandle.c + stopDist,
+          stopLoss: close + stopDist,
           takeProfits: [],
           comment: "DC breakout short",
         };

@@ -17,7 +17,6 @@ import type { EventLog } from "../adapters/event-log.js";
 import type { Orchestrator } from "../domain/orchestrator.js";
 import { truncatePrice } from "@breaker/kit";
 import { logger } from "../lib/logger.js";
-import { diagnoseSignal } from "./diagnose-signal.js";
 
 const log = logger.createChild("strategyRunner");
 
@@ -567,14 +566,19 @@ export class StrategyRunner {
       dailyPnl: this.dailyPnl,
       tradesToday: this.tradesToday,
       barsSinceExit: this.barsSinceExit,
+      diagnosticsEnabled: true,
     });
 
     const signal = this.deps.strategy.onCandle(ctx);
     this.lastSignalResult = { t: candles[index].t, hadSignal: signal !== null };
     if (!signal) {
-      const diag = diagnoseSignal(ctx, this.deps.strategyConfigName, this.deps.interval);
       log.debug(
-        { action: "noSignal", coin: this.deps.coin, ...diag },
+        {
+          action: "noSignal",
+          coin: this.deps.coin,
+          conditions: ctx.getConditions(),
+          indicators: ctx.getIndicators(),
+        },
         "onCandle returned null",
       );
       return;

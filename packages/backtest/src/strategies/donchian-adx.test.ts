@@ -68,6 +68,29 @@ function generate1dCandles(candles15m: Candle[]): Candle[] {
   return result;
 }
 
+function makeCtx(
+  candles: Candle[],
+  index: number,
+  htf: Record<string, Candle[]>,
+  overrides?: Partial<StrategyContext>,
+): StrategyContext {
+  return {
+    candles,
+    index,
+    currentCandle: candles[index],
+    positionDirection: null,
+    positionEntryPrice: null,
+    positionEntryBarIndex: null,
+    higherTimeframes: htf,
+    dailyPnl: 0,
+    tradesToday: 0,
+    barsSinceExit: 999,
+    track: (_, p) => p,
+    indicator: () => {},
+    ...overrides,
+  };
+}
+
 describe("createDonchianAdx", () => {
   it("creates strategy with default params", () => {
     const strategy = createDonchianAdx();
@@ -92,18 +115,7 @@ describe("createDonchianAdx", () => {
     const candles = generate15mCandles(10, 10000, "flat");
     const htf = { "1h": [] as Candle[], "1d": [] as Candle[] };
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 5, // Too early for dcSlow=50
-      currentCandle: candles[5],
-      positionDirection: null,
-      positionEntryPrice: null,
-      positionEntryBarIndex: null,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    const ctx = makeCtx(candles, 5, htf); // Too early for dcSlow=50
     expect(strategy.onCandle(ctx)).toBeNull();
   });
 
@@ -112,18 +124,7 @@ describe("createDonchianAdx", () => {
     const candles = generate15mCandles(200, 10000, "up");
     const htf = { "1h": generate1hCandles(candles).slice(0, 5), "1d": [] as Candle[] };
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 100,
-      currentCandle: candles[100],
-      positionDirection: null,
-      positionEntryPrice: null,
-      positionEntryBarIndex: null,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    const ctx = makeCtx(candles, 100, htf);
     expect(strategy.onCandle(ctx)).toBeNull();
   });
 
@@ -166,18 +167,7 @@ describe("createDonchianAdx", () => {
     let foundSignal = false;
     const startScan = Math.max(candles.length - 200, 100);
     for (let i = startScan; i < candles.length; i++) {
-      const ctx: StrategyContext = {
-        candles,
-        index: i,
-        currentCandle: candles[i],
-        positionDirection: null,
-        positionEntryPrice: null,
-        positionEntryBarIndex: null,
-        higherTimeframes: htf,
-        dailyPnl: 0,
-        tradesToday: 0,
-        barsSinceExit: 999,
-              };
+      const ctx = makeCtx(candles, i, htf);
       const signal = strategy.onCandle(ctx);
       if (signal) {
         expect(signal.direction).toBe("long");
@@ -225,18 +215,7 @@ describe("createDonchianAdx", () => {
     let foundSignal = false;
     const startScan = Math.max(candles.length - 200, 100);
     for (let i = startScan; i < candles.length; i++) {
-      const ctx: StrategyContext = {
-        candles,
-        index: i,
-        currentCandle: candles[i],
-        positionDirection: null,
-        positionEntryPrice: null,
-        positionEntryBarIndex: null,
-        higherTimeframes: htf,
-        dailyPnl: 0,
-        tradesToday: 0,
-        barsSinceExit: 999,
-              };
+      const ctx = makeCtx(candles, i, htf);
       const signal = strategy.onCandle(ctx);
       if (signal) {
         expect(signal.direction).toBe("short");
@@ -284,18 +263,7 @@ describe("createDonchianAdx", () => {
     let foundSignal = false;
     const startScan = Math.max(candles.length - 200, 100);
     for (let i = startScan; i < candles.length; i++) {
-      const ctx: StrategyContext = {
-        candles,
-        index: i,
-        currentCandle: candles[i],
-        positionDirection: null,
-        positionEntryPrice: null,
-        positionEntryBarIndex: null,
-        higherTimeframes: htf,
-        dailyPnl: 0,
-        tradesToday: 0,
-        barsSinceExit: 999,
-              };
+      const ctx = makeCtx(candles, i, htf);
       const signal = strategy.onCandle(ctx);
       if (signal) {
         foundSignal = true;
@@ -340,18 +308,7 @@ describe("createDonchianAdx", () => {
     let foundSignal = false;
     const startScan = Math.max(candles.length - 200, 100);
     for (let i = startScan; i < candles.length; i++) {
-      const ctx: StrategyContext = {
-        candles,
-        index: i,
-        currentCandle: candles[i],
-        positionDirection: null,
-        positionEntryPrice: null,
-        positionEntryBarIndex: null,
-        higherTimeframes: htf,
-        dailyPnl: 0,
-        tradesToday: 0,
-        barsSinceExit: 999,
-              };
+      const ctx = makeCtx(candles, i, htf);
       const signal = strategy.onCandle(ctx);
       if (signal) {
         expect(signal.direction).toBe("long");
@@ -371,18 +328,11 @@ describe("createDonchianAdx", () => {
     ];
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: candles.length - 1,
-      currentCandle: candles[candles.length - 1],
+    const ctx = makeCtx(candles, candles.length - 1, htf, {
       positionDirection: "short",
       positionEntryPrice: 10000,
       positionEntryBarIndex: 0,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    });
     const result = strategy.shouldExit!(ctx);
     if (result) {
       expect(result.exit).toBe(true);
@@ -399,18 +349,11 @@ describe("createDonchianAdx", () => {
     ];
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: candles.length - 1,
-      currentCandle: candles[candles.length - 1],
+    const ctx = makeCtx(candles, candles.length - 1, htf, {
       positionDirection: "long",
       positionEntryPrice: 10000,
       positionEntryBarIndex: 0,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    });
     const result = strategy.shouldExit!(ctx);
     // May or may not trigger depending on exact values
     if (result) {
@@ -424,18 +367,11 @@ describe("createDonchianAdx", () => {
     const candles = generate15mCandles(30, 10000, "flat");
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 15,
-      currentCandle: candles[15],
+    const ctx = makeCtx(candles, 15, htf, {
       positionDirection: "long",
       positionEntryPrice: 10000,
       positionEntryBarIndex: 10, // 15 - 10 = 5 bars in trade
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    });
     const result = strategy.shouldExit!(ctx);
     expect(result).not.toBeNull();
     expect(result!.exit).toBe(true);
@@ -447,18 +383,7 @@ describe("createDonchianAdx", () => {
     const candles = generate15mCandles(30, 10000, "flat");
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 25,
-      currentCandle: candles[25],
-      positionDirection: null,
-      positionEntryPrice: null,
-      positionEntryBarIndex: null,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    const ctx = makeCtx(candles, 25, htf);
     expect(strategy.shouldExit!(ctx)).toBeNull();
   });
 
@@ -472,18 +397,7 @@ describe("createDonchianAdx", () => {
     const candles = generate15mCandles(30, 10000, "up");
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 20,
-      currentCandle: candles[20],
-      positionDirection: null,
-      positionEntryPrice: null,
-      positionEntryBarIndex: null,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    const ctx = makeCtx(candles, 20, htf);
     expect(strategy.getExitLevel!(ctx)).toBeNull();
   });
 
@@ -492,18 +406,11 @@ describe("createDonchianAdx", () => {
     const candles = generate15mCandles(30, 10000, "up");
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 20,
-      currentCandle: candles[20],
+    const ctx = makeCtx(candles, 20, htf, {
       positionDirection: "long",
       positionEntryPrice: 10000,
       positionEntryBarIndex: 10,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    });
     const level = strategy.getExitLevel!(ctx);
     expect(level).toBeTypeOf("number");
     // For an uptrend, the fast DC lower should be below current price
@@ -515,18 +422,11 @@ describe("createDonchianAdx", () => {
     const candles = generate15mCandles(30, 10000, "down");
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 20,
-      currentCandle: candles[20],
+    const ctx = makeCtx(candles, 20, htf, {
       positionDirection: "short",
       positionEntryPrice: 10000,
       positionEntryBarIndex: 10,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    });
     const level = strategy.getExitLevel!(ctx);
     expect(level).toBeTypeOf("number");
     // For a downtrend, the fast DC upper should be above current price
@@ -547,18 +447,11 @@ describe("createDonchianAdx", () => {
     ];
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 4,
-      currentCandle: candles[4],
+    const ctx = makeCtx(candles, 4, htf, {
       positionDirection: "long",
       positionEntryPrice: 105,
       positionEntryBarIndex: 2,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    });
     const result = strategy.shouldExit!(ctx);
     expect(result).not.toBeNull();
     expect(result!.exit).toBe(true);
@@ -579,18 +472,11 @@ describe("createDonchianAdx", () => {
     ];
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 4,
-      currentCandle: candles[4],
+    const ctx = makeCtx(candles, 4, htf, {
       positionDirection: "short",
       positionEntryPrice: 200,
       positionEntryBarIndex: 2,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    });
     const result = strategy.shouldExit!(ctx);
     expect(result).not.toBeNull();
     expect(result!.exit).toBe(true);
@@ -605,18 +491,11 @@ describe("createDonchianAdx", () => {
     }));
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 3, // < dcFast+1 = 6, but after timeout check (barsInTrade=2 < 100)
-      currentCandle: candles[3],
+    const ctx = makeCtx(candles, 3, htf, { // < dcFast+1 = 6, but after timeout check (barsInTrade=2 < 100)
       positionDirection: "long",
       positionEntryPrice: 100,
       positionEntryBarIndex: 1,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    });
     expect(strategy.shouldExit!(ctx)).toBeNull();
   });
 
@@ -625,18 +504,11 @@ describe("createDonchianAdx", () => {
     const candles = generate15mCandles(15, 10000, "up");
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
-    const ctx: StrategyContext = {
-      candles,
-      index: 5, // Too early for dcFast=20
-      currentCandle: candles[5],
+    const ctx = makeCtx(candles, 5, htf, { // Too early for dcFast=20
       positionDirection: "long",
       positionEntryPrice: 10000,
       positionEntryBarIndex: 0,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-          };
+    });
     expect(strategy.getExitLevel!(ctx)).toBeNull();
   });
 
@@ -684,18 +556,7 @@ describe("createDonchianAdx", () => {
 
     // Every bar with active squeeze must return null from onCandle
     for (const idx of squeezeBars) {
-      const ctx: StrategyContext = {
-        candles,
-        index: idx,
-        currentCandle: candles[idx],
-        positionDirection: null,
-        positionEntryPrice: null,
-        positionEntryBarIndex: null,
-        higherTimeframes: htf,
-        dailyPnl: 0,
-        tradesToday: 0,
-        barsSinceExit: 999,
-      };
+      const ctx = makeCtx(candles, idx, htf);
       expect(strategy.onCandle(ctx), `bar ${idx} should be blocked by squeeze`).toBeNull();
     }
   });
@@ -716,18 +577,11 @@ describe("createDonchianAdx", () => {
     const htf = {} as Record<string, Candle[]>;
     strategy.init!(candles, htf);
 
-    const ctx: StrategyContext = {
-      candles,
-      index: 4,
-      currentCandle: candles[4],
+    const ctx = makeCtx(candles, 4, htf, {
       positionDirection: "long",
       positionEntryPrice: 105,
       positionEntryBarIndex: 2,
-      higherTimeframes: htf,
-      dailyPnl: 0,
-      tradesToday: 0,
-      barsSinceExit: 999,
-    };
+    });
 
     // shouldExit should still work regardless of squeeze state
     const result = strategy.shouldExit!(ctx);

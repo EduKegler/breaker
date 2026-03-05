@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateGuardrails, validateParamGuardrails, validateWalkForward, validateFreeVariableCount } from "./guardrails.js";
+import { validateGuardrails, validateParamGuardrails, validateWalkForward, validateFreeVariableCount, validateDiagnosticTracking, validateStrategyStructure } from "./guardrails.js";
 import type { Guardrails } from "../../types/config.js";
 import type { StrategyParam, WalkForward } from "@breaker/backtest";
 
@@ -150,6 +150,38 @@ describe("validateWalkForward", () => {
   });
 });
 
+describe("validateDiagnosticTracking", () => {
+  it("returns empty when source contains ctx.track()", () => {
+    const source = `
+      const longBreakout = ctx.track('L:breakout', close > upper, close, upper);
+      ctx.indicator('adx', adxVal);
+    `;
+    expect(validateDiagnosticTracking(source)).toEqual([]);
+  });
+
+  it("detects missing ctx.track() calls", () => {
+    const source = `
+      if (close > upper && adxVal < threshold) {
+        return { direction: "long", entryPrice: upper };
+      }
+    `;
+    const v = validateDiagnosticTracking(source);
+    expect(v).toHaveLength(1);
+    expect(v[0].field).toBe("diagnostics");
+    expect(v[0].reason).toContain("ctx.track()");
+  });
+
+  it("ignores commented-out ctx.track() calls", () => {
+    const source = `
+      // ctx.track('L:breakout', close > upper, close, upper);
+      if (close > upper) return signal;
+    `;
+    const v = validateDiagnosticTracking(source);
+    expect(v).toHaveLength(1);
+    expect(v[0].field).toBe("diagnostics");
+  });
+});
+
 describe("validateFreeVariableCount", () => {
   it("returns empty when maxFreeVariables is undefined", () => {
     expect(validateFreeVariableCount(10, undefined)).toEqual([]);
@@ -168,5 +200,154 @@ describe("validateFreeVariableCount", () => {
     expect(v).toHaveLength(1);
     expect(v[0].field).toBe("freeVariables");
     expect(v[0].reason).toContain("9 > 8");
+  });
+});
+
+// --- Complete strategy source fixture for structural validation ---
+const VALID_STRATEGY_SOURCE = `
+const MS_1H = 3_600_000;
+
+export function createMyStrategy(paramOverrides) {
+  let atrCache = null;
+  let htfCandlesRef = null;
+
+  return {
+    name: "BTC 15m Breakout — My Strategy",
+    params,
+    requiredTimeframes: ["1h"],
+    requiredWarmup: { source: 22, "1h": 15 },
+
+    init(candles, higherTimeframes) {
+      htfCandlesRef = higherTimeframes["1h"] ?? [];
+      atrCache = computeAtr(candles, 14);
+    },
+
+    onCandle(ctx) {
+      const { candles, index, currentCandle, higherTimeframes } = ctx;
+      if (index < 22) return null;
+
+      // Anti-repaint HTF: only use completed bars
+      let atr1h = NaN;
+      for (let j = htfCandlesRef.length - 1; j >= 0; j--) {
+        if (htfCandlesRef[j].t + MS_1H <= currentCandle.t && !isNaN(htfAtr[j])) {
+          atr1h = htfAtr[j];
+          break;
+        }
+      }
+      if (isNaN(atr1h)) return null;
+
+      ctx.indicator('close', currentCandle.c);
+      ctx.indicator('atr1h', atr1h);
+
+      const longBreakout = ctx.track('L:breakout', currentCandle.c > upper, currentCandle.c, upper);
+      if (longBreakout) return { direction: "long", entryPrice: null, stopLoss: sl, takeProfits: [], comment: "breakout" };
+      return null;
+    },
+
+    shouldExit(ctx) {
+      const { index, positionDirection, positionEntryBarIndex } = ctx;
+      if (!positionDirection || positionEntryBarIndex === null) return null;
+      const barsInTrade = index - positionEntryBarIndex;
+      if (barsInTrade >= params.timeoutBars.value) {
+        return { exit: true, comment: "Timeout" };
+      }
+      return null;
+    },
+
+    computeLevels(ctx, direction) {
+      const close = ctx.currentCandle.c;
+      const stopDist = atr1h * params.atrStopMult.value;
+      return {
+        stopLoss: direction === "long" ? close - stopDist : close + stopDist,
+        takeProfits: [],
+      };
+    },
+  };
+}
+`;
+
+describe("validateStrategyStructure", () => {
+  it("returns empty for valid strategy with all required patterns", () => {
+    expect(validateStrategyStructure(VALID_STRATEGY_SOURCE)).toEqual([]);
+  });
+
+  it("detects missing ctx.track()", () => {
+    const source = VALID_STRATEGY_SOURCE.replace(/ctx\.track\(/g, "/* removed */");
+    const v = validateStrategyStructure(source);
+    expect(v.some((vi) => vi.field === "diagnostics")).toBe(true);
+  });
+
+  it("detects missing computeLevels", () => {
+    const source = VALID_STRATEGY_SOURCE.replace(/computeLevels\(/g, "myOtherMethod(");
+    const v = validateStrategyStructure(source);
+    expect(v.some((vi) => vi.field === "computeLevels")).toBe(true);
+  });
+
+  it("detects missing shouldExit", () => {
+    const source = VALID_STRATEGY_SOURCE.replace(/shouldExit\(/g, "someOtherExit(");
+    const v = validateStrategyStructure(source);
+    expect(v.some((vi) => vi.field === "shouldExit")).toBe(true);
+  });
+
+  it("detects missing requiredTimeframes", () => {
+    const source = VALID_STRATEGY_SOURCE.replace(/requiredTimeframes/g, "myTimeframes");
+    const v = validateStrategyStructure(source);
+    expect(v.some((vi) => vi.field === "requiredTimeframes")).toBe(true);
+  });
+
+  it("detects missing anti-repaint HTF check", () => {
+    // Remove the .t + MS_ pattern
+    const source = VALID_STRATEGY_SOURCE.replace(/\.t \+ MS_1H/g, "/* no repaint check */");
+    const v = validateStrategyStructure(source);
+    expect(v.some((vi) => vi.field === "antiRepaint")).toBe(true);
+  });
+
+  it("detects multiple violations at once", () => {
+    const source = `
+      export function createBroken() {
+        return {
+          name: "Broken",
+          params,
+          onCandle(ctx) {
+            if (ctx.currentCandle.c > 100) return { direction: "long" };
+            return null;
+          },
+        };
+      }
+    `;
+    const v = validateStrategyStructure(source);
+    const fields = v.map((vi) => vi.field);
+    expect(fields).toContain("diagnostics");
+    expect(fields).toContain("computeLevels");
+    expect(fields).toContain("shouldExit");
+    expect(fields).toContain("requiredTimeframes");
+    expect(fields).toContain("antiRepaint");
+    expect(v).toHaveLength(5);
+  });
+
+  it("ignores commented-out patterns", () => {
+    const source = `
+      // computeLevels(ctx, direction) { ... }
+      // shouldExit(ctx) { ... }
+      // requiredTimeframes: ["1h"]
+      // htfCandlesRef[j].t + MS_1H <= currentCandle.t
+      // ctx.track('L:breakout', ...)
+      export function createBroken() {
+        return {
+          name: "Broken",
+          onCandle(ctx) { return null; },
+        };
+      }
+    `;
+    const v = validateStrategyStructure(source);
+    expect(v).toHaveLength(5);
+  });
+
+  it("accepts MS_4H and MS_1D as valid anti-repaint constants", () => {
+    const with4h = VALID_STRATEGY_SOURCE.replace(/MS_1H/g, "MS_4H");
+    expect(validateStrategyStructure(with4h).some((v) => v.field === "antiRepaint")).toBe(false);
+
+    const with1d = VALID_STRATEGY_SOURCE.replace(/MS_1H/g, "MS_1D");
+    expect(validateStrategyStructure(with1d).some((v) => v.field === "antiRepaint")).toBe(false);
   });
 });

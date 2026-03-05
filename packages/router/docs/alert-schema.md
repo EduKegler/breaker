@@ -2,7 +2,7 @@
 
 Updated: 2026-02-24
 
-Source: `assets/{ASSET}/strategy.pine` (the `alert()` blocks inside `canLongEntry` / `canShortEntry`)
+Source: `packages/exchange/` daemon (signal generation from `@breaker/backtest` strategies)
 
 ## Single type: ENTRY
 

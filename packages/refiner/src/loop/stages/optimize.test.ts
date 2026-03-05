@@ -16,10 +16,23 @@ import { execa, execaSync } from "execa";
 import writeFileAtomic from "write-file-atomic";
 import fs from "node:fs";
 import { optimizeStrategy } from "./optimize.js";
+import type { ModuleContext } from "../../lib/build-module-context.js";
 
 // ---------------------------------------------------------------------------
 // optimizeStrategy
 // ---------------------------------------------------------------------------
+
+const stubModuleContext: ModuleContext = {
+  profile: "breakout",
+  moduleId: "M1",
+  moduleName: "Breakout",
+  fixedRules: "1. Max free variables: 8",
+  restructureLocks: "",
+  varCap: 8,
+  stoppingCriteria: "- Trades >= 50\n- PF >= 1.3",
+  signalTF: "15m",
+  regimeTF: "4H or Daily",
+};
 
 describe("optimizeStrategy", () => {
   const baseOpts = {
@@ -30,6 +43,8 @@ describe("optimizeStrategy", () => {
     phase: "refine" as const,
     artifactsDir: "/repo/artifacts",
     globalIter: 1,
+    moduleContext: stubModuleContext,
+    existingParamCount: 5,
   };
 
   beforeEach(() => {

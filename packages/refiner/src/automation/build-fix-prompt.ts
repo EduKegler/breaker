@@ -1,10 +1,11 @@
 /**
- * build-fix-prompt-ts.ts
+ * build-fix-prompt.ts
  *
  * Generates a prompt for correcting TypeScript compilation errors
  * detected after a restructure-phase edit to a strategy file.
- * Replaces Pine-specific build-fix-prompt.ts.
  */
+
+import type { ModuleContext } from "../lib/build-module-context.js";
 
 interface TsCompilationError {
   message: string;
@@ -18,6 +19,7 @@ interface BuildFixPromptOptions {
   strategySourcePath: string;
   errors: TsCompilationError[];
   buildOutput: string;
+  moduleContext: ModuleContext;
 }
 
 /**
@@ -25,7 +27,7 @@ interface BuildFixPromptOptions {
  * in a strategy file after a restructure edit.
  */
 export function buildFixPrompt(opts: BuildFixPromptOptions): string {
-  const { strategySourcePath, errors, buildOutput } = opts;
+  const { strategySourcePath, errors, buildOutput, moduleContext } = opts;
 
   const errorsFormatted = errors.length
     ? errors
@@ -51,6 +53,7 @@ export function buildFixPrompt(opts: BuildFixPromptOptions): string {
 
 ## CONTEXT
 - Strategy file: \`${strategySourcePath}\`
+- Module: ${moduleContext.moduleName} (${moduleContext.moduleId})
 - Build command: \`pnpm --filter @breaker/backtest typecheck\`
 - ${errors.length} compilation error(s) detected after restructure edit
 
@@ -59,6 +62,9 @@ export function buildFixPrompt(opts: BuildFixPromptOptions): string {
 ${errorsFormatted || "No structured error details — check raw build output below."}
 
 ${rawOutputSection}
+## FIXED RULES (${moduleContext.moduleId} — your fix MUST NOT remove or break these)
+${moduleContext.fixedRules}
+
 ## YOUR TASK
 
 1. **Read** the file \`${strategySourcePath}\` completely
@@ -70,6 +76,7 @@ ${rawOutputSection}
 ## IMPORTANT RULES
 - Fix ONLY the compilation errors — do not refactor or optimize code that is not broken
 - Do not change strategy logic, parameter values, or indicator calculations unless they cause the type error
+- Do NOT remove indicators, filters, or exit logic to "simplify" the fix — if a fixed rule requires it, it must stay
 - After fixing, the loop will run the backtest again automatically
 - The strategy must still conform to the \`Strategy\` interface from @breaker/backtest
 - If a type import is missing, add it from @breaker/backtest

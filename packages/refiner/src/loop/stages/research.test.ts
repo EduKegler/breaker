@@ -9,7 +9,20 @@ import path from "node:path";
 import os from "node:os";
 import { conductResearch } from "./research.js";
 import type { ResearchBrief } from "./research.js";
+import type { ModuleContext } from "../../lib/build-module-context.js";
 import { runClaude } from "./run-claude.js";
+
+const stubModuleContext: ModuleContext = {
+  profile: "breakout",
+  moduleId: "M1",
+  moduleName: "Breakout",
+  fixedRules: "1. Max free variables: 8",
+  restructureLocks: "",
+  varCap: 8,
+  stoppingCriteria: "- Trades >= 50\n- PF >= 1.3",
+  signalTF: "15m",
+  regimeTF: "4H or Daily",
+};
 
 
 describe("conductResearch", () => {
@@ -26,10 +39,20 @@ describe("conductResearch", () => {
 
   it("returns success when brief file is created and valid", async () => {
     const briefPath = path.join(tmpDir, "research-brief.json");
-    const brief: ResearchBrief = {
+    const brief = {
+      module: "M1",
       queries: ["BTC 15m strategy"],
-      findings: [{ source: "test", summary: "found something" }],
-      suggestedApproaches: [{ name: "Test", indicators: ["RSI"], entryLogic: "buy low", rationale: "because" }],
+      findings: [{ source: "test", summary: "found something", verified: true }],
+      suggestedApproaches: [{
+        name: "Test",
+        indicators: ["RSI"],
+        entryLogic: "buy low",
+        exitLogic: "sell high",
+        rationale: "because",
+        estimatedVars: 3,
+        complianceNotes: "ok",
+        expectedMetrics: { estimatedWR: "40%", estimatedPF: "1.5", estimatedAvgR: "0.2" },
+      }],
       timestamp: new Date().toISOString(),
     };
 
@@ -40,12 +63,15 @@ describe("conductResearch", () => {
 
     const result = await conductResearch({
       asset: "BTC",
-      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6 },
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6, trades: 50, avgR: 0.15 },
+      failureHistory: [],
       exhaustedApproaches: [],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
       timeoutMs: 5000,
       repoRoot: tmpDir,
+      kbPath: path.join(tmpDir, "kb.md"),
     });
 
     expect(result.success).toBe(true);
@@ -57,12 +83,15 @@ describe("conductResearch", () => {
 
     const result = await conductResearch({
       asset: "BTC",
-      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6 },
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6, trades: 50, avgR: 0.15 },
+      failureHistory: [],
       exhaustedApproaches: [],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
       timeoutMs: 5000,
       repoRoot: tmpDir,
+      kbPath: path.join(tmpDir, "kb.md"),
     });
 
     expect(result.success).toBe(false);
@@ -74,12 +103,15 @@ describe("conductResearch", () => {
 
     const result = await conductResearch({
       asset: "BTC",
-      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6 },
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6, trades: 50, avgR: 0.15 },
+      failureHistory: [],
       exhaustedApproaches: [],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
       timeoutMs: 5000,
       repoRoot: tmpDir,
+      kbPath: path.join(tmpDir, "kb.md"),
     });
 
     expect(result.success).toBe(false);
@@ -96,16 +128,19 @@ describe("conductResearch", () => {
 
     const result = await conductResearch({
       asset: "BTC",
-      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6 },
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6, trades: 50, avgR: 0.15 },
+      failureHistory: [],
       exhaustedApproaches: [],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
       timeoutMs: 5000,
       repoRoot: tmpDir,
+      kbPath: path.join(tmpDir, "kb.md"),
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("not valid JSON");
+    expect(result.error).toContain("validation failed");
   });
 
   it("includes exhausted approaches in prompt", async () => {
@@ -117,12 +152,15 @@ describe("conductResearch", () => {
 
     await conductResearch({
       asset: "BTC",
-      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6 },
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6, trades: 50, avgR: 0.15 },
+      failureHistory: [],
       exhaustedApproaches: ["ATR Breakout", "EMA Cross"],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
       timeoutMs: 5000,
       repoRoot: tmpDir,
+      kbPath: path.join(tmpDir, "kb.md"),
     });
   });
 
@@ -135,11 +173,14 @@ describe("conductResearch", () => {
 
     const result = await conductResearch({
       asset: "BTC",
-      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6 },
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6, trades: 50, avgR: 0.15 },
+      failureHistory: [],
       exhaustedApproaches: [],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
       timeoutMs: 50,
+      kbPath: path.join(tmpDir, "kb.md"),
       repoRoot: tmpDir,
     });
 
@@ -162,12 +203,15 @@ describe("conductResearch", () => {
 
     const result = await conductResearch({
       asset: "BTC",
-      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6 },
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6, trades: 50, avgR: 0.15 },
+      failureHistory: [],
       exhaustedApproaches: [],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
       timeoutMs: 5000,
       repoRoot: tmpDir,
+      kbPath: path.join(tmpDir, "kb.md"),
     });
 
     expect(result.success).toBe(false);
@@ -186,12 +230,15 @@ describe("conductResearch", () => {
 
     const result = await conductResearch({
       asset: "BTC",
-      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6 },
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6, trades: 50, avgR: 0.15 },
+      failureHistory: [],
       exhaustedApproaches: [],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
       timeoutMs: 5000,
       repoRoot: tmpDir,
+      kbPath: path.join(tmpDir, "kb.md"),
     });
 
     expect(result.success).toBe(false);
@@ -214,12 +261,15 @@ describe("conductResearch", () => {
 
     const result = await conductResearch({
       asset: "BTC",
-      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6 },
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: 6, trades: 50, avgR: 0.15 },
+      failureHistory: [],
       exhaustedApproaches: [],
       artifactsDir: tmpDir,
       model: "claude-sonnet-4-6",
       timeoutMs: 5000,
       repoRoot: tmpDir,
+      kbPath: path.join(tmpDir, "kb.md"),
     });
 
     expect(result.success).toBe(false);

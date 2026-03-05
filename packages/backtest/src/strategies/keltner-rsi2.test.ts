@@ -63,6 +63,8 @@ function makeCtx(
     dailyPnl: 0,
     tradesToday: 0,
     barsSinceExit: 999,
+    track: (_, p) => p,
+    indicator: () => {},
     ...overrides,
   };
 }

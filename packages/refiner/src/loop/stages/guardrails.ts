@@ -104,8 +104,8 @@ export function validateFreeVariableCount(
 }
 
 /**
- * Legacy Pine guardrail validation.
- * Validates Pine Script edits (for backward compat during restructure phase).
+ * Legacy guardrail validation.
+ * Validates strategy edits (for backward compat during restructure phase).
  */
 export function validateGuardrails(
   before: string,
@@ -154,6 +154,80 @@ export function validateGuardrails(
         reason: `Below min: ${atrMultAfter} < ${guardrails.minAtrMult}`,
       });
     }
+  }
+
+  return violations;
+}
+
+/**
+ * Validate that strategy source still contains ctx.track() calls.
+ * Restructure must not strip diagnostic tracking from onCandle().
+ */
+export function validateDiagnosticTracking(
+  afterSource: string,
+): GuardrailViolation[] {
+  const clean = stripComments(afterSource);
+  if (!clean.includes("ctx.track(")) {
+    return [{
+      field: "diagnostics",
+      reason: "Strategy source missing ctx.track() calls — diagnostics stripped",
+    }];
+  }
+  return [];
+}
+
+/**
+ * Validate that strategy source retains all mandatory structural patterns.
+ * These are methods/patterns present in ALL strategies that the refiner/restructure
+ * must never strip — they fail silently (code compiles but behavior degrades).
+ *
+ * Checks:
+ * 1. ctx.track() — diagnostic tracking (same as validateDiagnosticTracking)
+ * 2. computeLevels — required by /quick-signal for manual signals
+ * 3. shouldExit — position exit logic (timeout + trailing)
+ * 4. requiredTimeframes — tells runner which HTF candles to load
+ * 5. Anti-repaint HTF — completed-bar check (.t + MS_* <= currentCandle.t)
+ */
+export function validateStrategyStructure(
+  afterSource: string,
+): GuardrailViolation[] {
+  const clean = stripComments(afterSource);
+  const violations: GuardrailViolation[] = [];
+
+  if (!clean.includes("ctx.track(")) {
+    violations.push({
+      field: "diagnostics",
+      reason: "Strategy source missing ctx.track() calls — diagnostics stripped",
+    });
+  }
+
+  if (!clean.includes("computeLevels")) {
+    violations.push({
+      field: "computeLevels",
+      reason: "Strategy missing computeLevels() — manual signals (/quick-signal) will break",
+    });
+  }
+
+  if (!clean.includes("shouldExit")) {
+    violations.push({
+      field: "shouldExit",
+      reason: "Strategy missing shouldExit() — positions will only exit by SL/TP, no timeout or trailing",
+    });
+  }
+
+  if (!clean.includes("requiredTimeframes")) {
+    violations.push({
+      field: "requiredTimeframes",
+      reason: "Strategy missing requiredTimeframes — runner won't load HTF candles",
+    });
+  }
+
+  // Anti-repaint: strategies must check HTF bar completion via .t + MS_1H/4H/1D
+  if (!/\.t\s*\+\s*MS_/.test(clean)) {
+    violations.push({
+      field: "antiRepaint",
+      reason: "Strategy missing HTF anti-repaint check (.t + MS_* <= currentCandle.t) — may use incomplete bars",
+    });
   }
 
   return violations;

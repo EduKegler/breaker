@@ -1,7 +1,7 @@
 // Types
 export type { Candle } from "./types/candle.js";
 export { CandleInterval, CandleSchema, intervalToMs } from "./types/candle.js";
-export type { Strategy, StrategyContext, StrategyParam, Signal } from "./types/strategy.js";
+export type { Strategy, StrategyContext, StrategyParam, Signal, ConditionResult } from "./types/strategy.js";
 export type { Order, Position, CompletedTrade, Fill, OrderSide, OrderType } from "./types/order.js";
 export type {
   Metrics,
@@ -44,7 +44,7 @@ export { runBacktest, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
 export type { BacktestConfig, BacktestResult, SizingMode } from "./engine/engine.js";
 export { aggregateCandles } from "./engine/aggregate-candles.js";
 export { buildContext } from "./engine/build-context.js";
-export type { BuildContextParams } from "./engine/build-context.js";
+export type { BuildContextParams, DiagnosticStrategyContext } from "./engine/build-context.js";
 export { canTrade } from "./engine/can-trade.js";
 export type { CanTradeParams } from "./engine/can-trade.js";
 export { createUtcDayFormatter } from "./engine/create-utc-day-formatter.js";

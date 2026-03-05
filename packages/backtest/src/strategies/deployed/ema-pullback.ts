@@ -134,14 +134,22 @@ export function createEmaPullback(
       const rsiOverbought = 100 - rsiOversold;
       const stopDist = atr1h * params.atrStopMult.value;
 
-      // LONG: 4H bull + pullback recovery + close > emaSlow + RSI > oversold
-      if (
-        close > ema21_4h &&
-        prevClose < prevEmaFast &&
-        close > currEmaFast &&
-        close > currEmaSlow &&
-        currRsi > rsiOversold
-      ) {
+      // Register indicator values for diagnostics
+      ctx.indicator('emaFast', currEmaFast);
+      ctx.indicator('emaSlow', currEmaSlow);
+      ctx.indicator('rsi', currRsi);
+      ctx.indicator('ema21_4h', ema21_4h);
+      ctx.indicator('atr1h', atr1h);
+      ctx.indicator('close', close);
+
+      // LONG conditions
+      const longRegime = ctx.track('L:regime_4h_bull', close > ema21_4h, close, ema21_4h);
+      const longPullback = ctx.track('L:pullback', prevClose < prevEmaFast, prevClose, prevEmaFast);
+      const longRecovery = ctx.track('L:recovery', close > currEmaFast, close, currEmaFast);
+      const longTrend = ctx.track('L:above_emaSlow', close > currEmaSlow, close, currEmaSlow);
+      const longMomentum = ctx.track('L:rsi_ok', currRsi > rsiOversold, currRsi, rsiOversold);
+
+      if (longRegime && longPullback && longRecovery && longTrend && longMomentum) {
         // KB §5.1 rule 3: Structural confirmation — close above pullback high
         let pullbackHigh = -Infinity;
         for (let i = index - 1; i >= 0; i--) {
@@ -159,14 +167,14 @@ export function createEmaPullback(
         };
       }
 
-      // SHORT: 4H bear + pullback recovery + close < emaSlow + RSI < overbought
-      if (
-        close < ema21_4h &&
-        prevClose > prevEmaFast &&
-        close < currEmaFast &&
-        close < currEmaSlow &&
-        currRsi < rsiOverbought
-      ) {
+      // SHORT conditions
+      const shortRegime = ctx.track('S:regime_4h_bear', close < ema21_4h, close, ema21_4h);
+      const shortPullback = ctx.track('S:pullback', prevClose > prevEmaFast, prevClose, prevEmaFast);
+      const shortRecovery = ctx.track('S:recovery', close < currEmaFast, close, currEmaFast);
+      const shortTrend = ctx.track('S:below_emaSlow', close < currEmaSlow, close, currEmaSlow);
+      const shortMomentum = ctx.track('S:rsi_ok', currRsi < rsiOverbought, currRsi, rsiOverbought);
+
+      if (shortRegime && shortPullback && shortRecovery && shortTrend && shortMomentum) {
         // KB §5.1 rule 3: Structural confirmation — close below pullback low
         let pullbackLow = Infinity;
         for (let i = index - 1; i >= 0; i--) {

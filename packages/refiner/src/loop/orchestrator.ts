@@ -27,7 +27,7 @@ import { checkCriteria } from "./check-criteria.js";
 import { phaseHelpers } from "./phase-helpers.js";
 import { emitEvent } from "./stages/events.js";
 import { checkpoint } from "./stages/checkpoint.js";
-import { validateParamGuardrails, validateWalkForward, validateFreeVariableCount } from "./stages/guardrails.js";
+import { validateParamGuardrails, validateWalkForward, validateFreeVariableCount, validateStrategyStructure } from "./stages/guardrails.js";
 import { buildSessionSummary } from "./stages/summary.js";
 import { runEngineInProcess } from "./stages/run-engine-in-process.js";
 import { runEngineChild } from "./stages/spawn-engine-child.js";
@@ -36,8 +36,9 @@ import { fixStrategy } from "./stages/fix-strategy.js";
 import { integrity } from "./stages/integrity.js";
 import { computeScore } from "./stages/scoring.js";
 import { compareScores } from "./stages/compare-scores.js";
-import { buildOptimizePrompt } from "../automation/build-optimize-prompt-ts.js";
-import { buildFixPrompt } from "../automation/build-fix-prompt-ts.js";
+import { buildOptimizePrompt } from "../automation/build-optimize-prompt.js";
+import { buildFixPrompt } from "../automation/build-fix-prompt.js";
+import { buildModuleContext } from "../lib/build-module-context.js";
 import { paramWriter } from "./stages/param-writer.js";
 import { conductResearch } from "./stages/research.js";
 import { safeJsonParse } from "../lib/safe-json.js";
@@ -71,6 +72,10 @@ export async function orchestrate(): Promise<void> {
 
   const cfg = buildLoopConfig(partial);
   log(`B.R.E.A.K.E.R. starting: asset=${cfg.asset} strategy=${cfg.strategy} maxIter=${cfg.maxIter} runId=${cfg.runId}`);
+
+  // Build module context (strategy → KB module mapping)
+  const kbPath = path.join(cfg.repoRoot, "docs/knowledge-base.md");
+  const moduleContext = buildModuleContext(cfg, kbPath);
 
   // Resolve strategy source file
   cfg.strategyFile = getStrategySourcePath(cfg.repoRoot, cfg.strategyFactory);
@@ -250,19 +255,26 @@ export async function orchestrate(): Promise<void> {
         .filter((a) => a.verdict === "exhausted")
         .map((a) => a.name);
 
+      const lastMetric = state.sessionMetrics.length > 0 ? state.sessionMetrics[state.sessionMetrics.length - 1] : null;
+
       const researchResult = await conductResearch({
         asset: cfg.asset,
+        moduleContext,
         currentMetrics: {
           pnl: state.previousPnl,
-          pf: state.sessionMetrics.length > 0 ? state.sessionMetrics[state.sessionMetrics.length - 1].pf : 0,
-          wr: state.sessionMetrics.length > 0 ? state.sessionMetrics[state.sessionMetrics.length - 1].wr : 0,
-          dd: state.sessionMetrics.length > 0 ? state.sessionMetrics[state.sessionMetrics.length - 1].dd : 0,
+          pf: lastMetric?.pf ?? 0,
+          wr: lastMetric?.wr ?? 0,
+          dd: lastMetric?.dd ?? 0,
+          trades: lastMetric?.trades ?? 0,
+          avgR: 0,
         },
+        failureHistory: [],
         exhaustedApproaches,
         artifactsDir: cfg.artifactsDir,
         model: cfg.research.model,
         timeoutMs: cfg.research.timeoutMs,
         repoRoot: cfg.repoRoot,
+        kbPath,
         allowedDomains: cfg.research.allowedDomains,
       });
 
@@ -305,6 +317,7 @@ export async function orchestrate(): Promise<void> {
           strategySourcePath: cfg.strategyFile,
           errors: [],
           buildOutput: errMsg,
+          moduleContext,
         });
         await fixStrategy({
           prompt: fixPrompt,
@@ -363,6 +376,7 @@ export async function orchestrate(): Promise<void> {
           strategySourcePath: cfg.strategyFile,
           errors: [],
           buildOutput: (err as Error).message,
+          moduleContext,
         });
         log(`Attempting fix (${mCtxErr.fixAttempts}/${cfg.maxFixAttempts})...`);
         await fixStrategy({
@@ -562,7 +576,7 @@ export async function orchestrate(): Promise<void> {
       paramOverrides,
       criteria: cfg.criteria,
       asset: cfg.asset,
-      strategy: cfg.strategy,
+      moduleContext,
       phase: effectivePhase,
       iter,
       maxIter: cfg.maxIter,
@@ -586,6 +600,8 @@ export async function orchestrate(): Promise<void> {
       phase: effectivePhase,
       artifactsDir: cfg.artifactsDir,
       globalIter: state.globalIter,
+      moduleContext,
+      existingParamCount: paramCount,
       timeoutMs: optimizeTimeout,
     });
 
@@ -640,6 +656,20 @@ export async function orchestrate(): Promise<void> {
     } else {
       // Restructure: file was changed + passed typecheck in optimize step
       // needsRebuild already set by CHANGE_APPLIED with isRestructure=true
+
+      // Guardrail: ensure restructure didn't strip mandatory structural patterns
+      const afterSource = fs.readFileSync(cfg.strategyFile, "utf8");
+      const structureViolations = validateStrategyStructure(afterSource);
+      if (structureViolations.length > 0) {
+        log(`Structural guardrail violations: ${structureViolations.map((v) => v.reason).join("; ")} — rejecting`);
+        emitEvent({
+          artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+          stage: "GUARDRAIL_VIOLATION", status: "warn",
+          message: structureViolations.map((v) => `${v.field}: ${v.reason}`).join("; "),
+        });
+        continue;
+      }
+
       log(`Strategy source modified (restructure). Will rebuild next iteration.`);
     }
 

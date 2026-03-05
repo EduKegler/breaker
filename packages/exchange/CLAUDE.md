@@ -29,7 +29,6 @@ src/
 │   ├── place-protection-orders.ts # Extracted SL/TP placement (shared by IOC and GTC flows)
 │   ├── process-pending-fill.ts    # GTC fill handler: pending book → protection orders → position open
 │   ├── strategy-runner.ts     # Event-driven candle processing + strategy.onCandle/shouldExit + GTC expiry
-│   ├── diagnose-signal.ts     # Per-strategy condition diagnostics for noSignal debug logs
 │   ├── fetch-candles-for-replay.ts # Candle fetching (cache or streamer) for replay endpoints
 │   ├── reconcile-loop.ts      # Periodic position sync (local vs Hyperliquid)
 │   ├── reconcile.ts           # Pure reconcile() function

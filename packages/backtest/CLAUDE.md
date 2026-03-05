@@ -9,7 +9,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - `src/indicators/` — EMA, SMA, ATR, RSI, ADX (via trading-signals), Donchian, Keltner (custom)
 - `src/engine/` — Backtest loop, order simulation, position tracking, equity curve
 - `src/analysis/` — Metrics calculation, trade analysis, walk-forward, filter simulations
-- `src/strategies/` — Strategy implementations (TypeScript ports of Pine scripts)
+- `src/strategies/` — Strategy implementations (native TypeScript)
 - `src/run-backtest.ts` — CLI entrypoint (isMain guard)
 
 ## Key conventions

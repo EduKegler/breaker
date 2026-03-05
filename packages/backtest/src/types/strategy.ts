@@ -1,5 +1,11 @@
 import type { Candle } from "./candle.js";
 
+export interface ConditionResult {
+  passed: boolean;
+  value?: number;
+  threshold?: number;
+}
+
 export interface Signal {
   direction: "long" | "short";
   entryPrice: number | null; // null = market order (use current close)
@@ -28,6 +34,10 @@ export interface StrategyContext {
   dailyPnl: number;
   tradesToday: number;
   barsSinceExit: number;
+  /** Track entry condition. Returns `passed` for inline use. */
+  track(name: string, passed: boolean, value?: number, threshold?: number): boolean;
+  /** Register indicator value for diagnostics. */
+  indicator(name: string, value: number): void;
 }
 
 export interface Strategy {

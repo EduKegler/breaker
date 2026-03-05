@@ -13,7 +13,7 @@ Answer questions about what appears on the TradingView chart when the strategy "
 
 ## Instructions
 
-When the user asks something about the chart, consult the sections below and answer directly and concisely. If the question isn't covered here, read the Pine script of the relevant asset at `assets/{ASSET}/strategy.pine` to find the answer.
+When the user asks something about the chart, consult the sections below and answer directly and concisely. If the question isn't covered here, read the relevant strategy source at `packages/backtest/src/strategies/` to find the answer.
 
 ---
 

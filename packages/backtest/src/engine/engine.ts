@@ -164,7 +164,7 @@ export function runBacktest(
     }
 
     // Step 3: Strategy-driven exit check (deferred: process_orders_on_close = false)
-    // Places a market order that fills at NEXT bar's open, matching Pine Script behavior.
+    // Places a market order that fills at NEXT bar's open (deferred execution).
     if (!positionTracker.isFlat() && strategy.shouldExit) {
       const ctx = buildCtx({
         candles, index: i, position: positionTracker.getPosition(),
