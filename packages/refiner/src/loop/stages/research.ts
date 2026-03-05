@@ -5,6 +5,7 @@ import type { StageResult } from "../types.js";
 import { runClaude } from "./run-claude.js";
 import { safeJsonParse } from "../../lib/safe-json.js";
 import type { ModuleContext, FailureContext } from "../../lib/build-module-context.js";
+import { formatCatalogForPrompt } from "../../automation/build-optimize-prompt.js";
 
 // Re-export for downstream consumers
 export type { ModuleContext, FailureContext };
@@ -100,6 +101,10 @@ ${moduleContext.restructureLocks}
 Research must suggest improvements WITHIN this architecture. Changing the architecture requires explicit RESTRUCTURE approval.`
     : "";
 
+  const catalogSection = moduleContext.catalog.slots.length > 0
+    ? `\n## KB Component Catalog (extracted — prefer these over novel approaches)\n${formatCatalogForPrompt(moduleContext.catalog, [], moduleContext.restructureLocks)}`
+    : "";
+
   // -----------------------------------------------------------------------
   // Main prompt
   // -----------------------------------------------------------------------
@@ -127,7 +132,7 @@ ${restructureSection}
 - Max Drawdown: ${currentMetrics.dd}%
 - Trade count: ${currentMetrics.trades}
 - Average R: ${currentMetrics.avgR}
-${failureSection}${exhaustedSection}${domainSection}
+${failureSection}${exhaustedSection}${domainSection}${catalogSection}
 
 ## Knowledge Base
 Read the knowledge base at: ${kbPath}

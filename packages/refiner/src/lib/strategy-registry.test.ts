@@ -35,8 +35,8 @@ describe("strategyRegistry.get", () => {
 
   it("passes param overrides to factory", () => {
     const factory = strategyRegistry.get("createDonchianAdx");
-    const strategy = factory({ dcSlow: 55 });
-    expect(strategy.params.dcSlow.value).toBe(55);
+    const strategy = factory({ dcSlow: 40 });
+    expect(strategy.params.dcSlow.value).toBe(40);
   });
 });
 

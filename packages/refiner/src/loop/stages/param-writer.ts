@@ -7,6 +7,7 @@ import type {
   NeverWorkedEntry,
   PendingHypothesis,
   ApproachRecord,
+  TestedCombination,
 } from "../../types/parameter-history.js";
 import type { LoopPhase } from "../types.js";
 import { safeJsonParse } from "../../lib/safe-json.js";
@@ -27,6 +28,8 @@ export interface IterationMetadata {
   };
   expectedResult: { metric: string; direction: string; estimate: string };
   nextSteps: { condition: string; action: string }[];
+  /** Components selected from KB catalog during restructure (slot name → candidate name) */
+  selectedComponents?: Record<string, string>;
 }
 
 function emptyHistory(): ParameterHistory {
@@ -37,6 +40,7 @@ function emptyHistory(): ParameterHistory {
     pendingHypotheses: [],
     approaches: [],
     researchLog: [],
+    testedCombinations: [],
   };
 }
 
@@ -47,6 +51,7 @@ const parameterHistorySchema = z.object({
   pendingHypotheses: z.array(z.object({}).passthrough()),
   approaches: z.array(z.object({}).passthrough()).optional(),
   researchLog: z.array(z.object({}).passthrough()).optional(),
+  testedCombinations: z.array(z.object({}).passthrough()).optional(),
   currentPhase: z.string().optional(),
   phaseStartIter: z.number().optional(),
 });
@@ -320,6 +325,30 @@ export const paramWriter = {
       bestScore: 0,
       bestMetrics: { pnl: 0, pf: 0, wr: 0 },
       verdict: "active",
+    });
+
+    writeFileAtomic.sync(historyPath, JSON.stringify(history, null, 2), "utf8");
+  },
+
+  /**
+   * Record a tested component combination from a restructure iteration.
+   * Called after a restructure produces metadata with `selectedComponents`.
+   */
+  recordTestedCombination(opts: {
+    historyPath: string;
+    globalIter: number;
+    components: Record<string, string>;
+    metrics: { pnl: number; pf: number; wr: number; dd: number; trades: number } | null;
+  }): void {
+    const { historyPath, globalIter, components, metrics } = opts;
+    const history = paramWriter.loadHistory(historyPath);
+
+    if (!history.testedCombinations) history.testedCombinations = [];
+
+    history.testedCombinations.push({
+      iter: globalIter,
+      components,
+      bestMetrics: metrics,
     });
 
     writeFileAtomic.sync(historyPath, JSON.stringify(history, null, 2), "utf8");

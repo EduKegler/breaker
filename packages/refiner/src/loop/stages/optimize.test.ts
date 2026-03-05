@@ -32,6 +32,7 @@ const stubModuleContext: ModuleContext = {
   stoppingCriteria: "- Trades >= 50\n- PF >= 1.3",
   signalTF: "15m",
   regimeTF: "4H or Daily",
+  catalog: { slots: [] },
 };
 
 describe("optimizeStrategy", () => {
@@ -168,6 +169,44 @@ describe("optimizeStrategy", () => {
       ]),
       expect.objectContaining({ cwd: "/repo" }),
     );
+    readSpy.mockRestore();
+  });
+
+  it("refine: truncates multiple param changes to single change (KB §13.1)", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '```json\n{ "paramOverrides": { "dcSlow": 55, "volMult": 2.0, "tpRR": 3.0 } }\n```',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same content")
+      .mockReturnValueOnce("// same content");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(true);
+    // Should only keep the first param change
+    const keys = Object.keys(result.data?.paramOverrides ?? {});
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toBe("dcSlow");
+    readSpy.mockRestore();
+  });
+
+  it("refine: single param change passes through unchanged", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "timeoutBars": 48 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ timeoutBars: 48 });
     readSpy.mockRestore();
   });
 

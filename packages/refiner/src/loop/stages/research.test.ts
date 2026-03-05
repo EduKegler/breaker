@@ -22,6 +22,7 @@ const stubModuleContext: ModuleContext = {
   stoppingCriteria: "- Trades >= 50\n- PF >= 1.3",
   signalTF: "15m",
   regimeTF: "4H or Daily",
+  catalog: { slots: [] },
 };
 
 

@@ -14,8 +14,8 @@ import { isMainModule } from "@breaker/kit";
 
 import type { Metrics, TradeAnalysis, StrategyParam, SessionName } from "@breaker/backtest";
 import type { ResolvedCriteria, CoreParameterDef } from "../types/config.js";
-import type { ParameterHistory, ApproachRecord } from "../types/parameter-history.js";
-import type { ModuleContext } from "../lib/build-module-context.js";
+import type { ParameterHistory, ApproachRecord, TestedCombination } from "../types/parameter-history.js";
+import type { ModuleContext, ComponentCatalog, CatalogSlot } from "../lib/build-module-context.js";
 import { MODULE_CRITERIA } from "../lib/build-module-context.js";
 import { safeJsonParse } from "../lib/safe-json.js";
 
@@ -87,6 +87,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
     pendingHypotheses: z.array(z.object({}).passthrough()),
     approaches: z.array(z.object({}).passthrough()).optional(),
     researchLog: z.array(z.object({}).passthrough()).optional(),
+    testedCombinations: z.array(z.object({}).passthrough()).optional(),
     currentPhase: z.string().optional(),
     phaseStartIter: z.number().optional(),
   });
@@ -108,7 +109,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   );
   const designChecklistSection = buildDesignChecklistSection(criteria.designChecklist, globalIter);
   const filterSimsSection = buildFilterSimsSection(tradeAnalysis);
-  const overfitSection = buildOverfitSection(paramHistory, tradeAnalysis, mc.minPfRatio, metrics);
+  const overfitSection = buildOverfitSection(paramHistory, tradeAnalysis, mc.minPfRatio, metrics, moduleContext.moduleId);
 
   // Research brief — updated schema matching conduct-research.ts
   const researchSection = buildResearchSection(researchBriefPath);
@@ -131,7 +132,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const phaseTask = buildPhaseTask(
     phase, strategySourcePath, metadataPath, paramHistoryPath,
     globalIter, iter, maxIter, pnlStr, tradesStr, wrStr, asset,
-    moduleContext,
+    moduleContext, paramHistory, researchBriefPath,
   );
 
   return `TypeScript strategy optimization loop — iteration ${iter}/${maxIter}.
@@ -341,7 +342,8 @@ function buildPhaseTask(
   phase: string, strategySourcePath: string, metadataPath: string,
   paramHistoryPath: string, globalIter: number, iter: number, maxIter: number,
   pnlStr: string, tradesStr: string, wrStr: string, asset: string,
-  moduleContext: ModuleContext,
+  moduleContext: ModuleContext, paramHistory: ParameterHistory | null,
+  researchBriefPath?: string,
 ): string {
   if (phase === "refine") {
     return `## TASK (phase: REFINE)
@@ -382,40 +384,162 @@ function buildPhaseTask(
   }
 
   if (phase === "research") {
+    // Research phase with brief: implement the best approach from the brief
+    // Research phase without brief: research failed, make a structural improvement using KB catalog
+    const hasBrief = !!researchBriefPath;
+
+    const catalogFallback = formatCatalogForPrompt(
+      moduleContext.catalog,
+      paramHistory?.testedCombinations ?? [],
+      moduleContext.restructureLocks,
+    );
+
     return `## TASK (phase: RESEARCH → IMPLEMENT)
 
-A research brief has already been produced by the research stage.
-Your job is to IMPLEMENT the best suggested approach from the brief.
+${hasBrief ? `A research brief has been produced. See RECENT RESEARCH section above.
+Select the approach with best compliance and expected metrics, then implement it.` :
+`Research did not produce a brief. Use the KB component catalog below to select an untested combination and implement it.
 
-0. **Read** the research brief (already loaded in RECENT RESEARCH section above)
-1. **Select** the approach with best compliance and expected metrics
-2. **Implement** in \`${strategySourcePath}\`:
+${catalogFallback}`}
+
+### Instructions
+1. **Implement** in \`${strategySourcePath}\`:
    - Must comply with ALL fixed rules for ${moduleContext.moduleId}
    - Must stay within ${moduleContext.varCap} var cap
    - Must respect RESTRUCTURE locks (if any)
-3. **Run** \`pnpm --filter @breaker/backtest typecheck\` to validate
-4. **Write metadata** to \`${metadataPath}\` with scale: "structural"
+2. **Run** \`pnpm --filter @breaker/backtest typecheck\` to validate
+3. **Write metadata** to \`${metadataPath}\` with scale: "structural"
    Do NOT edit \`${paramHistoryPath}\`.
 
-CRITICAL: Do NOT run WebSearch. Research is already done. Focus on clean implementation.`;
+CRITICAL: Do NOT run WebSearch. Focus on clean implementation.`;
   }
 
-  // restructure
+  // restructure — catalog-driven
+  const catalogSection = formatCatalogForPrompt(
+    moduleContext.catalog,
+    paramHistory?.testedCombinations ?? [],
+    moduleContext.restructureLocks,
+  );
+
   return `## TASK (phase: RESTRUCTURE)
 
-**CRITICAL**: EDIT \`${strategySourcePath}\`. Apply structural changes.
+**CRITICAL**: EDIT \`${strategySourcePath}\`. You must SELECT components from the KB catalog below. Do NOT invent new components outside the catalog.
 
-1. **EDIT** the strategy .ts file — apply structural rewrite
+${catalogSection}
+
+### Instructions
+
+1. **SELECT** one component per slot from the catalog above
+   - Prioritize combinations NOT YET TESTED
+   - Total vars across all selected components must be <= ${moduleContext.varCap}
    - Must comply with ALL fixed rules for ${moduleContext.moduleId}
-   - Must stay within ${moduleContext.varCap} var cap
-   - Respect RESTRUCTURE locks unless explicitly changing architecture
-2. **Run** \`pnpm --filter @breaker/backtest typecheck\` to validate
-3. **Record** changes
-4. **Write metadata** to \`${metadataPath}\` with:
-   - scale: "structural"
-   - What RESTRUCTURE lock was changed (if any)
-   - ruleCompliance check
+2. **IMPLEMENT** the selected combination in \`${strategySourcePath}\`
+3. **Run** \`pnpm --filter @breaker/backtest typecheck\` to validate
+4. **Write metadata** to \`${metadataPath}\`:
+\`\`\`json
+{
+  "scale": "structural",
+  "selectedComponents": { "Slot Name": "Chosen Candidate Name" },
+  "totalVars": <number>,
+  "restructureLockChanged": "<which lock changed, or null>",
+  "ruleCompliance": "<check each fixed rule>",
+  "rationale": "<why this combination>"
+}
+\`\`\`
    Do NOT edit \`${paramHistoryPath}\`.`;
+}
+
+/**
+ * Parse restructureLocks string (e.g. "regime: EMA direction, entry: Donchian Channel")
+ * into a map of slot name → locked candidate name.
+ */
+function parseLocks(restructureLocks: string): Map<string, string> {
+  const locks = new Map<string, string>();
+  if (!restructureLocks) return locks;
+
+  for (const part of restructureLocks.split(",")) {
+    const [key, ...rest] = part.split(":");
+    if (key && rest.length > 0) {
+      locks.set(key.trim().toLowerCase(), rest.join(":").trim());
+    }
+  }
+  return locks;
+}
+
+/**
+ * Match a slot name to a lock key using fuzzy matching.
+ */
+function findLock(slotName: string, locks: Map<string, string>): string | undefined {
+  const lower = slotName.toLowerCase();
+  if (locks.has(lower)) return locks.get(lower);
+  for (const [key, val] of locks) {
+    if (lower.includes(key) || key.includes(lower)) return val;
+  }
+  return undefined;
+}
+
+/**
+ * Format the component catalog and tested combinations into a prompt section.
+ */
+export function formatCatalogForPrompt(
+  catalog: ComponentCatalog,
+  testedCombinations: TestedCombination[],
+  restructureLocks?: string,
+): string {
+  if (catalog.slots.length === 0) {
+    return "### Component Catalog\n(No catalog available — KB not loaded. Apply structural rewrite using your best judgment.)";
+  }
+
+  const locks = parseLocks(restructureLocks ?? "");
+
+  const lines: string[] = ["### Component Catalog (from Knowledge Base)"];
+  lines.push("");
+  lines.push("Select ONE component per slot. You CANNOT invent new components outside this list.");
+  lines.push("");
+
+  for (const slot of catalog.slots) {
+    const varsStr = slot.typicalVars ? ` (${slot.typicalVars} vars)` : "";
+    const lockedName = findLock(slot.slotName, locks);
+    lines.push(`**${slot.slotName}${varsStr}:**`);
+
+    for (let i = 0; i < slot.candidates.length; i++) {
+      const c = slot.candidates[i];
+      const tested = testedCombinations.some(
+        (tc) => tc.components[slot.slotName] === c.name,
+      );
+      const isLocked = lockedName && c.name.toLowerCase().includes(lockedName.toLowerCase());
+      const markers: string[] = [];
+      if (isLocked) markers.push("LOCKED");
+      if (tested) markers.push("TESTED");
+      const markerStr = markers.length > 0 ? ` [${markers.join(", ")}]` : "";
+      lines.push(`  ${i + 1}. ${c.name}${markerStr} — ${c.description}`);
+    }
+    lines.push("");
+  }
+
+  if (locks.size > 0) {
+    lines.push("> **RESTRUCTURE locks**: Components marked [LOCKED] are the current architecture.");
+    lines.push("> You may change a lock, but must explicitly declare it in metadata `restructureLockChanged`.");
+    lines.push("");
+  }
+
+  if (testedCombinations.length > 0) {
+    lines.push("### Previously Tested Combinations");
+    lines.push("");
+    for (const tc of testedCombinations) {
+      const slots = Object.entries(tc.components)
+        .map(([slot, name]) => `${slot}=${name}`)
+        .join(", ");
+      const metricsStr = tc.bestMetrics
+        ? `PF=${tc.bestMetrics.pf}, WR=${tc.bestMetrics.wr}%, DD=${tc.bestMetrics.dd}%, trades=${tc.bestMetrics.trades}`
+        : "no metrics";
+      lines.push(`- iter ${tc.iter}: ${slots} → ${metricsStr}`);
+    }
+    lines.push("");
+    lines.push("**Do NOT repeat a combination that has already been tested. Choose untested components.**");
+  }
+
+  return lines.join("\n");
 }
 
 function buildResearchSection(researchBriefPath?: string): string {
@@ -519,6 +643,7 @@ function buildOverfitSection(
   tradeAnalysis: TradeAnalysis | null,
   minPfRatio: number,
   metrics: Metrics,
+  moduleId: string,
 ): string {
   const warnings: string[] = [];
 
@@ -622,8 +747,6 @@ function buildOverfitSection(
   // KB §13.2: Module-specific session sanity checks
   if (tradeAnalysis?.bySession) {
     const sessions = tradeAnalysis.bySession;
-    const moduleId = paramHistory ? undefined : undefined; // module context not available here
-    // MR: should be consistent 24/7 — flag if one session dominates PF
     if (sessions.Asia && sessions.London && sessions.NY) {
       const pfs = [
         { name: "Asia", pf: sessions.Asia.profitFactor, count: sessions.Asia.count },
@@ -634,13 +757,41 @@ function buildOverfitSection(
       if (pfs.length >= 2) {
         const maxPf = Math.max(...pfs.map((s) => s.pf));
         const minPf = Math.min(...pfs.map((s) => s.pf));
-        if (maxPf > 0 && minPf < maxPf * 0.3) {
-          const best = pfs.find((s) => s.pf === maxPf)!;
-          const worst = pfs.find((s) => s.pf === minPf)!;
-          warnings.push(
-            `SESSION IMBALANCE: ${best.name} PF=${best.pf} vs ${worst.name} PF=${worst.pf}. ` +
-            `Large session disparity — edge may be fragile or session-specific.`,
-          );
+
+        if (moduleId === "M2") {
+          // KB §13.2: MR operates 24/7, PF should be consistent across sessions
+          if (maxPf > 0 && minPf < maxPf * 0.3) {
+            const best = pfs.find((s) => s.pf === maxPf)!;
+            const worst = pfs.find((s) => s.pf === minPf)!;
+            warnings.push(
+              `MR SESSION INCONSISTENCY (KB §13.2): ${best.name} PF=${best.pf} vs ${worst.name} PF=${worst.pf}. ` +
+              `MR should be consistent 24/7 — PF concentrated in one session = fragile edge.`,
+            );
+          }
+        } else if (moduleId === "M1") {
+          // KB §13.2: Breakout high PF in London/NY = correct; high PF in Asia = suspicious
+          const asiaPf = pfs.find((s) => s.name === "Asia");
+          const londonPf = pfs.find((s) => s.name === "London");
+          const nyPf = pfs.find((s) => s.name === "NY");
+          if (asiaPf && (londonPf || nyPf)) {
+            const westPf = Math.max(londonPf?.pf ?? 0, nyPf?.pf ?? 0);
+            if (asiaPf.pf > westPf * 1.5 && asiaPf.pf > 1.0) {
+              warnings.push(
+                `BREAKOUT SESSION ANOMALY (KB §13.2): Asia PF=${asiaPf.pf} > London/NY PF=${westPf.toFixed(2)}. ` +
+                `Breakout edge in Asia (low volatility) is suspicious — expect higher PF in London/NY.`,
+              );
+            }
+          }
+        } else {
+          // Generic session imbalance for M3/M4
+          if (maxPf > 0 && minPf < maxPf * 0.3) {
+            const best = pfs.find((s) => s.pf === maxPf)!;
+            const worst = pfs.find((s) => s.pf === minPf)!;
+            warnings.push(
+              `SESSION IMBALANCE: ${best.name} PF=${best.pf} vs ${worst.name} PF=${worst.pf}. ` +
+              `Large session disparity — edge may be fragile or session-specific.`,
+            );
+          }
         }
       }
     }

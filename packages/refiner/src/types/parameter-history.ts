@@ -56,6 +56,14 @@ export interface ResearchBriefRecord {
   timestamp: string;
 }
 
+/** Records which KB catalog components were used in a restructure iteration */
+export interface TestedCombination {
+  iter: number;
+  /** Slot name → chosen candidate name (e.g. "Entry Signal" → "Donchian Channel") */
+  components: Record<string, string>;
+  bestMetrics: { pnl: number; pf: number; wr: number; dd: number; trades: number } | null;
+}
+
 export interface ParameterHistory {
   iterations: ParameterHistoryIteration[];
   neverWorked: (string | NeverWorkedEntry)[];
@@ -63,6 +71,7 @@ export interface ParameterHistory {
   pendingHypotheses: PendingHypothesis[];
   approaches?: ApproachRecord[];
   researchLog?: ResearchBriefRecord[];
+  testedCombinations?: TestedCombination[];
   currentPhase?: "refine" | "research" | "restructure";
   phaseStartIter?: number;
 }

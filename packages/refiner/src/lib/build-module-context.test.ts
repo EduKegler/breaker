@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { buildModuleContext, extractFixedRules, MODULE_CRITERIA } from "./build-module-context.js";
+import {
+  buildModuleContext,
+  extractFixedRules,
+  extractCandidatesFromTable,
+  extractComponentCatalog,
+  extractVariableBudget,
+  MODULE_CRITERIA,
+} from "./build-module-context.js";
 
 vi.mock("node:fs", () => ({
   default: {
@@ -22,7 +29,53 @@ const SAMPLE_KB = `
 
 ### 3.2 Strategy candidates
 
-Some candidates here.
+**Variable budget (8 max):**
+
+| Component | Typical vars | Example |
+|-----------|-------------|---------|
+| Entry signal | 1-2 | Donchian period |
+| Regime filter | 0-1 | EMA period |
+| Volume confirmation (rule 3) | 1 | multiplier |
+| ATR stop | 1 | multiplier |
+| Timeout | 1 | bars |
+| **Typical total** | **6-8** | Fix regime filter to stay in budget |
+
+**Entry signal candidates:**
+
+| Approach | How it works | Notes |
+|----------|-------------|-------|
+| Donchian Channel | New high/low breakout above/below N-period channel | Classic |
+| BB squeeze release | BB contracts inside KC, then expands | Compression detector |
+| Opening Range Breakout (ORB) | Define high/low of first N minutes | Session-based |
+
+**Entry timing candidates:**
+
+| Approach | How it works | Notes |
+|----------|-------------|-------|
+| Breakout close | Enter at candle close beyond level | Faster entry |
+| Retest entry | Wait for pullback to level | Fewer fakeouts |
+
+**Regime filter candidates (pick one, then lock per RESTRUCTURE):**
+
+| Approach | Timeframe | What it does | Tunable params |
+|----------|-----------|-------------|----------------|
+| EMA direction | Daily or 4H | Breakout aligns with trend | EMA period(s) |
+| ADX threshold | 4H | Low ADX = consolidation | ADX period, threshold |
+
+**Optional confirmation filter (max 1 -- volume is already mandatory via fixed rule 3):**
+
+| Approach | How it works | Notes |
+|----------|-------------|-------|
+| RSI momentum | RSI(14) > 50 for longs | Confirms momentum |
+| MACD alignment | MACD histogram positive/negative | Trend momentum |
+
+**Exit candidates:**
+
+| Approach | What it does | Typical range | Vars consumed |
+|----------|-------------|---------------|---------------|
+| Trailing channel (Donchian fast) | Exit on retracement | Period: 5-15 bars | 1 |
+| ATR trailing stop | Stop follows price at N x ATR | N: 1.5-4.0 | 1 |
+| Time-based timeout | Forced exit after N bars | N: 24-96 bars | 1 |
 
 ---
 
@@ -34,6 +87,88 @@ Some candidates here.
 2. **Band-based entry:** mandatory.
 
 ### 4.2 Strategy candidates
+
+**Variable budget (6 max):**
+
+| Component | Typical vars | Example |
+|-----------|-------------|---------|
+| Band/channel (extreme) | 1-2 | BB period + multiplier |
+| Exhaustion confirmation | 1-2 | RSI threshold long + short |
+| Regime filter | 1-2 | ADX period + threshold |
+| Timeout | 1 | bars |
+| Catastrophic stop (optional) | 0-1 | ATR multiplier |
+| **Typical total** | **4-6** | At cap with all components |
+
+**Band/channel candidates (defines "extreme"):**
+
+| Approach | How it works | Typical range | Notes |
+|----------|-------------|---------------|-------|
+| Bollinger Bands | SMA(N) +/- K * std dev | N: 14-30 | Classic |
+| Keltner Channels | EMA(N) +/- K * ATR | N: 14-30 | Smoother |
+
+**Exhaustion confirmation candidates (pick max 1):**
+
+| Approach | How it works | Typical range | Notes |
+|----------|-------------|---------------|-------|
+| RSI(2) | Ultra-short RSI | Period: 2 | Connors canonical |
+| Williams %R | Close relative to range | Period: 2-5 | Faster than RSI |
+
+**Regime filter candidates (pick one, then lock per RESTRUCTURE):**
+
+| Approach | Timeframe | What it does | Tunable params | Notes |
+|----------|-----------|-------------|----------------|-------|
+| ADX threshold (low) | 1H | ADX < threshold = ranging | ADX period, threshold | Most cited |
+
+**Exit candidates:**
+
+| Approach | What it does | Typical range | Vars consumed | Notes |
+|----------|-------------|---------------|---------------|-------|
+| Channel midline | Exit at center of band | -- | 0 | Conservative |
+| Opposite band | Exit at opposite extreme | -- | 0 | Aggressive |
+| Timeout | Forced exit after N bars | N: 12-48 | 1 | Safety net |
+
+---
+
+## 6. Module 4: Trend Following
+
+### 6.1 Fixed rules (BREAKER cannot change)
+
+1. **Max free variables:** 6
+2. **Regime filter:** mandatory (ADX-based).
+
+### 6.2 Strategy candidates
+
+**Variable budget (6 max):**
+
+| Component | Typical vars | Example |
+|-----------|-------------|---------|
+| Trend signal (entry trigger) | 1-2 | SuperTrend params; MA crossover periods |
+| Regime filter (ADX) | 1 | ADX threshold (period fixed at 14) |
+| Stop loss (ATR-based) | 1 | ATR multiplier |
+| Trailing exit | 0-1 | SuperTrend flip (0 vars); Chandelier (1-2 vars) |
+| Timeout | 1 | days/bars |
+| **Typical total** | **5-6** | Tight budget forces simplicity |
+
+**Entry signal candidates (pick one architecture, then lock per RESTRUCTURE):**
+
+| Approach | How it works | Notes |
+|----------|-------------|-------|
+| SuperTrend flip | Price crosses SuperTrend line | Simplest entry |
+| MA crossover | Fast MA crosses slow MA | Classic trend signal |
+| Price channel breakout | New N-period high/low | Turtle-style |
+
+**Regime filter candidates:**
+
+| Approach | Timeframe | What it does | Tunable params |
+|----------|-----------|-------------|----------------|
+| ADX threshold | Daily | ADX > threshold = trending | ADX threshold |
+
+**Trailing exit candidates:**
+
+| Approach | What it does | Typical range | Vars consumed |
+|----------|-------------|---------------|---------------|
+| SuperTrend flip | Exit on opposite flip | -- | 0 |
+| Chandelier Exit | ATR-based trailing stop | ATR mult: 2-4 | 1-2 |
 `;
 
 describe("extractFixedRules", () => {
@@ -223,5 +358,234 @@ describe("MODULE_CRITERIA", () => {
 
   it("M1 has no WR gate", () => {
     expect(MODULE_CRITERIA.M1.minWR).toBeNull();
+  });
+});
+
+describe("extractCandidatesFromTable", () => {
+  it("extracts M1 entry signal candidates", () => {
+    const candidates = extractCandidatesFromTable(SAMPLE_KB, "Entry signal candidates");
+    expect(candidates).toHaveLength(3);
+    expect(candidates[0].name).toBe("Donchian Channel");
+    expect(candidates[1].name).toBe("BB squeeze release");
+    expect(candidates[2].name).toBe("Opening Range Breakout (ORB)");
+  });
+
+  it("extracts descriptions from second column", () => {
+    const candidates = extractCandidatesFromTable(SAMPLE_KB, "Entry signal candidates");
+    expect(candidates[0].description).toContain("New high/low breakout");
+  });
+
+  it("extracts M1 regime filter candidates", () => {
+    const candidates = extractCandidatesFromTable(SAMPLE_KB, "Regime filter candidates");
+    expect(candidates.length).toBeGreaterThanOrEqual(2);
+    expect(candidates[0].name).toBe("EMA direction");
+    expect(candidates[1].name).toBe("ADX threshold");
+  });
+
+  it("extracts M2 band/channel candidates", () => {
+    const candidates = extractCandidatesFromTable(SAMPLE_KB, "Band/channel candidates");
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0].name).toBe("Bollinger Bands");
+    expect(candidates[1].name).toBe("Keltner Channels");
+  });
+
+  it("returns empty array for nonexistent header", () => {
+    const candidates = extractCandidatesFromTable(SAMPLE_KB, "Nonexistent candidates");
+    expect(candidates).toEqual([]);
+  });
+
+  it("returns empty array for empty KB", () => {
+    const candidates = extractCandidatesFromTable("", "Entry signal candidates");
+    expect(candidates).toEqual([]);
+  });
+
+  it("strips markdown links from descriptions", () => {
+    const kb = `**Test candidates:**
+
+| Approach | How it works |
+|----------|-------------|
+| Foo | Uses [some method](https://example.com) for trading |
+`;
+    const candidates = extractCandidatesFromTable(kb, "Test candidates");
+    expect(candidates[0].description).toBe("Uses some method for trading");
+  });
+});
+
+describe("extractComponentCatalog", () => {
+  it("extracts all M1 slots", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
+    const slotNames = catalog.slots.map((s) => s.slotName);
+    expect(slotNames).toContain("Entry Signal");
+    expect(slotNames).toContain("Entry Timing");
+    expect(slotNames).toContain("Regime Filter");
+    expect(slotNames).toContain("Exit");
+  });
+
+  it("extracts correct candidate count per M1 slot", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
+    const entrySlot = catalog.slots.find((s) => s.slotName === "Entry Signal");
+    expect(entrySlot!.candidates).toHaveLength(3);
+
+    const timingSlot = catalog.slots.find((s) => s.slotName === "Entry Timing");
+    expect(timingSlot!.candidates).toHaveLength(2);
+
+    const exitSlot = catalog.slots.find((s) => s.slotName === "Exit");
+    expect(exitSlot!.candidates).toHaveLength(3);
+  });
+
+  it("extracts all M2 slots", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M2");
+    const slotNames = catalog.slots.map((s) => s.slotName);
+    expect(slotNames).toContain("Band/Channel");
+    expect(slotNames).toContain("Exhaustion");
+    expect(slotNames).toContain("Exit");
+  });
+
+  it("returns empty catalog for unknown module", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M99");
+    expect(catalog.slots).toEqual([]);
+  });
+
+  it("returns empty catalog for empty KB", () => {
+    const catalog = extractComponentCatalog("", "M1");
+    expect(catalog.slots).toEqual([]);
+  });
+
+  it("skips slots with no candidates in KB", () => {
+    // M1 Confirmation slot requires "Optional confirmation filter" header
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
+    const confSlot = catalog.slots.find((s) => s.slotName === "Confirmation");
+    expect(confSlot!.candidates).toHaveLength(2);
+  });
+});
+
+describe("extractVariableBudget", () => {
+  it("extracts variable budget from M1 section", () => {
+    const budget = extractVariableBudget(SAMPLE_KB);
+    expect(budget.get("entry signal")).toBe("1-2");
+    expect(budget.get("regime filter")).toBe("0-1");
+  });
+
+  it("skips the 'Typical total' row", () => {
+    const budget = extractVariableBudget(SAMPLE_KB);
+    const keys = [...budget.keys()];
+    expect(keys.some((k) => k.includes("typical total"))).toBe(false);
+  });
+
+  it("returns empty map when no budget table", () => {
+    const budget = extractVariableBudget("no tables here");
+    expect(budget.size).toBe(0);
+  });
+});
+
+describe("extractComponentCatalog with variable budget", () => {
+  it("attaches typicalVars to M1 Entry Signal slot", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
+    const entrySlot = catalog.slots.find((s) => s.slotName === "Entry Signal");
+    expect(entrySlot!.typicalVars).toBe("1-2");
+  });
+
+  it("attaches typicalVars to M1 Regime Filter slot", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
+    const regimeSlot = catalog.slots.find((s) => s.slotName === "Regime Filter");
+    expect(regimeSlot!.typicalVars).toBe("0-1");
+  });
+});
+
+describe("extractComponentCatalog with M2 variable budget aliases", () => {
+  it("attaches typicalVars to M2 Exit slot via 'timeout' alias", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M2");
+    const exitSlot = catalog.slots.find((s) => s.slotName === "Exit");
+    expect(exitSlot).toBeDefined();
+    expect(exitSlot!.typicalVars).toBe("1");
+  });
+
+  it("attaches typicalVars to M2 Exhaustion slot via 'exhaustion confirmation' alias", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M2");
+    const exhSlot = catalog.slots.find((s) => s.slotName === "Exhaustion");
+    expect(exhSlot).toBeDefined();
+    expect(exhSlot!.typicalVars).toBe("1-2");
+  });
+});
+
+describe("extractComponentCatalog with M4 variable budget aliases", () => {
+  it("attaches typicalVars to M4 Entry Signal via 'trend signal (entry trigger)' alias", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M4");
+    const entrySlot = catalog.slots.find((s) => s.slotName === "Entry Signal");
+    expect(entrySlot).toBeDefined();
+    expect(entrySlot!.typicalVars).toBe("1-2");
+  });
+
+  it("attaches typicalVars to M4 Trailing Exit via direct match", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M4");
+    const trailSlot = catalog.slots.find((s) => s.slotName === "Trailing Exit");
+    expect(trailSlot).toBeDefined();
+    expect(trailSlot!.typicalVars).toBe("0-1");
+  });
+
+  it("extracts all M4 slots", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M4");
+    const slotNames = catalog.slots.map((s) => s.slotName);
+    expect(slotNames).toContain("Entry Signal");
+    expect(slotNames).toContain("Regime Filter");
+    expect(slotNames).toContain("Trailing Exit");
+  });
+
+  it("extracts M4 entry signal candidates", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M4");
+    const entrySlot = catalog.slots.find((s) => s.slotName === "Entry Signal");
+    expect(entrySlot!.candidates).toHaveLength(3);
+    expect(entrySlot!.candidates[0].name).toBe("SuperTrend flip");
+  });
+});
+
+describe("buildModuleContext catalog integration", () => {
+  beforeEach(() => {
+    vi.mocked(fs.readFileSync).mockReturnValue(SAMPLE_KB);
+  });
+
+  it("includes catalog in context for M1", () => {
+    const ctx = buildModuleContext(
+      { strategy: "breakout", interval: "15m", criteria: {} },
+      "/fake/kb.md",
+    );
+    expect(ctx.catalog).toBeDefined();
+    expect(ctx.catalog.slots.length).toBeGreaterThan(0);
+    const entrySlot = ctx.catalog.slots.find((s) => s.slotName === "Entry Signal");
+    expect(entrySlot).toBeDefined();
+    expect(entrySlot!.candidates[0].name).toBe("Donchian Channel");
+  });
+
+  it("includes catalog in context for M2", () => {
+    const ctx = buildModuleContext(
+      { strategy: "mean-reversion", interval: "15m", criteria: {} },
+      "/fake/kb.md",
+    );
+    expect(ctx.catalog.slots.length).toBeGreaterThan(0);
+    const bandSlot = ctx.catalog.slots.find((s) => s.slotName === "Band/Channel");
+    expect(bandSlot).toBeDefined();
+  });
+
+  it("includes catalog in context for M4 with correct typicalVars", () => {
+    const ctx = buildModuleContext(
+      { strategy: "trend-following", interval: "4h", criteria: {} },
+      "/fake/kb.md",
+    );
+    expect(ctx.catalog.slots.length).toBeGreaterThan(0);
+    const entrySlot = ctx.catalog.slots.find((s) => s.slotName === "Entry Signal");
+    expect(entrySlot).toBeDefined();
+    expect(entrySlot!.typicalVars).toBe("1-2");
+    expect(entrySlot!.candidates[0].name).toBe("SuperTrend flip");
+  });
+
+  it("returns empty catalog when KB is missing", () => {
+    vi.mocked(fs.readFileSync).mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+    const ctx = buildModuleContext(
+      { strategy: "breakout", interval: "15m", criteria: {} },
+      "/nonexistent/kb.md",
+    );
+    expect(ctx.catalog.slots).toEqual([]);
   });
 });

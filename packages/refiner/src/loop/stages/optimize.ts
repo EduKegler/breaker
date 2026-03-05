@@ -250,6 +250,16 @@ export async function optimizeStrategy(opts: {
         return { success: true, data: { changed: false } };
       }
 
+      // KB §13.1: refine must change at most 1 param per iteration
+      const overrideKeys = Object.keys(paramOverrides);
+      if (overrideKeys.length > 1) {
+        log(`  [optimize] Refine produced ${overrideKeys.length} param changes — keeping only first (${overrideKeys[0]})`);
+        const firstKey = overrideKeys[0];
+        for (const k of overrideKeys) {
+          if (k !== firstKey) delete paramOverrides[k];
+        }
+      }
+
       // Validate against KB constraints
       const { valid, warnings } = validateParamOverrides(
         paramOverrides,

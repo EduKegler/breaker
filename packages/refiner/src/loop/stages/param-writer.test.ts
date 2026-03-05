@@ -458,3 +458,54 @@ describe("paramWriter.transitionApproach", () => {
     expect(updated.approaches).toHaveLength(1);
   });
 });
+
+describe("paramWriter.recordTestedCombination", () => {
+  it("records a combination with metrics", () => {
+    paramWriter.recordTestedCombination({
+      historyPath,
+      globalIter: 6,
+      components: { "Entry Signal": "Donchian Channel", "Regime Filter": "EMA direction" },
+      metrics: { pnl: -7.12, pf: 0.92, wr: 50.0, dd: -6.8, trades: 28 },
+    });
+
+    const history = paramWriter.loadHistory(historyPath);
+    expect(history.testedCombinations).toHaveLength(1);
+    expect(history.testedCombinations![0].iter).toBe(6);
+    expect(history.testedCombinations![0].components["Entry Signal"]).toBe("Donchian Channel");
+    expect(history.testedCombinations![0].bestMetrics!.pf).toBe(0.92);
+  });
+
+  it("appends multiple combinations", () => {
+    paramWriter.recordTestedCombination({
+      historyPath,
+      globalIter: 1,
+      components: { "Entry Signal": "Donchian Channel" },
+      metrics: null,
+    });
+    paramWriter.recordTestedCombination({
+      historyPath,
+      globalIter: 6,
+      components: { "Entry Signal": "BB squeeze release" },
+      metrics: { pnl: 100, pf: 1.5, wr: 55, dd: -5, trades: 40 },
+    });
+
+    const history = paramWriter.loadHistory(historyPath);
+    expect(history.testedCombinations).toHaveLength(2);
+    expect(history.testedCombinations![0].components["Entry Signal"]).toBe("Donchian Channel");
+    expect(history.testedCombinations![1].components["Entry Signal"]).toBe("BB squeeze release");
+  });
+
+  it("persists to disk", () => {
+    paramWriter.recordTestedCombination({
+      historyPath,
+      globalIter: 3,
+      components: { "Exit": "ATR trailing stop" },
+      metrics: { pnl: 50, pf: 1.2, wr: 45, dd: -8, trades: 60 },
+    });
+
+    // Re-read from disk
+    const fromDisk = paramWriter.loadHistory(historyPath);
+    expect(fromDisk.testedCombinations).toHaveLength(1);
+    expect(fromDisk.testedCombinations![0].iter).toBe(3);
+  });
+});
