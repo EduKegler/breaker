@@ -773,6 +773,26 @@ export async function orchestrate(): Promise<void> {
           phase,
         });
         log("Parameter history updated deterministically");
+
+        // Record tested combination for catalog-driven restructure tracking
+        if (phase === "restructure" || phase === "research") {
+          const selectedComponents = metadata.selectedComponents;
+          if (selectedComponents && typeof selectedComponents === "object") {
+            paramWriter.recordTestedCombination({
+              historyPath: cfg.paramHistoryFile,
+              globalIter: state.globalIter,
+              components: selectedComponents,
+              metrics: {
+                pnl: currentPnl,
+                pf: metrics.profitFactor ?? 0,
+                wr: metrics.winRate ?? 0,
+                dd: metrics.maxDrawdownPct ?? 0,
+                trades: metrics.numTrades ?? 0,
+              },
+            });
+            log("Tested combination recorded in parameter history");
+          }
+        }
       } catch (err) {
         log(`Param-writer error (non-blocking): ${(err as Error).message}`);
       }
@@ -833,9 +853,15 @@ export async function orchestrate(): Promise<void> {
   log("Session summary:");
   console.log(summary);
 
-  // Send WhatsApp summary via @breaker/alerts (env validated at startup)
+  // Send WhatsApp summary via @breaker/alerts
+  // Pass credentials explicitly because dotenv.config() runs AFTER ESM imports resolve,
+  // so @breaker/alerts env defaults would be stale (empty) without explicit overrides.
   try {
-    await sendWhatsAppWithRetry(summary, recipient);
+    await sendWhatsAppWithRetry(summary, recipient, {
+      apiUrl: evoUrl,
+      apiKey: evoKey,
+      instance: process.env.EVOLUTION_INSTANCE,
+    });
     log("WhatsApp summary sent");
   } catch (err) {
     log(`WhatsApp send failed: ${(err as Error).message}`);
