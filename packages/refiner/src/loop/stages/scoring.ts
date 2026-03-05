@@ -45,11 +45,11 @@ export function computeScore(
   const wr = metrics.winRate ?? 0;
   const dd = metrics.maxDrawdownPct ?? 100;
 
-  // Component scores (0-1 range before weighting)
-  const pfScore = Math.min(pf / 2.0, 1.0);
-  const avgRScore = Math.min(avgR / 0.5, 1.0);
-  const wrScore = Math.min(wr / 60, 1.0);
-  const ddScore = Math.max(0, 1 - dd / 15);
+  // Component scores (clamped to 0-1 range before weighting)
+  const pfScore = Math.max(0, Math.min(pf / 2.0, 1.0));
+  const avgRScore = Math.max(0, Math.min(avgR / 0.5, 1.0));
+  const wrScore = Math.max(0, Math.min(wr / 60, 1.0));
+  const ddScore = Math.max(0, Math.min(1, 1 - Math.abs(dd) / 15));
   // Complexity: fewer params = better. Baseline of 3, zero at 10 (KB cap is 6-8).
   const complexityScore = Math.min(1, Math.max(0, 1 - (paramCount - 3) / 7));
   const sampleScore = Math.min(tradeCount / 150, 1.0);

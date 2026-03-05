@@ -206,9 +206,12 @@ export class StrategyRunner {
   async tick(): Promise<void> {
     const candles = this.deps.streamer.getCandles();
     if (candles.length === 0) return;
-    const latest = candles[candles.length - 1];
-    if (latest.t <= this.lastCandleAt) return;
-    await this.processClosedCandle(latest);
+    // Find the first unprocessed candle (not necessarily the last — the next
+    // candle may already be in the array due to WS delivering ticks ahead of
+    // the async reconciliation completing for the previous candle).
+    const nextIdx = candles.findIndex(c => c.t > this.lastCandleAt);
+    if (nextIdx < 0) return;
+    await this.processClosedCandle(candles[nextIdx]);
   }
 
   private async processClosedCandle(newCandle: Candle): Promise<void> {
@@ -218,7 +221,18 @@ export class StrategyRunner {
     await this.expirePendingEntry();
 
     const candles = this.deps.streamer.getCandles();
-    const index = candles.length - 1;
+    let index = candles.length - 1;
+
+    // Guard against off-by-one: the next candle (N+1) may already be in the
+    // array when reconcileAndEmitClose fires for candle N (because the WS
+    // delivers the first tick of N+1 before the async REST reconciliation
+    // completes). If the last candle doesn't match the closed candle, find
+    // the correct index by timestamp.
+    if (candles[index]?.t !== newCandle.t) {
+      for (let i = candles.length - 2; i >= 0; i--) {
+        if (candles[i].t === newCandle.t) { index = i; break; }
+      }
+    }
 
     await this.deps.eventLog.append({
       type: "candle_polled",

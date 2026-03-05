@@ -94,7 +94,7 @@ describe("state-machine: escalation refine -> research", () => {
     expect(actor.getSnapshot().value).toBe("refine");
   });
 
-  it("resets phase counters on escalation", () => {
+  it("resets progress counters on escalation but preserves error counters", () => {
     const actor = startActor({
       neutralStreak: 3,
       noChangeCount: 1,
@@ -107,9 +107,10 @@ describe("state-machine: escalation refine -> research", () => {
     const ctx = actor.getSnapshot().context;
     expect(ctx.neutralStreak).toBe(0);
     expect(ctx.noChangeCount).toBe(0);
-    expect(ctx.fixAttempts).toBe(0);
-    expect(ctx.transientFailures).toBe(0);
     expect(ctx.phaseIterCount).toBe(0);
+    // Error counters are NOT reset on phase transition
+    expect(ctx.fixAttempts).toBe(2);
+    expect(ctx.transientFailures).toBe(1);
   });
 
   it("does NOT escalate refine -> research when phaseCycles >= maxCycles", () => {
@@ -135,7 +136,7 @@ describe("state-machine: escalation research -> restructure", () => {
     expect(actor.getSnapshot().value).toBe("research");
   });
 
-  it("resets phase counters on escalation", () => {
+  it("resets progress counters on escalation but preserves error counters", () => {
     const actor = startActor({
       initialPhase: "research",
       noChangeCount: 2,
@@ -147,10 +148,11 @@ describe("state-machine: escalation research -> restructure", () => {
     actor.send({ type: "ESCALATE" });
     const ctx = actor.getSnapshot().context;
     expect(ctx.noChangeCount).toBe(0);
-    expect(ctx.fixAttempts).toBe(0);
-    expect(ctx.transientFailures).toBe(0);
     expect(ctx.neutralStreak).toBe(0);
     expect(ctx.phaseIterCount).toBe(0);
+    // Error counters are NOT reset on phase transition
+    expect(ctx.fixAttempts).toBe(1);
+    expect(ctx.transientFailures).toBe(2);
   });
 });
 
@@ -171,7 +173,7 @@ describe("state-machine: escalation restructure -> refine", () => {
     expect(actor.getSnapshot().value).toBe("done");
   });
 
-  it("resets phase counters and clears researchBriefPath (BUG FIX)", () => {
+  it("resets progress counters and clears researchBriefPath but preserves error counters", () => {
     const actor = startActor({
       initialPhase: "restructure",
       noChangeCount: 2,
@@ -188,9 +190,10 @@ describe("state-machine: escalation restructure -> refine", () => {
     expect(ctx.researchBriefPath).toBeUndefined();
     expect(ctx.neutralStreak).toBe(0);
     expect(ctx.noChangeCount).toBe(0);
-    expect(ctx.fixAttempts).toBe(0);
-    expect(ctx.transientFailures).toBe(0);
     expect(ctx.phaseIterCount).toBe(0);
+    // Error counters are NOT reset on phase transition
+    expect(ctx.fixAttempts).toBe(1);
+    expect(ctx.transientFailures).toBe(1);
   });
 });
 
@@ -223,7 +226,7 @@ describe("state-machine: PHASE_TIMEOUT transitions", () => {
     expect(actor.getSnapshot().value).toBe("done");
   });
 
-  it("resets phase counters on PHASE_TIMEOUT", () => {
+  it("resets progress counters on PHASE_TIMEOUT but preserves error counters", () => {
     const actor = startActor({
       neutralStreak: 3,
       noChangeCount: 2,
@@ -235,9 +238,10 @@ describe("state-machine: PHASE_TIMEOUT transitions", () => {
     const ctx = actor.getSnapshot().context;
     expect(ctx.neutralStreak).toBe(0);
     expect(ctx.noChangeCount).toBe(0);
-    expect(ctx.fixAttempts).toBe(0);
-    expect(ctx.transientFailures).toBe(0);
     expect(ctx.phaseIterCount).toBe(0);
+    // Error counters are NOT reset on phase transition
+    expect(ctx.fixAttempts).toBe(1);
+    expect(ctx.transientFailures).toBe(1);
   });
 
   it("BUG FIX: phaseIterCount resets to 0 on PHASE_TIMEOUT (not 1)", () => {
@@ -470,6 +474,42 @@ describe("state-machine: guard conditions", () => {
     const actor = startActor({ initialPhase: "restructure", noChangeCount: 2, phaseCycles: 2, maxCycles: 3 });
     actor.send({ type: "ESCALATE" });
     expect(actor.getSnapshot().value).toBe("done");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG FIX: transientFailures survive phase transitions
+// ---------------------------------------------------------------------------
+describe("state-machine: transientFailures survive phase transitions", () => {
+  it("transientFailures accumulate across refine -> research -> restructure", () => {
+    const actor = startActor({ maxCycles: 2 });
+
+    // 2 transient errors in refine
+    actor.send({ type: "TRANSIENT_ERROR" });
+    actor.send({ type: "TRANSIENT_ERROR" });
+    expect(actor.getSnapshot().context.transientFailures).toBe(2);
+
+    // Escalate to research via PHASE_TIMEOUT
+    actor.send({ type: "PHASE_TIMEOUT" });
+    expect(actor.getSnapshot().value).toBe("research");
+    // transientFailures must survive
+    expect(actor.getSnapshot().context.transientFailures).toBe(2);
+
+    // 1 more transient error in research
+    actor.send({ type: "TRANSIENT_ERROR" });
+    expect(actor.getSnapshot().context.transientFailures).toBe(3);
+
+    // Escalate to restructure
+    actor.send({ type: "PHASE_TIMEOUT" });
+    expect(actor.getSnapshot().value).toBe("restructure");
+    // still accumulated
+    expect(actor.getSnapshot().context.transientFailures).toBe(3);
+  });
+
+  it("BACKTEST_OK resets transientFailures (error recovery)", () => {
+    const actor = startActor({ transientFailures: 3 });
+    actor.send({ type: "BACKTEST_OK", currentScore: 50, currentPnl: 100 });
+    expect(actor.getSnapshot().context.transientFailures).toBe(0);
   });
 });
 

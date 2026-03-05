@@ -1688,4 +1688,118 @@ describe("StrategyRunner", () => {
       expect(reportSqueezeSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe("off-by-one guard (candle N+1 already in array)", () => {
+    it("uses the closed candle's index, not candles.length - 1, when N+1 is present", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+
+      // Strategy that captures what index/candle it was called with
+      let capturedCtx: StrategyContext | null = null;
+      const strategy = createTestStrategy();
+      vi.mocked(strategy.onCandle).mockImplementation((ctx: StrategyContext) => {
+        capturedCtx = ctx;
+        return null;
+      });
+      const deps = createDeps(strategy, streamer);
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // Simulate the race condition:
+      // 1. Candle N (index 5) closes → reconcileAndEmitClose starts async REST fetch
+      // 2. WS delivers first tick of candle N+1 (index 6) → upsertCandle pushes N+1
+      // 3. reconcileAndEmitClose resolves → emits candle:close for candle N
+      // At this point getCandles() returns [..., N, N+1] so length - 1 = N+1 index
+      const candleN = makeCandle(5);
+      const candleN1: Candle = {
+        t: candleN.t + 900_000,   // next interval
+        o: candleN.c,
+        h: candleN.c + 5,
+        l: candleN.c - 5,
+        c: candleN.c - 3,         // only 1 second of data
+        v: 6.797,                  // tiny volume (1 second)
+        n: 2,
+      };
+
+      // Push both candles to simulate the streamer state when candle:close fires
+      streamer.addCandle(candleN);
+      streamer.addCandle(candleN1);
+
+      // processClosedCandle is called with candleN (the closed one)
+      // but getCandles() already has candleN1 at the end
+      await runner.tick();
+
+      expect(capturedCtx).not.toBeNull();
+      // The strategy must see candle N (the closed one), NOT N+1
+      expect(capturedCtx!.currentCandle.t).toBe(candleN.t);
+      expect(capturedCtx!.currentCandle.v).toBe(candleN.v);
+      // Index must point to candleN's position in the array (5), not candleN1 (6)
+      expect(capturedCtx!.index).toBe(5);
+    });
+
+    it("falls back to length-1 when closed candle is correctly at the end", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+
+      let capturedCtx: StrategyContext | null = null;
+      const strategy = createTestStrategy();
+      vi.mocked(strategy.onCandle).mockImplementation((ctx: StrategyContext) => {
+        capturedCtx = ctx;
+        return null;
+      });
+      const deps = createDeps(strategy, streamer);
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // Normal case: only candle N in the array (no N+1 yet)
+      const candleN = makeCandle(5);
+      streamer.addCandle(candleN);
+
+      await runner.tick();
+
+      expect(capturedCtx).not.toBeNull();
+      expect(capturedCtx!.currentCandle.t).toBe(candleN.t);
+      expect(capturedCtx!.index).toBe(5);
+    });
+
+    it("uses correct candle for exit checks when N+1 is present", async () => {
+      const candles = Array.from({ length: 5 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy(5);
+
+      let exitCtx: StrategyContext | null = null;
+      vi.mocked(strategy.shouldExit!).mockImplementation((ctx: StrategyContext) => {
+        exitCtx = ctx;
+        return null;
+      });
+      const deps = createDeps(strategy, streamer);
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      // Open position on bar 5
+      streamer.addCandle(makeCandle(5));
+      await runner.tick();
+      expect(deps.positionBook.count()).toBe(1);
+
+      // Simulate off-by-one on bar 6: N+1 (bar 7) already in array
+      const candleN = makeCandle(6);
+      const candleN1: Candle = {
+        t: candleN.t + 900_000,
+        o: candleN.c, h: candleN.c + 5, l: candleN.c - 5,
+        c: candleN.c - 3, v: 3.5, n: 1,
+      };
+      streamer.addCandle(candleN);
+      streamer.addCandle(candleN1);
+
+      await runner.tick();
+
+      expect(exitCtx).not.toBeNull();
+      // shouldExit must see candle N (bar 6), not N+1 (bar 7)
+      expect(exitCtx!.currentCandle.t).toBe(candleN.t);
+      expect(exitCtx!.currentCandle.v).toBe(candleN.v);
+    });
+  });
 });

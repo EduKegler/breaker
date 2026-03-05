@@ -14,6 +14,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 
 ## Key conventions
 - Strategies implement the `Strategy` interface from `types/strategy.ts` and must declare `requiredWarmup` (minimum candles per timeframe for valid signals)
+- `init?(candles, higherTimeframes)` — optional Strategy method that pre-computes indicator arrays once (O(n) total). `onCandle`/`shouldExit` then do O(1) lookups. Without `init()`, per-bar recomputation is O(n²) and causes child-process timeouts in the refiner. The engine re-calls `init()` on every candle close to extend caches
 - `computeLevels?(ctx, direction)` — optional Strategy method that computes SL/TPs for a forced direction (skips entry conditions). Used by exchange `/quick-signal` for manual signals. New strategies should implement this to keep manual signals strategy-agnostic
 - Metrics types are identical to `@breaker/refiner` parse-results types for compatibility
 - SQLite cache lives in `.cache/candles.db` (gitignored)

@@ -122,6 +122,7 @@ src/
 - StrategyRunner auto-corrects `warmupBars` at startup via `computeMinWarmupBars()` — if config value is below strategy's `requiredWarmup`, the runner uses the computed minimum and logs a warning
 - HL `getHistoricalOrders` does NOT include trigger orders (SL/TP) — `resolveHistoricalStatuses()` adds parallel fallback via `getOrderStatus(oid)` for missing OIDs
 - SDK `getMeta()` applies `symbolConversion` by default (e.g. "SOL" → "SOL-PERP") — `loadSzDecimals()` normalizes via `fromSymbol()` so cache keys match domain naming. Without this, `getSzDecimals()` returns 5 (fallback) → wrong truncation → exchange rejects orders
+- Off-by-one guard in `processClosedCandle`: the WS may deliver the first tick of candle N+1 before the async REST reconciliation completes for candle N, making `candles.length - 1` point to N+1. Both `processClosedCandle` and `tick()` resolve the correct index by timestamp rather than assuming the closed candle is at the end of the array
 
 ## Build and test
 - `pnpm build` — compile TypeScript

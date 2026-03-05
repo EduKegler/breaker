@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
 import type { CheckpointData } from "../types.js";
-import type { Metrics } from "@breaker/backtest";
+import type { Metrics, CompletedTrade } from "@breaker/backtest";
 import { safeJsonParse } from "../../lib/safe-json.js";
 
 /**
@@ -20,6 +20,7 @@ export const checkpoint = {
     metrics: Metrics,
     iter: number,
     params?: Record<string, number>,
+    trades?: CompletedTrade[],
   ): void {
     if (!fs.existsSync(checkpointDir)) {
       fs.mkdirSync(checkpointDir, { recursive: true });
@@ -38,6 +39,26 @@ export const checkpoint = {
 
     if (params) {
       writeFileAtomic.sync(paramsPath, JSON.stringify(params, null, 2), "utf8");
+    }
+
+    if (trades && trades.length > 0) {
+      const csvHeader = "direction,entryPrice,exitPrice,pnl,rMultiple,entryTimestamp,exitTimestamp,barsHeld,exitType,entryComment";
+      const csvRows = trades.map((t) =>
+        [
+          t.direction,
+          t.entryPrice,
+          t.exitPrice,
+          t.pnl,
+          t.rMultiple,
+          new Date(t.entryTimestamp).toISOString(),
+          new Date(t.exitTimestamp).toISOString(),
+          t.barsHeld,
+          t.exitType,
+          `"${(t.entryComment || "").replace(/"/g, '""')}"`,
+        ].join(","),
+      );
+      const csvPath = path.join(checkpointDir, "best-trades.csv");
+      writeFileAtomic.sync(csvPath, [csvHeader, ...csvRows].join("\n") + "\n", "utf8");
     }
   },
 

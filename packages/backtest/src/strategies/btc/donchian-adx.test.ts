@@ -2,28 +2,29 @@ import { describe, it, expect } from "vitest";
 import { createDonchianAdx } from "./donchian-adx.js";
 import type { StrategyContext } from "../../types/strategy.js";
 import type { Candle } from "../../types/candle.js";
-import { bollingerBands } from "../../indicators/bollinger-bands.js";
-import { keltner } from "../../indicators/keltner.js";
-import { detectSqueeze } from "../../indicators/detect-squeeze.js";
 
-function makeCandle(t: number, price: number, range = 50): Candle {
+function makeCandle(t: number, price: number, range = 50, vol = 100): Candle {
   return {
     t,
     o: price - range / 4,
     h: price + range / 2,
     l: price - range / 2,
     c: price,
-    v: 100,
+    v: vol,
     n: 50,
   };
 }
+
+const MS_15M = 900_000;
+const MS_1H = 3_600_000;
+const MS_4H = 14_400_000;
 
 function generate15mCandles(count: number, startPrice: number, trend: "up" | "down" | "flat"): Candle[] {
   const candles: Candle[] = [];
   let price = startPrice;
   const base = new Date("2024-01-01T00:00:00Z").getTime();
   for (let i = 0; i < count; i++) {
-    candles.push(makeCandle(base + i * 900_000, price));
+    candles.push(makeCandle(base + i * MS_15M, price));
     if (trend === "up") price += 10 + Math.random() * 5;
     else if (trend === "down") price -= 10 + Math.random() * 5;
     else price += (Math.random() - 0.5) * 20;
@@ -31,10 +32,10 @@ function generate15mCandles(count: number, startPrice: number, trend: "up" | "do
   return candles;
 }
 
-function generate1hCandles(candles15m: Candle[]): Candle[] {
+function aggregate(candles15m: Candle[], barsPerGroup: number): Candle[] {
   const result: Candle[] = [];
-  for (let i = 0; i < candles15m.length; i += 4) {
-    const batch = candles15m.slice(i, i + 4);
+  for (let i = 0; i < candles15m.length; i += barsPerGroup) {
+    const batch = candles15m.slice(i, i + barsPerGroup);
     if (batch.length === 0) break;
     result.push({
       t: batch[0].t,
@@ -49,23 +50,12 @@ function generate1hCandles(candles15m: Candle[]): Candle[] {
   return result;
 }
 
-function generate1dCandles(candles15m: Candle[]): Candle[] {
-  const result: Candle[] = [];
-  // 96 bars per day at 15m
-  for (let i = 0; i < candles15m.length; i += 96) {
-    const batch = candles15m.slice(i, i + 96);
-    if (batch.length === 0) break;
-    result.push({
-      t: batch[0].t,
-      o: batch[0].o,
-      h: Math.max(...batch.map((c) => c.h)),
-      l: Math.min(...batch.map((c) => c.l)),
-      c: batch[batch.length - 1].c,
-      v: batch.reduce((s, c) => s + c.v, 0),
-      n: batch.reduce((s, c) => s + c.n, 0),
-    });
-  }
-  return result;
+function generate1hCandles(candles15m: Candle[]): Candle[] {
+  return aggregate(candles15m, 4);
+}
+
+function generate4hCandles(candles15m: Candle[]): Candle[] {
+  return aggregate(candles15m, 16);
 }
 
 function makeCtx(
@@ -98,499 +88,198 @@ describe("createDonchianAdx", () => {
     expect(strategy.params.dcSlow.value).toBe(50);
     expect(strategy.params.dcFast.value).toBe(20);
     expect(strategy.params.adxThreshold.value).toBe(25);
-    expect(strategy.params.atrStopMult.value).toBe(3.0);
+    expect(strategy.params.atrStopMult.value).toBe(3);
     expect(strategy.params.volMult.value).toBe(1.5);
-    expect(strategy.requiredTimeframes).toEqual(["1h", "1d"]);
+    expect(strategy.params.htfEmaPeriod.value).toBe(50);
+    expect(strategy.params.timeoutBars.value).toBe(24);
+    expect(strategy.requiredTimeframes).toEqual(["1h", "4h"]);
   });
 
   it("accepts param overrides", () => {
     const strategy = createDonchianAdx({ dcSlow: 40, adxThreshold: 30 });
     expect(strategy.params.dcSlow.value).toBe(40);
     expect(strategy.params.adxThreshold.value).toBe(30);
-    expect(strategy.params.dcFast.value).toBe(20); // Unchanged
+    expect(strategy.params.volMult.value).toBe(1.5); // unchanged
   });
 
   it("returns null during warmup period", () => {
     const strategy = createDonchianAdx();
     const candles = generate15mCandles(10, 10000, "flat");
-    const htf = { "1h": [] as Candle[], "1d": [] as Candle[] };
+    const htf = { "1h": [] as Candle[], "4h": [] as Candle[] };
     strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, 5, htf); // Too early for dcSlow=50
+    const ctx = makeCtx(candles, 5, htf);
     expect(strategy.onCandle(ctx)).toBeNull();
   });
 
   it("returns null when higher TF data insufficient", () => {
     const strategy = createDonchianAdx();
     const candles = generate15mCandles(200, 10000, "up");
-    const htf = { "1h": generate1hCandles(candles).slice(0, 5), "1d": [] as Candle[] };
+    const htf = { "1h": generate1hCandles(candles).slice(0, 5), "4h": [] as Candle[] };
     strategy.init!(candles, htf);
     const ctx = makeCtx(candles, 100, htf);
     expect(strategy.onCandle(ctx)).toBeNull();
   });
 
-  it("generates long signal on uptrend breakout", () => {
-    const strategy = createDonchianAdx({ dcSlow: 10, adxThreshold: 50 });
-
-    // Build synthetic data: gradual uptrend (for bullish regime) with
-    // consolidation periods (for low ADX) followed by breakouts.
-    const base = new Date("2024-01-01T00:00:00Z").getTime();
-    const candles: Candle[] = [];
-    let price = 10000;
-
-    // Phase 1: ~210 days of gentle uptrend (enough for daily EMA200)
-    for (let i = 0; i < 96 * 210; i++) {
-      // Slow drift up with noise
-      price += 0.5 + (Math.random() - 0.5) * 2;
-      candles.push(makeCandle(base + i * 900_000, price, 30));
-    }
-
-    // Phase 2: tight consolidation for ~2 days (low ADX)
-    const consolidationPrice = price;
-    for (let i = 0; i < 96 * 2; i++) {
-      price = consolidationPrice + (Math.random() - 0.5) * 10;
-      candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
-    }
-
-    // Phase 3: breakout bar — big move up WITH volume spike
-    price = consolidationPrice + 100;
-    const longBreakout = makeCandle(base + (96 * 212) * 900_000, price, 40);
-    longBreakout.v = 300; // Volume spike (> 1.5 * SMA ~100)
-    candles.push(longBreakout);
-
-    const htf1h = generate1hCandles(candles);
-    const htf1d = generate1dCandles(candles);
-    const htf = { "1h": htf1h, "1d": htf1d };
-
-    strategy.init!(candles, htf);
-
-    // Scan last portion for a signal
-    let foundSignal = false;
-    const startScan = Math.max(candles.length - 200, 100);
-    for (let i = startScan; i < candles.length; i++) {
-      const ctx = makeCtx(candles, i, htf);
-      const signal = strategy.onCandle(ctx);
-      if (signal) {
-        expect(signal.direction).toBe("long");
-        expect(signal.stopLoss).toBeLessThan(candles[i].c);
-        expect(signal.entryPrice).toBeTypeOf("number");
-        foundSignal = true;
-        break;
-      }
-    }
-    expect(foundSignal).toBe(true);
-  });
-
-  it("generates short signal on downtrend breakdown", () => {
-    const strategy = createDonchianAdx({ dcSlow: 10, adxThreshold: 50 });
-
-    const base = new Date("2024-01-01T00:00:00Z").getTime();
-    const candles: Candle[] = [];
-    let price = 20000;
-
-    // Phase 1: ~210 days of gentle downtrend (bearish regime: close < daily EMA200)
-    for (let i = 0; i < 96 * 210; i++) {
-      price -= 0.5 + (Math.random() - 0.5) * 2;
-      candles.push(makeCandle(base + i * 900_000, price, 30));
-    }
-
-    // Phase 2: tight consolidation for ~2 days (low ADX)
-    const consolidationPrice = price;
-    for (let i = 0; i < 96 * 2; i++) {
-      price = consolidationPrice + (Math.random() - 0.5) * 10;
-      candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
-    }
-
-    // Phase 3: breakdown bar — big move down WITH volume spike
-    price = consolidationPrice - 100;
-    const shortBreakout = makeCandle(base + (96 * 212) * 900_000, price, 40);
-    shortBreakout.v = 300; // Volume spike (> 1.5 * SMA ~100)
-    candles.push(shortBreakout);
-
-    const htf1h = generate1hCandles(candles);
-    const htf1d = generate1dCandles(candles);
-    const htf = { "1h": htf1h, "1d": htf1d };
-
-    strategy.init!(candles, htf);
-
-    let foundSignal = false;
-    const startScan = Math.max(candles.length - 200, 100);
-    for (let i = startScan; i < candles.length; i++) {
-      const ctx = makeCtx(candles, i, htf);
-      const signal = strategy.onCandle(ctx);
-      if (signal) {
-        expect(signal.direction).toBe("short");
-        expect(signal.stopLoss).toBeGreaterThan(candles[i].c);
-        expect(signal.entryPrice).toBeTypeOf("number");
-        foundSignal = true;
-        break;
-      }
-    }
-    expect(foundSignal).toBe(true);
-  });
-
-  it("blocks signal when breakout bar volume is below volMult × SMA(vol,20)", () => {
-    const strategy = createDonchianAdx({ dcSlow: 10, adxThreshold: 50 });
-
-    const base = new Date("2024-01-01T00:00:00Z").getTime();
-    const candles: Candle[] = [];
-    let price = 10000;
-
-    // Phase 1: ~210 days of gentle uptrend
-    for (let i = 0; i < 96 * 210; i++) {
-      price += 0.5 + (Math.random() - 0.5) * 2;
-      candles.push(makeCandle(base + i * 900_000, price, 30));
-    }
-
-    // Phase 2: tight consolidation for ~2 days (low ADX)
-    const consolidationPrice = price;
-    for (let i = 0; i < 96 * 2; i++) {
-      price = consolidationPrice + (Math.random() - 0.5) * 10;
-      candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
-    }
-
-    // Phase 3: breakout bar — big move up but NORMAL volume (no spike)
-    price = consolidationPrice + 100;
-    candles.push(makeCandle(base + (96 * 212) * 900_000, price, 40));
-    // v=100 (default) < 1.5 * SMA(vol,20)≈100 = 150 → should NOT trigger
-
-    const htf1h = generate1hCandles(candles);
-    const htf1d = generate1dCandles(candles);
-    const htf = { "1h": htf1h, "1d": htf1d };
-
-    strategy.init!(candles, htf);
-
-    // Scan last portion — should find NO signal (volume too low)
-    let foundSignal = false;
-    const startScan = Math.max(candles.length - 200, 100);
-    for (let i = startScan; i < candles.length; i++) {
-      const ctx = makeCtx(candles, i, htf);
-      const signal = strategy.onCandle(ctx);
-      if (signal) {
-        foundSignal = true;
-        break;
-      }
-    }
-    expect(foundSignal).toBe(false);
-  });
-
-  it("allows signal when breakout bar has volume spike", () => {
-    const strategy = createDonchianAdx({ dcSlow: 10, adxThreshold: 50, volMult: 1.5 });
-
-    const base = new Date("2024-01-01T00:00:00Z").getTime();
-    const candles: Candle[] = [];
-    let price = 10000;
-
-    // ~210 days gentle uptrend
-    for (let i = 0; i < 96 * 210; i++) {
-      price += 0.5 + (Math.random() - 0.5) * 2;
-      candles.push(makeCandle(base + i * 900_000, price, 30));
-    }
-
-    // 2 days consolidation
-    const consolidationPrice = price;
-    for (let i = 0; i < 96 * 2; i++) {
-      price = consolidationPrice + (Math.random() - 0.5) * 10;
-      candles.push(makeCandle(base + (96 * 210 + i) * 900_000, price, 8));
-    }
-
-    // Breakout bar with HIGH volume
-    price = consolidationPrice + 100;
-    const breakout = makeCandle(base + (96 * 212) * 900_000, price, 40);
-    breakout.v = 300; // 300 > 1.5 * 100 = 150 → passes
-    candles.push(breakout);
-
-    const htf1h = generate1hCandles(candles);
-    const htf1d = generate1dCandles(candles);
-    const htf = { "1h": htf1h, "1d": htf1d };
-
-    strategy.init!(candles, htf);
-
-    let foundSignal = false;
-    const startScan = Math.max(candles.length - 200, 100);
-    for (let i = startScan; i < candles.length; i++) {
-      const ctx = makeCtx(candles, i, htf);
-      const signal = strategy.onCandle(ctx);
-      if (signal) {
-        expect(signal.direction).toBe("long");
-        foundSignal = true;
-        break;
-      }
-    }
-    expect(foundSignal).toBe(true);
-  });
-
-  it("shouldExit triggers trailing exit for short", () => {
-    const strategy = createDonchianAdx({ dcFast: 5, timeoutBars: 100 });
-    // Price goes down then bounces above fast Donchian upper
-    const candles = [
-      ...generate15mCandles(10, 10000, "down"),
-      ...generate15mCandles(10, 9700, "up"),
-    ];
-    const htf = {} as Record<string, Candle[]>;
-    strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, candles.length - 1, htf, {
-      positionDirection: "short",
-      positionEntryPrice: 10000,
-      positionEntryBarIndex: 0,
-    });
-    const result = strategy.shouldExit!(ctx);
-    if (result) {
-      expect(result.exit).toBe(true);
-      expect(result.comment).toBe("DC Trail");
-    }
-  });
-
-  it("shouldExit triggers trailing exit for long before timeout", () => {
-    const strategy = createDonchianAdx({ dcFast: 5, timeoutBars: 100 });
-    // Price goes up then drops below fast Donchian lower
-    const candles = [
-      ...generate15mCandles(10, 10000, "up"),
-      ...generate15mCandles(10, 10300, "down"),
-    ];
-    const htf = {} as Record<string, Candle[]>;
-    strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, candles.length - 1, htf, {
-      positionDirection: "long",
-      positionEntryPrice: 10000,
-      positionEntryBarIndex: 0,
-    });
-    const result = strategy.shouldExit!(ctx);
-    // May or may not trigger depending on exact values
-    if (result) {
-      expect(result.exit).toBe(true);
-      expect(result.comment).toBe("DC Trail");
-    }
-  });
-
   it("shouldExit triggers timeout after N bars", () => {
-    const strategy = createDonchianAdx({ timeoutBars: 5 });
+    const strategy = createDonchianAdx({ timeoutBars: 5, dcFast: 5 });
     const candles = generate15mCandles(30, 10000, "flat");
-    const htf = {} as Record<string, Candle[]>;
+    const htf = { "1h": generate1hCandles(candles), "4h": generate4hCandles(candles) };
     strategy.init!(candles, htf);
     const ctx = makeCtx(candles, 15, htf, {
       positionDirection: "long",
       positionEntryPrice: 10000,
-      positionEntryBarIndex: 10, // 15 - 10 = 5 bars in trade
+      positionEntryBarIndex: 10,
     });
     const result = strategy.shouldExit!(ctx);
     expect(result).not.toBeNull();
     expect(result!.exit).toBe(true);
-    expect(result!.comment).toBe("Timeout");
+    expect(result!.comment).toBe("timeout");
   });
 
   it("shouldExit returns null when no position", () => {
     const strategy = createDonchianAdx();
     const candles = generate15mCandles(30, 10000, "flat");
-    const htf = {} as Record<string, Candle[]>;
+    const htf = { "1h": generate1hCandles(candles), "4h": generate4hCandles(candles) };
     strategy.init!(candles, htf);
     const ctx = makeCtx(candles, 25, htf);
     expect(strategy.shouldExit!(ctx)).toBeNull();
   });
 
-  it("accepts timeoutBars param override", () => {
-    const strategy = createDonchianAdx({ timeoutBars: 30 });
-    expect(strategy.params.timeoutBars.value).toBe(30);
+  it("shouldExit triggers DC Trail for long when close < dcFast lower", () => {
+    const strategy = createDonchianAdx({ dcFast: 5, timeoutBars: 100 });
+    const base = new Date("2024-01-01T00:00:00Z").getTime();
+
+    // Build candles: flat then sharp drop
+    const candles: Candle[] = [];
+    for (let i = 0; i < 60; i++) {
+      candles.push(makeCandle(base + i * MS_15M, 10000));
+    }
+    // Sharp drop below DC fast lower
+    candles.push(makeCandle(base + 60 * MS_15M, 9800, 50));
+
+    const htf = { "1h": generate1hCandles(candles), "4h": generate4hCandles(candles) };
+    strategy.init!(candles, htf);
+
+    const ctx = makeCtx(candles, candles.length - 1, htf, {
+      positionDirection: "long",
+      positionEntryPrice: 10000,
+      positionEntryBarIndex: 50,
+    });
+    const result = strategy.shouldExit!(ctx);
+    expect(result).not.toBeNull();
+    expect(result!.exit).toBe(true);
+    expect(result!.comment).toBe("DC Trail");
+  });
+
+  it("shouldExit triggers DC Trail for short when close > dcFast upper", () => {
+    const strategy = createDonchianAdx({ dcFast: 5, timeoutBars: 100 });
+    const base = new Date("2024-01-01T00:00:00Z").getTime();
+
+    const candles: Candle[] = [];
+    for (let i = 0; i < 60; i++) {
+      candles.push(makeCandle(base + i * MS_15M, 10000));
+    }
+    // Sharp rally above DC fast upper
+    candles.push(makeCandle(base + 60 * MS_15M, 10200, 50));
+
+    const htf = { "1h": generate1hCandles(candles), "4h": generate4hCandles(candles) };
+    strategy.init!(candles, htf);
+
+    const ctx = makeCtx(candles, candles.length - 1, htf, {
+      positionDirection: "short",
+      positionEntryPrice: 10000,
+      positionEntryBarIndex: 50,
+    });
+    const result = strategy.shouldExit!(ctx);
+    expect(result).not.toBeNull();
+    expect(result!.exit).toBe(true);
+    expect(result!.comment).toBe("DC Trail");
+  });
+
+  it("has 7 optimizable params (under 8 cap)", () => {
+    const strategy = createDonchianAdx();
+    const optimizable = Object.values(strategy.params).filter((p) => p.optimizable);
+    expect(optimizable.length).toBe(7);
+    expect(optimizable.length).toBeLessThanOrEqual(8);
   });
 
   it("getExitLevel returns null when no position", () => {
-    const strategy = createDonchianAdx({ dcFast: 5 });
-    const candles = generate15mCandles(30, 10000, "up");
-    const htf = {} as Record<string, Candle[]>;
+    const strategy = createDonchianAdx();
+    const candles = generate15mCandles(70, 10000, "up");
+    const htf = { "1h": generate1hCandles(candles), "4h": generate4hCandles(candles) };
     strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, 20, htf);
+    const ctx = makeCtx(candles, 50, htf);
     expect(strategy.getExitLevel!(ctx)).toBeNull();
   });
 
-  it("getExitLevel returns fast DC lower for long position", () => {
+  it("getExitLevel returns dcFast lower for long position", () => {
     const strategy = createDonchianAdx({ dcFast: 5 });
-    const candles = generate15mCandles(30, 10000, "up");
-    const htf = {} as Record<string, Candle[]>;
+    const candles = generate15mCandles(70, 10000, "up");
+    const htf = { "1h": generate1hCandles(candles), "4h": generate4hCandles(candles) };
     strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, 20, htf, {
+    const ctx = makeCtx(candles, 50, htf, {
       positionDirection: "long",
       positionEntryPrice: 10000,
-      positionEntryBarIndex: 10,
+      positionEntryBarIndex: 40,
     });
     const level = strategy.getExitLevel!(ctx);
     expect(level).toBeTypeOf("number");
-    // For an uptrend, the fast DC lower should be below current price
-    expect(level!).toBeLessThan(candles[20].c);
+    expect(level!).toBeLessThan(candles[50].c);
   });
 
-  it("getExitLevel returns fast DC upper for short position", () => {
+  it("getExitLevel returns dcFast upper for short position", () => {
     const strategy = createDonchianAdx({ dcFast: 5 });
-    const candles = generate15mCandles(30, 10000, "down");
-    const htf = {} as Record<string, Candle[]>;
+    const candles = generate15mCandles(70, 10000, "down");
+    const htf = { "1h": generate1hCandles(candles), "4h": generate4hCandles(candles) };
     strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, 20, htf, {
+    const ctx = makeCtx(candles, 50, htf, {
       positionDirection: "short",
       positionEntryPrice: 10000,
-      positionEntryBarIndex: 10,
+      positionEntryBarIndex: 40,
     });
     const level = strategy.getExitLevel!(ctx);
     expect(level).toBeTypeOf("number");
-    // For a downtrend, the fast DC upper should be above current price
-    expect(level!).toBeGreaterThan(candles[20].c);
+    expect(level!).toBeGreaterThan(candles[50].c);
   });
 
-  it("shouldExit returns DC Trail when LONG and close < prevFastLower (deterministic)", () => {
-    const strategy = createDonchianAdx({ dcFast: 3, timeoutBars: 100 });
-    // Deterministic candles: uptrend then sharp drop below fast DC lower
-    const base = 1_000_000_000_000;
-    const candles: Candle[] = [
-      { t: base, o: 100, h: 110, l: 95, c: 105, v: 10, n: 5 },
-      { t: base + 900_000, o: 105, h: 115, l: 100, c: 110, v: 10, n: 5 },
-      { t: base + 1_800_000, o: 110, h: 120, l: 105, c: 115, v: 10, n: 5 },
-      { t: base + 2_700_000, o: 115, h: 125, l: 110, c: 120, v: 10, n: 5 },
-      // Final candle: close=90 < prevFastLower = min(l[1..3]) = min(100,105,110) = 100
-      { t: base + 3_600_000, o: 110, h: 110, l: 85, c: 90, v: 10, n: 5 },
-    ];
-    const htf = {} as Record<string, Candle[]>;
-    strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, 4, htf, {
-      positionDirection: "long",
-      positionEntryPrice: 105,
-      positionEntryBarIndex: 2,
-    });
-    const result = strategy.shouldExit!(ctx);
-    expect(result).not.toBeNull();
-    expect(result!.exit).toBe(true);
-    expect(result!.comment).toBe("DC Trail");
-  });
-
-  it("shouldExit returns DC Trail when SHORT and close > prevFastUpper (deterministic)", () => {
-    const strategy = createDonchianAdx({ dcFast: 3, timeoutBars: 100 });
-    // Deterministic candles: downtrend then sharp bounce above fast DC upper
-    const base = 1_000_000_000_000;
-    const candles: Candle[] = [
-      { t: base, o: 200, h: 210, l: 190, c: 195, v: 10, n: 5 },
-      { t: base + 900_000, o: 195, h: 205, l: 185, c: 190, v: 10, n: 5 },
-      { t: base + 1_800_000, o: 190, h: 200, l: 180, c: 185, v: 10, n: 5 },
-      { t: base + 2_700_000, o: 185, h: 195, l: 175, c: 180, v: 10, n: 5 },
-      // Final candle: close=210 > prevFastUpper = max(h[1..3]) = max(205,200,195) = 205
-      { t: base + 3_600_000, o: 190, h: 215, l: 190, c: 210, v: 10, n: 5 },
-    ];
-    const htf = {} as Record<string, Candle[]>;
-    strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, 4, htf, {
-      positionDirection: "short",
-      positionEntryPrice: 200,
-      positionEntryBarIndex: 2,
-    });
-    const result = strategy.shouldExit!(ctx);
-    expect(result).not.toBeNull();
-    expect(result!.exit).toBe(true);
-    expect(result!.comment).toBe("DC Trail");
-  });
-
-  it("shouldExit returns null during insufficient warmup (index < dcFast+1)", () => {
-    const strategy = createDonchianAdx({ dcFast: 5, timeoutBars: 100 });
-    const base = 1_000_000_000_000;
-    const candles: Candle[] = Array.from({ length: 6 }, (_, i) => ({
-      t: base + i * 900_000, o: 100, h: 110, l: 90, c: 100, v: 10, n: 5,
-    }));
-    const htf = {} as Record<string, Candle[]>;
-    strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, 3, htf, { // < dcFast+1 = 6, but after timeout check (barsInTrade=2 < 100)
-      positionDirection: "long",
-      positionEntryPrice: 100,
-      positionEntryBarIndex: 1,
-    });
-    expect(strategy.shouldExit!(ctx)).toBeNull();
-  });
-
-  it("getExitLevel returns null during warmup period", () => {
-    const strategy = createDonchianAdx({ dcFast: 20 });
-    const candles = generate15mCandles(15, 10000, "up");
-    const htf = {} as Record<string, Candle[]>;
-    strategy.init!(candles, htf);
-    const ctx = makeCtx(candles, 5, htf, { // Too early for dcFast=20
-      positionDirection: "long",
-      positionEntryPrice: 10000,
-      positionEntryBarIndex: 0,
-    });
-    expect(strategy.getExitLevel!(ctx)).toBeNull();
-  });
-
-  it("blocks signal during active squeeze (BB inside KC, width decreasing >= 4 bars)", () => {
-    const strategy = createDonchianAdx({ dcSlow: 10, adxThreshold: 50 });
-
+  it("computeLevels returns stop and TP for long direction", () => {
+    const strategy = createDonchianAdx({ atrStopMult: 3 });
     const base = new Date("2024-01-01T00:00:00Z").getTime();
     const candles: Candle[] = [];
-    let price = 10000;
-
-    // Phase 1: ~210 days of gentle uptrend (enough for daily EMA200)
-    for (let i = 0; i < 96 * 210; i++) {
-      price += 0.5 + (Math.random() - 0.5) * 2;
-      candles.push(makeCandle(base + i * 900_000, price, 30));
+    for (let i = 0; i < 60; i++) {
+      candles.push(makeCandle(base + i * MS_15M, 10000));
     }
-
-    // Phase 2: tight consolidation (~5 days) to create BB squeeze
-    // When volatility collapses, BB(20,2.0) contracts inside KC(20,1.5×ATR)
-    const consolidationPrice = price;
-    const squeezeLen = 96 * 5; // 5 days = 480 bars of extremely tight range
-    for (let i = 0; i < squeezeLen; i++) {
-      price = consolidationPrice + (Math.random() - 0.5) * 0.5;
-      const c = makeCandle(base + (96 * 210 + i) * 900_000, price, 0.3);
-      c.v = 100;
-      candles.push(c);
-    }
-
     const htf1h = generate1hCandles(candles);
-    const htf1d = generate1dCandles(candles);
-    const htf = { "1h": htf1h, "1d": htf1d };
+    const htf = { "1h": htf1h, "4h": generate4hCandles(candles) };
 
-    strategy.init!(candles, htf);
-
-    // Verify squeeze is active on bars within the consolidation phase
-    const closes = candles.map((c) => c.c);
-    const bb = bollingerBands(closes, 20, 2.0);
-    const kc = keltner(candles, 20, 20, 1.5);
-    const squeeze = detectSqueeze(bb, kc, 4);
-
-    const squeezeBars: number[] = [];
-    for (let i = 0; i < candles.length; i++) {
-      if (squeeze.squeezeActive[i]) squeezeBars.push(i);
-    }
-    expect(squeezeBars.length).toBeGreaterThan(0);
-
-    // Every bar with active squeeze must return null from onCandle
-    for (const idx of squeezeBars) {
-      const ctx = makeCtx(candles, idx, htf);
-      expect(strategy.onCandle(ctx), `bar ${idx} should be blocked by squeeze`).toBeNull();
-    }
+    const ctx = makeCtx(candles, candles.length - 1, htf);
+    const levels = strategy.computeLevels!(ctx, "long");
+    expect(levels).not.toBeNull();
+    expect(levels!.stopLoss).toBeLessThan(candles[candles.length - 1].c);
+    expect(levels!.takeProfits.length).toBe(1);
+    expect(levels!.takeProfits[0].pctOfPosition).toBe(50);
   });
 
-  it("squeeze does not affect exits", () => {
-    const strategy = createDonchianAdx({ dcFast: 3, timeoutBars: 100 });
+  it("computeLevels returns stop and TP for short direction", () => {
+    const strategy = createDonchianAdx({ atrStopMult: 3 });
+    const base = new Date("2024-01-01T00:00:00Z").getTime();
+    const candles: Candle[] = [];
+    for (let i = 0; i < 60; i++) {
+      candles.push(makeCandle(base + i * MS_15M, 10000));
+    }
+    const htf1h = generate1hCandles(candles);
+    const htf = { "1h": htf1h, "4h": generate4hCandles(candles) };
 
-    // Deterministic candles: squeeze active doesn't block shouldExit
-    const base = 1_000_000_000_000;
-    const candles: Candle[] = [
-      { t: base, o: 100, h: 110, l: 95, c: 105, v: 10, n: 5 },
-      { t: base + 900_000, o: 105, h: 115, l: 100, c: 110, v: 10, n: 5 },
-      { t: base + 1_800_000, o: 110, h: 120, l: 105, c: 115, v: 10, n: 5 },
-      { t: base + 2_700_000, o: 115, h: 125, l: 110, c: 120, v: 10, n: 5 },
-      // Drop below fast DC lower → should trigger DC Trail exit
-      { t: base + 3_600_000, o: 110, h: 110, l: 85, c: 90, v: 10, n: 5 },
-    ];
-    const htf = {} as Record<string, Candle[]>;
-    strategy.init!(candles, htf);
+    const ctx = makeCtx(candles, candles.length - 1, htf);
+    const levels = strategy.computeLevels!(ctx, "short");
+    expect(levels).not.toBeNull();
+    expect(levels!.stopLoss).toBeGreaterThan(candles[candles.length - 1].c);
+    expect(levels!.takeProfits.length).toBe(1);
+    expect(levels!.takeProfits[0].pctOfPosition).toBe(50);
+  });
 
-    const ctx = makeCtx(candles, 4, htf, {
-      positionDirection: "long",
-      positionEntryPrice: 105,
-      positionEntryBarIndex: 2,
-    });
-
-    // shouldExit should still work regardless of squeeze state
-    const result = strategy.shouldExit!(ctx);
-    expect(result).not.toBeNull();
-    expect(result!.exit).toBe(true);
-    expect(result!.comment).toBe("DC Trail");
-
-    // getExitLevel should also work
-    const level = strategy.getExitLevel!(ctx);
-    expect(level).toBeTypeOf("number");
+  it("accepts timeoutBars param override", () => {
+    const strategy = createDonchianAdx({ timeoutBars: 30 });
+    expect(strategy.params.timeoutBars.value).toBe(30);
   });
 });

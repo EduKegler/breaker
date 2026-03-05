@@ -243,6 +243,9 @@ importers:
       cac:
         specifier: ^6.7.14
         version: 6.7.14
+      dotenv:
+        specifier: ^17.3.1
+        version: 17.3.1
       execa:
         specifier: ^9.6.1
         version: 9.6.1

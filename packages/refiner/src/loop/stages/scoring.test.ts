@@ -78,4 +78,47 @@ describe("computeScore", () => {
     const score = computeScore(goodMetrics, 3, 180, { pf: 100, avgR: 0, wr: 0, dd: 0, complexity: 0, sampleConfidence: 0 });
     expect(score.weighted).toBeGreaterThan(0);
   });
+
+  it("clamps all raw component scores to [0, 1]", () => {
+    const catastrophic: Metrics = {
+      totalPnl: -500, numTrades: 177, profitFactor: 0.32,
+      maxDrawdownPct: -50.6, winRate: 30, avgR: -0.26,
+      avgWinR: 0.4, avgLossR: -0.56, maxLossR: -1.7, expectancy: -0.26,
+    };
+    const score = computeScore(catastrophic, 7, 177);
+    for (const [key, val] of Object.entries(score.raw)) {
+      expect(val, `raw.${key} should be >= 0`).toBeGreaterThanOrEqual(0);
+      expect(val, `raw.${key} should be <= 1`).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("handles negative maxDrawdownPct correctly (uses absolute value)", () => {
+    const negDD: Metrics = { ...goodMetrics, maxDrawdownPct: -6 };
+    const posDD: Metrics = { ...goodMetrics, maxDrawdownPct: 6 };
+    const negScore = computeScore(negDD, 3, 180);
+    const posScore = computeScore(posDD, 3, 180);
+    expect(negScore.raw.dd).toBe(posScore.raw.dd);
+  });
+
+  it("scores catastrophic strategy lower than decent strategy", () => {
+    const catastrophic: Metrics = {
+      totalPnl: -505, numTrades: 177, profitFactor: 0.32,
+      maxDrawdownPct: -50.6, winRate: 30.5, avgR: -0.26,
+      avgWinR: 0.4, avgLossR: -0.56, maxLossR: -1.7, expectancy: -0.26,
+    };
+    const decent: Metrics = {
+      totalPnl: 60, numTrades: 26, profitFactor: 1.91,
+      maxDrawdownPct: -5.6, winRate: 61.5, avgR: 0.22,
+      avgWinR: 1.0, avgLossR: -0.3, maxLossR: -1.0, expectancy: 0.22,
+    };
+    const catScore = computeScore(catastrophic, 7, 177);
+    const decScore = computeScore(decent, 6, 26);
+    expect(decScore.weighted).toBeGreaterThan(catScore.weighted);
+  });
+
+  it("clamps negative avgR to 0 score", () => {
+    const negAvgR: Metrics = { ...goodMetrics, avgR: -0.5 };
+    const score = computeScore(negAvgR, 3, 180);
+    expect(score.raw.avgR).toBe(0);
+  });
 });

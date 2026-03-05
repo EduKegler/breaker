@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import pino from "pino";
-import type { DashboardEvent } from "../../types/events.js";
+import type { DashboardEvent, ScoreBreakdown } from "../../types/events.js";
 
 const loggers = new Map<string, pino.Logger>();
 
@@ -39,6 +39,17 @@ export function emitEvent(opts: {
   dd?: number;
   trades?: number;
   message?: string;
+  score?: number;
+  scoreBreakdown?: ScoreBreakdown;
+  wr?: number;
+  avgR?: number;
+  trainPF?: number;
+  testPF?: number;
+  pfRatio?: number;
+  overfitFlag?: boolean;
+  model?: string;
+  durationMs?: number;
+  escalationReason?: string;
 }): void {
   const dir = opts.artifactsDir;
   if (!fs.existsSync(dir)) {
@@ -60,6 +71,17 @@ export function emitEvent(opts: {
     dd: opts.dd ?? 0,
     trades: opts.trades ?? 0,
     message: opts.message ?? "",
+    ...(opts.score !== undefined && { score: opts.score }),
+    ...(opts.scoreBreakdown && { scoreBreakdown: opts.scoreBreakdown }),
+    ...(opts.wr !== undefined && { wr: opts.wr }),
+    ...(opts.avgR !== undefined && { avgR: opts.avgR }),
+    ...(opts.trainPF !== undefined && { trainPF: opts.trainPF }),
+    ...(opts.testPF !== undefined && { testPF: opts.testPF }),
+    ...(opts.pfRatio !== undefined && { pfRatio: opts.pfRatio }),
+    ...(opts.overfitFlag !== undefined && { overfitFlag: opts.overfitFlag }),
+    ...(opts.model && { model: opts.model }),
+    ...(opts.durationMs !== undefined && { durationMs: opts.durationMs }),
+    ...(opts.escalationReason && { escalationReason: opts.escalationReason }),
   };
 
   log.info(event, "");

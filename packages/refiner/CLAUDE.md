@@ -43,7 +43,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 
 ## Known pitfalls
 - Can't run breaker inside Claude Code session (nested session protection); use `unset CLAUDECODE`
-- `run-engine-child.ts` child-process path not yet E2E tested (only in-process path validated)
+- `run-engine-child.ts` child-process path E2E validated (~280ms with 26k candles after init() optimization)
 - `backoffDelay` extracted to `@breaker/kit` — import from kit, not from loop/
 
 ## Build and test (breaker-specific)

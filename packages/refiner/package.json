@@ -22,10 +22,11 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
+    "@breaker/alerts": "workspace:^",
     "@breaker/backtest": "workspace:*",
     "@breaker/kit": "workspace:*",
-    "@breaker/alerts": "workspace:^",
     "cac": "^6.7.14",
+    "dotenv": "^17.3.1",
     "execa": "^9.6.1",
     "jsonrepair": "^3.13.2",
     "pino": "^10.3.1",

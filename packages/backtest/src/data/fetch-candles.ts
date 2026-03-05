@@ -44,7 +44,7 @@ function getExchange(source: DataSource): Exchange {
   let exchange = exchangeCache.get(id);
   if (!exchange) {
     const ExchangeClass = (ccxt as unknown as Record<string, new (config: Record<string, unknown>) => Exchange>)[id];
-    exchange = new ExchangeClass({ enableRateLimit: true });
+    exchange = new ExchangeClass({ enableRateLimit: true, timeout: 30000 });
     exchangeCache.set(id, exchange);
   }
   return exchange;

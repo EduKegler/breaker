@@ -123,8 +123,6 @@ export const breakerMachine = setup({
   },
   actions: {
     resetPhaseCounters: assign({
-      fixAttempts: 0,
-      transientFailures: 0,
       neutralStreak: 0,
       noChangeCount: 0,
       phaseIterCount: 0,

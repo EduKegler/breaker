@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import dotenv from "dotenv";
 import { execaSync } from "execa";
 import writeFileAtomic from "write-file-atomic";
 import { createActor } from "xstate";
@@ -43,7 +44,7 @@ import { paramWriter } from "./stages/param-writer.js";
 import { conductResearch } from "./stages/research.js";
 import { safeJsonParse } from "../lib/safe-json.js";
 import { breakerMachine } from "./state-machine.js";
-import type { Candle, CandleInterval, StrategyParam } from "@breaker/backtest";
+import type { Candle, CandleInterval, Metrics, StrategyParam } from "@breaker/backtest";
 import type { IterationMetadata } from "./stages/param-writer.js";
 import type { IterationState, LoopPhase } from "./types.js";
 
@@ -62,6 +63,9 @@ function countOptimizableParams(params: Record<string, StrategyParam>): number {
  * Main orchestration entry point for the B.R.E.A.K.E.R. optimization loop.
  */
 export async function orchestrate(): Promise<void> {
+  // Load .env from package root (secrets: HL keys, WhatsApp credentials)
+  dotenv.config({ path: path.resolve(import.meta.dirname, "../../.env") });
+
   const startTime = Date.now();
   const partial = parseArgs();
 
@@ -71,6 +75,21 @@ export async function orchestrate(): Promise<void> {
   }
 
   const cfg = buildLoopConfig(partial);
+
+  // Fail fast if WhatsApp notification is not configured
+  const evoUrl = process.env.EVOLUTION_API_URL;
+  const evoKey = process.env.EVOLUTION_API_KEY;
+  const recipient = process.env.WHATSAPP_RECIPIENT;
+  if (!evoUrl || !evoKey || !recipient) {
+    const missing = [
+      !evoUrl && "EVOLUTION_API_URL",
+      !evoKey && "EVOLUTION_API_KEY",
+      !recipient && "WHATSAPP_RECIPIENT",
+    ].filter(Boolean).join(", ");
+    console.error(`Missing required env vars for WhatsApp notifications: ${missing}`);
+    process.exit(1);
+  }
+
   log(`B.R.E.A.K.E.R. starting: asset=${cfg.asset} strategy=${cfg.strategy} maxIter=${cfg.maxIter} runId=${cfg.runId}`);
 
   // Build module context (strategy → KB module mapping)
@@ -209,6 +228,13 @@ export async function orchestrate(): Promise<void> {
     message: `strategy=${cfg.strategy} maxIter=${cfg.maxIter} bestPnl=${initialBestPnl} phase=${initialPhase}`,
   });
 
+  // Save baseline checkpoint (iter 0) if none exists — ensures rollback is always possible
+  if (!existingCheckpoint) {
+    const baselineSource = fs.readFileSync(cfg.strategyFile, "utf8");
+    checkpoint.save(cfg.checkpointDir, baselineSource, {} as Metrics, 0, paramOverrides);
+    log("Saved baseline checkpoint (iter 0) for rollback safety");
+  }
+
   let lastContentHash: string | undefined;
 
   for (let iter = 1; iter <= cfg.maxIter; iter++) {
@@ -241,6 +267,7 @@ export async function orchestrate(): Promise<void> {
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "PHASE_CHANGE", status: "info",
         message: `${prevPhase} -> ${phaseAfterEscalation}`,
+        escalationReason: `neutralStreak=${mCtx.neutralStreak}, noChangeCount=${mCtx.noChangeCount}, phaseCycles=${mCtx.phaseCycles}`,
       });
     }
 
@@ -420,6 +447,15 @@ export async function orchestrate(): Promise<void> {
           log(`Max transient failures (${cfg.maxTransientFailures}) exceeded. Aborting.`);
           break;
         }
+        // Rollback after repeated failures to recover from bad restructure
+        if (mCtxErr.transientFailures >= 2) {
+          const restored = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
+          if (restored) {
+            log("Rolled back to checkpoint after repeated transient failures");
+            actor.send({ type: "SET_NEEDS_REBUILD", value: true });
+            lastContentHash = undefined;
+          }
+        }
         const delay = backoffDelay(mCtxErr.transientFailures);
         log(`Transient error (${mCtxErr.transientFailures}/${cfg.maxTransientFailures}). Waiting ${delay}ms...`);
         await new Promise((r) => setTimeout(r, delay));
@@ -451,12 +487,23 @@ export async function orchestrate(): Promise<void> {
     log(`Backtest OK: PnL=$${currentPnl.toFixed(2)} Trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)} WR=${metrics.winRate?.toFixed(1)}%`);
     log(`Score: ${scoreResult.weighted.toFixed(1)}/100 (${scoreResult.breakdown})`);
 
+    const wf = analysis.walkForward;
     emitEvent({
       artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
       stage: "PARSE_DONE", status: "success",
       pnl: currentPnl, pf: metrics.profitFactor ?? 0,
       dd: metrics.maxDrawdownPct ?? 0, trades: metrics.numTrades ?? 0,
       message: `PnL=$${currentPnl.toFixed(2)} Score=${scoreResult.weighted.toFixed(1)}`,
+      score: scoreResult.weighted,
+      scoreBreakdown: scoreResult.raw,
+      wr: metrics.winRate ?? 0,
+      avgR: metrics.avgR ?? 0,
+      ...(wf ? {
+        trainPF: wf.trainPF ?? undefined,
+        testPF: wf.testPF ?? undefined,
+        pfRatio: wf.pfRatio ?? undefined,
+        overfitFlag: wf.overfitFlag,
+      } : {}),
     });
 
     // ---- Backfill previous iteration's result in parameter-history ----
@@ -542,7 +589,7 @@ export async function orchestrate(): Promise<void> {
       state.bestScore = scoreResult.weighted;
       state.bestPnl = currentPnl;
       state.bestIter = iter;
-      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides);
+      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, trades);
       break;
     }
 
@@ -553,7 +600,7 @@ export async function orchestrate(): Promise<void> {
       state.bestScore = scoreResult.weighted;
       state.bestPnl = currentPnl;
       state.bestIter = iter;
-      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides);
+      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, trades);
       log(`New best: Score=${scoreResult.weighted.toFixed(1)} PnL=$${currentPnl.toFixed(2)} at iter ${iter}`);
     } else if (scoreResult.weighted > bestScore && !meetsMinTrades) {
       log(`Score ${scoreResult.weighted.toFixed(1)} is best but trades=${metrics.numTrades} < minTrades=${cfg.criteria.minTrades} -- not saving checkpoint`);
@@ -615,8 +662,10 @@ export async function orchestrate(): Promise<void> {
       artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
       stage: "OPTIMIZE_START", status: "info",
       message: `phase=${effectivePhase}`,
+      model: optimizeModel,
     });
 
+    const optimizeStartMs = Date.now();
     const optResult = await optimizeStrategy({
       prompt,
       strategyFile: cfg.strategyFile,
@@ -743,19 +792,19 @@ export async function orchestrate(): Promise<void> {
       artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
       stage: "ANALYSIS_DONE", status: "success", pnl: currentPnl,
       message: `Optimized (${effectivePhase}). Score=${scoreResult.weighted.toFixed(1)}.`,
+      model: optimizeModel,
+      durationMs: Date.now() - optimizeStartMs,
     });
   }
 
-  // ---- Restore best checkpoint to working file ----
-  if (state.bestIter > 0) {
-    const restored = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
-    if (restored) {
-      log(`Restored best checkpoint (iter ${state.bestIter}) to working file`);
-    }
-    const bestParams = checkpoint.loadParams(cfg.checkpointDir);
-    if (bestParams) {
-      paramOverrides = bestParams;
-    }
+  // ---- Restore checkpoint to working file (baseline or best) ----
+  const restored = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
+  if (restored) {
+    log(`Restored checkpoint (iter ${state.bestIter}) to working file`);
+  }
+  const restoredParams = checkpoint.loadParams(cfg.checkpointDir);
+  if (restoredParams) {
+    paramOverrides = restoredParams;
   }
 
   // ---- Session Summary ----
@@ -784,20 +833,12 @@ export async function orchestrate(): Promise<void> {
   log("Session summary:");
   console.log(summary);
 
-  // Send WhatsApp summary via @breaker/alerts
-  const evoUrl = process.env.EVOLUTION_API_URL;
-  const evoKey = process.env.EVOLUTION_API_KEY;
-  const recipient = process.env.WHATSAPP_RECIPIENT;
-
-  if (evoUrl && evoKey && recipient) {
-    try {
-      await sendWhatsAppWithRetry(summary);
-      log("WhatsApp summary sent");
-    } catch (err) {
-      log(`WhatsApp send failed: ${(err as Error).message}`);
-    }
-  } else {
-    log("WhatsApp not configured (missing EVOLUTION_API_URL, EVOLUTION_API_KEY, or WHATSAPP_RECIPIENT)");
+  // Send WhatsApp summary via @breaker/alerts (env validated at startup)
+  try {
+    await sendWhatsAppWithRetry(summary, recipient);
+    log("WhatsApp summary sent");
+  } catch (err) {
+    log(`WhatsApp send failed: ${(err as Error).message}`);
   }
 
   // Stop the actor

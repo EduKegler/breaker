@@ -1,40 +1,75 @@
-import type { Candle } from "../../types/candle.js";
 import type { Strategy, StrategyContext, StrategyParam, Signal } from "../../types/strategy.js";
-import { donchian, type DonchianResult } from "../../indicators/donchian.js";
-import { adx, type AdxResult } from "../../indicators/adx.js";
+import type { Candle } from "../../types/candle.js";
+import { donchian } from "../../indicators/donchian.js";
+import { adx } from "../../indicators/adx.js";
 import { ema } from "../../indicators/ema.js";
 import { atr } from "../../indicators/atr.js";
 import { sma } from "../../indicators/sma.js";
-import { bollingerBands } from "../../indicators/bollinger-bands.js";
-import { keltner as keltnerFn } from "../../indicators/keltner.js";
-import { detectSqueeze, type SqueezeResult } from "../../indicators/detect-squeeze.js";
 
 const MS_1H = 3_600_000;
-const MS_1D = 86_400_000;
+const MS_4H = 14_400_000;
 
-interface DonchianAdxParams {
+const TP_R_MULT = 2;  // partial TP at 2R (baked)
+const TP_PCT = 50;     // close 50% at TP
+
+export interface DonchianAdxParams {
   dcSlow: StrategyParam;
   dcFast: StrategyParam;
   adxThreshold: StrategyParam;
   atrStopMult: StrategyParam;
   volMult: StrategyParam;
+  htfEmaPeriod: StrategyParam;
   timeoutBars: StrategyParam;
+  maxTradesDay: StrategyParam;
 }
 
 const DEFAULT_PARAMS: DonchianAdxParams = {
   dcSlow: { value: 50, min: 30, max: 60, step: 5, optimizable: true, description: "Slow Donchian period for entry" },
   dcFast: { value: 20, min: 10, max: 25, step: 5, optimizable: true, description: "Fast Donchian period for trailing exit" },
   adxThreshold: { value: 25, min: 20, max: 35, step: 5, optimizable: true, description: "ADX below this = consolidation" },
-  atrStopMult: { value: 3.0, min: 3.0, max: 5.0, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop (KB §1.6: min 3.0 for breakout)" },
-  volMult: { value: 1.5, min: 1.0, max: 3.0, step: 0.5, optimizable: true, description: "Volume spike multiplier vs SMA(vol, 20) — KB §3.1 rule 3" },
+  atrStopMult: { value: 3, min: 3, max: 5, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop (KB §1.6: min 3.0 for breakout)" },
+  volMult: { value: 1.5, min: 1, max: 3, step: 0.5, optimizable: true, description: "Volume spike multiplier vs SMA(vol, 20) — KB §3.1 rule 3" },
+  htfEmaPeriod: { value: 50, min: 20, max: 200, step: 20, optimizable: true, description: "4H EMA period for regime filter" },
   timeoutBars: { value: 24, min: 24, max: 96, step: 8, optimizable: true, description: "Bars before timeout exit (KB range: 24–96)" },
+  maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
 };
 
 /**
- * Donchian ADX breakout strategy.
+ * Build anti-repaint mapping from source candle indices to last completed HTF bar values.
+ * For each source candle, finds the most recent HTF bar that has completed (bar.t + htfMs <= source.t)
+ * and has a valid (non-NaN) indicator value.
+ */
+function mapHtfToSource(
+  sourceCandles: Candle[],
+  htfCandles: Candle[],
+  htfValues: number[],
+  htfMs: number,
+): number[] {
+  const result = new Array<number>(sourceCandles.length).fill(NaN);
+  let lastValidIdx = -1;
+  let j = 0;
+
+  for (let i = 0; i < sourceCandles.length; i++) {
+    const t = sourceCandles[i].t;
+    while (j < htfCandles.length && htfCandles[j].t + htfMs <= t) {
+      if (!isNaN(htfValues[j])) lastValidIdx = j;
+      j++;
+    }
+    if (lastValidIdx >= 0) {
+      result[i] = htfValues[lastValidIdx];
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Donchian ADX breakout strategy — 4H EMA regime + volume confirmation + partial TP.
  *
- * Entry: Donchian breakout + low ADX (consolidation) + daily EMA regime filter.
- * Exit: Fast Donchian trailing channel.
+ * Entry: Donchian breakout + low ADX (consolidation) + 4H EMA regime filter + volume spike.
+ * Exit: Partial TP at 2R (50%), Donchian fast trail (remaining), timeout fallback.
+ *
+ * Indicators are pre-computed in init() for O(n) total instead of O(n²) per-bar recomputation.
  */
 export function createDonchianAdx(
   paramOverrides?: Partial<Record<keyof DonchianAdxParams, number>>,
@@ -45,144 +80,127 @@ export function createDonchianAdx(
     params[key] = { ...defaultParam, value: override ?? defaultParam.value };
   }
 
-  // Pre-computed indicator caches (populated by init())
-  let dcSlowCache: DonchianResult | null = null;
-  let dcFastCache: DonchianResult | null = null;
-  let adxCache: AdxResult | null = null;
-  let htfAtrCache: number[] | null = null;
-  let dailyEmaCache: number[] | null = null;
-  let volSmaCache: number[] | null = null;
-  let squeezeCache: SqueezeResult | null = null;
-  let htf1hCandles: Candle[] | null = null;
-  let dailyCandles: Candle[] | null = null;
+  // Pre-computed indicator arrays (populated in init())
+  let _dcSlowUpper: number[] = [];
+  let _dcSlowLower: number[] = [];
+  let _dcFastUpper: number[] = [];
+  let _dcFastLower: number[] = [];
+  let _adxArr: number[] = [];
+  let _volSma20: number[] = [];
+  let _atr1h: number[] = [];
+  let _ema4h: number[] = [];
 
   return {
     name: "BTC 15m Breakout — Donchian ADX",
     params,
-    requiredTimeframes: ["1h", "1d"],
-    requiredWarmup: { source: 52, "1h": 15, "1d": 201 },
+    requiredTimeframes: ["1h", "4h"],
+    requiredWarmup: { source: 60, "1h": 15, "4h": 210 },
 
-    init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
-      dcSlowCache = donchian(candles, params.dcSlow.value);
-      dcFastCache = donchian(candles, params.dcFast.value);
-      adxCache = adx(candles, 14);
-      volSmaCache = sma(candles.map((c) => c.v), 20);
+    init(candles: Candle[], higherTimeframes: Record<string, Candle[]>) {
+      // Source timeframe indicators
+      const dcSlow = donchian(candles, params.dcSlow.value);
+      _dcSlowUpper = dcSlow.upper;
+      _dcSlowLower = dcSlow.lower;
 
-      // Squeeze detection: BB(20, 2.0) inside KC(20, 1.5) — KB §7.1 rule 1
-      const closes = candles.map((c) => c.c);
-      const bbResult = bollingerBands(closes, 20, 2.0);
-      const kcResult = keltnerFn(candles, 20, 20, 1.5);
-      squeezeCache = detectSqueeze(bbResult, kcResult, 4);
+      const dcFast = donchian(candles, params.dcFast.value);
+      _dcFastUpper = dcFast.upper;
+      _dcFastLower = dcFast.lower;
 
-      htf1hCandles = higherTimeframes["1h"] ?? [];
-      if (htf1hCandles.length > 0) {
-        htfAtrCache = atr(htf1hCandles, 14);
+      const adxResult = adx(candles, 14);
+      _adxArr = adxResult.adx;
+
+      const volumes = candles.map((c: Candle) => c.v);
+      _volSma20 = sma(volumes, 20);
+
+      // 1H ATR mapped to source indices (anti-repaint)
+      const htf1h = higherTimeframes["1h"];
+      if (htf1h && htf1h.length >= 15) {
+        const htfAtr = atr(htf1h, 14);
+        _atr1h = mapHtfToSource(candles, htf1h, htfAtr, MS_1H);
+      } else {
+        _atr1h = new Array(candles.length).fill(NaN);
       }
 
-      dailyCandles = higherTimeframes["1d"] ?? [];
-      if (dailyCandles.length > 0) {
-        const dailyCloses = dailyCandles.map((c) => c.c);
-        dailyEmaCache = ema(dailyCloses, 200);
+      // 4H EMA mapped to source indices (anti-repaint)
+      const h4 = higherTimeframes["4h"];
+      if (h4 && h4.length >= params.htfEmaPeriod.value + 1) {
+        const h4Closes = h4.map((c: Candle) => c.c);
+        const ema4hArr = ema(h4Closes, params.htfEmaPeriod.value);
+        _ema4h = mapHtfToSource(candles, h4, ema4hArr, MS_4H);
+      } else {
+        _ema4h = new Array(candles.length).fill(NaN);
       }
     },
 
     onCandle(ctx: StrategyContext): Signal | null {
-      const { candles, index, currentCandle, higherTimeframes } = ctx;
+      const { index, currentCandle } = ctx;
       if (index < params.dcSlow.value + 1) return null;
 
-      const adxThresholdVal = params.adxThreshold.value;
-      const atrStopMultVal = params.atrStopMult.value;
-
-      // Use pre-computed caches if available, otherwise compute on the fly
-      const dcSlow = dcSlowCache ?? donchian(candles.slice(0, index + 1), params.dcSlow.value);
-      const prevSlowUpper = dcSlow.upper[index - 1];
-      const prevSlowLower = dcSlow.lower[index - 1];
-
+      const prevSlowUpper = _dcSlowUpper[index - 1];
+      const prevSlowLower = _dcSlowLower[index - 1];
       if (isNaN(prevSlowUpper) || isNaN(prevSlowLower)) return null;
+      ctx.indicator("dcSlowUpper", prevSlowUpper);
+      ctx.indicator("dcSlowLower", prevSlowLower);
 
-      const adxResult = adxCache ?? adx(candles.slice(0, index + 1), 14);
-      const adxVal = adxResult.adx[index];
+      const adxVal = _adxArr[index];
       if (isNaN(adxVal)) return null;
+      ctx.indicator("adx", adxVal);
 
-      // Gate: Active squeeze blocks entries (KB §7.1 rule 1)
-      if (squeezeCache?.squeezeActive[index] ?? false) return null;
+      const currentVolSma = _volSma20[index];
+      const currentVol = currentCandle.v;
+      if (isNaN(currentVolSma)) return null;
+      ctx.indicator("volume", currentVol);
+      ctx.indicator("volSma20", currentVolSma);
 
-      // 1H ATR from higher timeframe — only use COMPLETED bars (Pine: [1] with lookahead_on)
-      const htfCandlesRef = htf1hCandles ?? higherTimeframes["1h"];
-      if (!htfCandlesRef || htfCandlesRef.length < 15) return null;
-
-      const htfAtr = htfAtrCache ?? atr(htfCandlesRef, 14);
-      // A 1H bar starting at t is complete when t + 1H <= currentCandle.t
-      let atr1h = NaN;
-      for (let j = htfCandlesRef.length - 1; j >= 0; j--) {
-        if (htfCandlesRef[j].t + MS_1H <= currentCandle.t && !isNaN(htfAtr[j])) {
-          atr1h = htfAtr[j];
-          break;
-        }
-      }
+      const atr1h = _atr1h[index];
       if (isNaN(atr1h)) return null;
+      ctx.indicator("atr1h", atr1h);
 
-      // Daily EMA 50 regime filter — only use COMPLETED daily bars
-      const dailyCandlesRef = dailyCandles ?? higherTimeframes["1d"];
-      if (!dailyCandlesRef || dailyCandlesRef.length < 201) return null;
+      const htfEma = _ema4h[index];
+      if (isNaN(htfEma)) return null;
+      ctx.indicator("ema4h", htfEma);
 
-      const ema50Daily = dailyEmaCache ?? ema(dailyCandlesRef.map((c) => c.c), 200);
-      // A daily bar starting at t is complete when t + 1D <= currentCandle.t
-      let dailyEma = NaN;
-      for (let j = dailyCandlesRef.length - 1; j >= 0; j--) {
-        if (dailyCandlesRef[j].t + MS_1D <= currentCandle.t && !isNaN(ema50Daily[j])) {
-          dailyEma = ema50Daily[j];
-          break;
-        }
-      }
-      if (isNaN(dailyEma)) return null;
+      const stopDist = atr1h * params.atrStopMult.value;
+      const volThreshold = params.volMult.value * currentVolSma;
 
-      const close = currentCandle.c;
-      const volMult = params.volMult.value;
+      // LONG signal: DC breakout + low ADX + bullish 4H regime + volume spike
+      const longBreakout = currentCandle.c > prevSlowUpper;
+      const longAdx = adxVal < params.adxThreshold.value;
+      const longRegime = currentCandle.c > htfEma;
+      const longVol = currentVol > volThreshold;
 
-      // Volume confirmation (KB §3.1 rule 3): breakout bar must exceed recent avg
-      const volSmaArr = volSmaCache ?? sma(candles.slice(0, index + 1).map((c) => c.v), 20);
-      const avgVol = volSmaArr[index - 1]; // Previous bar SMA to avoid look-ahead
-      const volConfirmed = !isNaN(avgVol) && currentCandle.v > avgVol * volMult;
-
-      const stopDist = atr1h * atrStopMultVal;
-
-      // Register indicator values for diagnostics
-      ctx.indicator('adx', adxVal);
-      ctx.indicator('atr1h', atr1h);
-      ctx.indicator('dailyEma', dailyEma);
-      ctx.indicator('close', close);
-      ctx.indicator('prevSlowUpper', prevSlowUpper);
-      ctx.indicator('prevSlowLower', prevSlowLower);
-
-      // LONG conditions
-      const longBreakout = ctx.track('L:breakout', close > prevSlowUpper, close, prevSlowUpper);
-      const longAdx = ctx.track('L:adx_low', adxVal < adxThresholdVal, adxVal, adxThresholdVal);
-      const longRegime = ctx.track('L:regime_bull', close > dailyEma, close, dailyEma);
-      const longVol = ctx.track('L:vol_confirmed', volConfirmed, currentCandle.v, !isNaN(avgVol) ? avgVol * volMult : NaN);
-
-      if (longBreakout && longAdx && longRegime && longVol) {
+      if (
+        ctx.track("L:dcBreakout", longBreakout, currentCandle.c, prevSlowUpper) &&
+        ctx.track("L:adxLow", longAdx, adxVal, params.adxThreshold.value) &&
+        ctx.track("L:regime", longRegime, currentCandle.c, htfEma) &&
+        ctx.track("L:volSpike", longVol, currentVol, volThreshold)
+      ) {
         return {
           direction: "long",
-          entryPrice: prevSlowUpper,
-          stopLoss: close - stopDist,
-          takeProfits: [], // Uses trailing exit instead
+          entryPrice: null,
+          stopLoss: currentCandle.c - stopDist,
+          takeProfits: [{ price: currentCandle.c + TP_R_MULT * stopDist, pctOfPosition: TP_PCT }],
           comment: "DC breakout long",
         };
       }
 
-      // SHORT conditions
-      const shortBreakout = ctx.track('S:breakout', close < prevSlowLower, close, prevSlowLower);
-      const shortAdx = ctx.track('S:adx_low', adxVal < adxThresholdVal, adxVal, adxThresholdVal);
-      const shortRegime = ctx.track('S:regime_bear', close < dailyEma, close, dailyEma);
-      const shortVol = ctx.track('S:vol_confirmed', volConfirmed, currentCandle.v, !isNaN(avgVol) ? avgVol * volMult : NaN);
+      // SHORT signal: DC breakout + low ADX + bearish 4H regime + volume spike
+      const shortBreakout = currentCandle.c < prevSlowLower;
+      const shortAdx = adxVal < params.adxThreshold.value;
+      const shortRegime = currentCandle.c < htfEma;
+      const shortVol = currentVol > volThreshold;
 
-      if (shortBreakout && shortAdx && shortRegime && shortVol) {
+      if (
+        ctx.track("S:dcBreakout", shortBreakout, currentCandle.c, prevSlowLower) &&
+        ctx.track("S:adxLow", shortAdx, adxVal, params.adxThreshold.value) &&
+        ctx.track("S:regime", shortRegime, currentCandle.c, htfEma) &&
+        ctx.track("S:volSpike", shortVol, currentVol, volThreshold)
+      ) {
         return {
           direction: "short",
-          entryPrice: prevSlowLower,
-          stopLoss: close + stopDist,
-          takeProfits: [],
+          entryPrice: null,
+          stopLoss: currentCandle.c + stopDist,
+          takeProfits: [{ price: currentCandle.c - TP_R_MULT * stopDist, pctOfPosition: TP_PCT }],
           comment: "DC breakout short",
         };
       }
@@ -190,69 +208,77 @@ export function createDonchianAdx(
       return null;
     },
 
-    computeLevels(ctx: StrategyContext, direction: "long" | "short") {
-      const { currentCandle, higherTimeframes } = ctx;
-
-      const htfCandlesRef = htf1hCandles ?? higherTimeframes["1h"];
-      if (!htfCandlesRef || htfCandlesRef.length < 15) return null;
-      const htfAtr = htfAtrCache ?? atr(htfCandlesRef, 14);
-      let atr1h = NaN;
-      for (let j = htfCandlesRef.length - 1; j >= 0; j--) {
-        if (htfCandlesRef[j].t + MS_1H <= currentCandle.t && !isNaN(htfAtr[j])) {
-          atr1h = htfAtr[j]; break;
-        }
-      }
-      if (isNaN(atr1h)) return null;
-
-      const stopDist = atr1h * params.atrStopMult.value;
-      const close = currentCandle.c;
-      return {
-        stopLoss: direction === "long" ? close - stopDist : close + stopDist,
-        takeProfits: [], // Uses trailing exit
-      };
-    },
-
-    getExitLevel(ctx: StrategyContext): number | null {
-      const { candles, index, positionDirection } = ctx;
+    shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
+      const { index, positionDirection, positionEntryBarIndex } = ctx;
       if (!positionDirection || index < params.dcFast.value + 1) return null;
 
-      const dcFast = dcFastCache ?? donchian(candles.slice(0, index + 1), params.dcFast.value);
-      if (positionDirection === "long") return dcFast.lower[index - 1];
-      if (positionDirection === "short") return dcFast.upper[index - 1];
-      return null;
-    },
-
-    shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
-      const { candles, index, positionDirection, positionEntryBarIndex } = ctx;
-      if (!positionDirection || positionEntryBarIndex === null) return null;
-
-      // Timeout check (before trailing exit)
-      const barsInTrade = index - positionEntryBarIndex;
-      if (barsInTrade >= params.timeoutBars.value) {
-        return { exit: true, comment: "Timeout" };
+      // Timeout exit (MANDATORY first check)
+      if (positionEntryBarIndex !== null) {
+        const barsInTrade = index - positionEntryBarIndex;
+        if (barsInTrade >= params.timeoutBars.value) {
+          return { exit: true, comment: "timeout" };
+        }
       }
 
-      if (index < params.dcFast.value + 1) return null;
-
-      const dcFast = dcFastCache ?? donchian(candles.slice(0, index + 1), params.dcFast.value);
-      const prevFastUpper = dcFast.upper[index - 1];
-      const prevFastLower = dcFast.lower[index - 1];
-
+      // Donchian fast trail exit on remaining position
+      const prevFastUpper = _dcFastUpper[index - 1];
+      const prevFastLower = _dcFastLower[index - 1];
       if (isNaN(prevFastUpper) || isNaN(prevFastLower)) return null;
 
-      const currentCandle = candles[index];
+      const currentCandle = ctx.candles[index];
 
-      // Long exit: close below fast Donchian lower
       if (positionDirection === "long" && currentCandle.c < prevFastLower) {
         return { exit: true, comment: "DC Trail" };
       }
 
-      // Short exit: close above fast Donchian upper
       if (positionDirection === "short" && currentCandle.c > prevFastUpper) {
         return { exit: true, comment: "DC Trail" };
       }
 
       return null;
+    },
+
+    getExitLevel(ctx: StrategyContext): number | null {
+      const { index, positionDirection } = ctx;
+      if (!positionDirection || index < params.dcFast.value + 1) return null;
+
+      const prevFastUpper = _dcFastUpper[index - 1];
+      const prevFastLower = _dcFastLower[index - 1];
+      if (isNaN(prevFastUpper) || isNaN(prevFastLower)) return null;
+
+      return positionDirection === "long" ? prevFastLower : prevFastUpper;
+    },
+
+    computeLevels(ctx: StrategyContext, direction: "long" | "short") {
+      const { currentCandle, higherTimeframes } = ctx;
+      const atrStopMultVal = params.atrStopMult.value;
+
+      const htfCandles = higherTimeframes["1h"];
+      if (!htfCandles || htfCandles.length < 15) return null;
+
+      const htfAtr = atr(htfCandles, 14);
+      let atr1h = NaN;
+      for (let j = htfCandles.length - 1; j >= 0; j--) {
+        if (htfCandles[j].t + MS_1H <= currentCandle.t && !isNaN(htfAtr[j])) {
+          atr1h = htfAtr[j];
+          break;
+        }
+      }
+      if (isNaN(atr1h)) return null;
+
+      const stopDist = atr1h * atrStopMultVal;
+
+      if (direction === "long") {
+        return {
+          stopLoss: currentCandle.c - stopDist,
+          takeProfits: [{ price: currentCandle.c + TP_R_MULT * stopDist, pctOfPosition: TP_PCT }],
+        };
+      }
+
+      return {
+        stopLoss: currentCandle.c + stopDist,
+        takeProfits: [{ price: currentCandle.c - TP_R_MULT * stopDist, pctOfPosition: TP_PCT }],
+      };
     },
   };
 }
