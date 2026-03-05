@@ -2,7 +2,7 @@ export interface EquityPoint {
   timestamp: number;
   barIndex: number;
   equity: number;
-  drawdown: number; // 0 to -1 (percentage)
+  drawdown: number; // 0 to -1 fraction (can exceed -1 if equity goes negative)
 }
 
 export class EquityCurve {

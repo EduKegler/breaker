@@ -191,9 +191,12 @@ export function runBacktest(
       }
     }
 
-    // Step 4: Entry signal (only if flat)
+    // Step 4: Entry signal (only if flat and solvent)
     if (positionTracker.isFlat()) {
       barsSinceExit++;
+
+      // Bankruptcy check: stop trading when equity is depleted
+      if (equityCurve.getEquity() <= 0) continue;
 
       const tradingAllowed = checkCanTrade({
         barsSinceExit, cooldownBars: config.cooldownBars,

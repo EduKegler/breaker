@@ -2,7 +2,6 @@
 name: commit
 description: Commit and push changes. Use when the user says "commit", "commit and push", "commita", "commita e pusha", "manda pro git", "salva no git", or wants to commit current changes.
 argument-hint: "[message]"
-disable-model-invocation: true
 allowed-tools: "Bash, Read, Glob, Grep, Edit"
 ---
 

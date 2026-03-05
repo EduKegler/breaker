@@ -713,6 +713,65 @@ describe("duplicate entry orders", () => {
   });
 });
 
+describe("bankruptcy check", () => {
+  it("stops entering new trades when equity drops to zero", () => {
+    const t0 = new Date("2024-06-01T12:00:00Z").getTime();
+    const ms15 = 900_000;
+
+    // Build candles: steady drop so every long trade hits SL
+    // Entry at bar open, SL 10 below → each trade loses $10
+    // With $50 capital, after 5 losing trades equity hits 0
+    const candles: Candle[] = [];
+    for (let i = 0; i < 200; i++) {
+      // Slowly declining price: each bar has a low that hits SL
+      const price = 1000 - i * 0.5;
+      candles.push(makeCandle(
+        t0 + i * ms15,
+        price,
+        price + 2,
+        price - 15, // low always drops 15 below open → SL at -10 always hit
+        price - 1,
+      ));
+    }
+
+    /** Always-long strategy with tight SL (10 below entry). */
+    const losingStrategy: Strategy = {
+      name: "always-lose",
+      params: {},
+      onCandle(ctx: StrategyContext): Signal | null {
+        if (ctx.index < 2) return null;
+        return {
+          direction: "long",
+          entryPrice: null,
+          stopLoss: ctx.currentCandle.c - 10, // $10 risk per trade
+          takeProfits: [],
+          comment: "Losing trade",
+        };
+      },
+    };
+
+    const config: BacktestConfig = {
+      ...DEFAULT_BACKTEST_CONFIG,
+      initialCapital: 50, // Only $50 → bankrupt after ~5 losses
+      riskPerTradeUsd: 10,
+      cooldownBars: 0,
+      maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+      maxDailyLossR: Number.MAX_SAFE_INTEGER,
+      maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
+      execution: { slippageBps: 0, commissionPct: 0, fundingRate8h: 0 },
+    };
+
+    const result = runBacktest(candles, losingStrategy, config);
+
+    // With $50 capital and $10 risk, should stop after ~5 trades
+    // Without bankruptcy check, would keep trading for all 200 bars
+    expect(result.trades.length).toBeLessThanOrEqual(8); // some tolerance for partial fills
+    expect(result.finalEquity).toBeGreaterThanOrEqual(-15); // last open trade may push slightly negative
+    // DD bounded: without fix it was -3000%+, with fix it's ~-100% (last trade may overshoot slightly)
+    expect(result.maxDrawdownPct).toBeGreaterThanOrEqual(-120);
+  });
+});
+
 describe("aggregateCandles", () => {
   it("returns same candles when target equals source", () => {
     const candles = [
