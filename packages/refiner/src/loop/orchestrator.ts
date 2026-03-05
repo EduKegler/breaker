@@ -64,7 +64,7 @@ function countOptimizableParams(params: Record<string, StrategyParam>): number {
  */
 export async function orchestrate(): Promise<void> {
   // Load .env from package root (secrets: HL keys, WhatsApp credentials)
-  dotenv.config({ path: path.resolve(import.meta.dirname, "../../.env") });
+  dotenv.config({ path: path.resolve(import.meta.dirname, "../../.env"), override: true });
 
   const startTime = Date.now();
   const partial = parseArgs();
