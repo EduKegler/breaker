@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { createDonchianAdx } from "./donchian-adx.js";
-import type { StrategyContext } from "../types/strategy.js";
-import type { Candle } from "../types/candle.js";
-import { bollingerBands } from "../indicators/bollinger-bands.js";
-import { keltner } from "../indicators/keltner.js";
-import { detectSqueeze } from "../indicators/detect-squeeze.js";
+import type { StrategyContext } from "../../types/strategy.js";
+import type { Candle } from "../../types/candle.js";
+import { bollingerBands } from "../../indicators/bollinger-bands.js";
+import { keltner } from "../../indicators/keltner.js";
+import { detectSqueeze } from "../../indicators/detect-squeeze.js";
 
 function makeCandle(t: number, price: number, range = 50): Candle {
   return {

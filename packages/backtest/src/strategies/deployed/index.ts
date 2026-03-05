@@ -1,3 +1,2 @@
-export { createDonchianAdx } from "./donchian-adx.js";
-export { createKeltnerRsi2 } from "./keltner-rsi2.js";
-export { createEmaPullback } from "./ema-pullback.js";
+export { createDonchianAdx, createKeltnerRsi2 } from "../btc/deployed/index.js";
+export { createEmaPullback } from "../sol/deployed/index.js";

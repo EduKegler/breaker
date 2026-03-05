@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createEmaPullback } from "./ema-pullback.js";
-import type { StrategyContext } from "../types/strategy.js";
-import type { Candle } from "../types/candle.js";
+import type { StrategyContext } from "../../types/strategy.js";
+import type { Candle } from "../../types/candle.js";
 
 const MS_15M = 900_000;
 const MS_1H = 3_600_000;
@@ -95,7 +95,7 @@ function makeCtx(
 describe("createEmaPullback", () => {
   it("creates strategy with default params", () => {
     const strategy = createEmaPullback();
-    expect(strategy.name).toBe("BTC 15m Pullback — EMA Pullback");
+    expect(strategy.name).toBe("SOL 15m Pullback — EMA Pullback");
     expect(strategy.params.emaFast.value).toBe(9);
     expect(strategy.params.emaSlow.value).toBe(21);
     expect(strategy.params.rsiPeriod.value).toBe(7);

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createKeltnerRsi2 } from "./keltner-rsi2.js";
-import type { StrategyContext } from "../types/strategy.js";
-import type { Candle } from "../types/candle.js";
+import type { StrategyContext } from "../../types/strategy.js";
+import type { Candle } from "../../types/candle.js";
 
 function makeCandle(t: number, price: number, range = 50, volume = 100): Candle {
   return {
