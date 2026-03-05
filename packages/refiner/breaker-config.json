@@ -5,10 +5,9 @@
     "minPF": 1.8,
     "maxDD": 4,
     "minWR": 0,
-    "minAvgR": 0.0,
+    "minAvgR": 0.15,
     "minTradesForFilter": 6
   },
-  "rollbackThreshold": 0.08,
   "modelRouting": {
     "optimize": "claude-sonnet-4-6",
     "restructure": "claude-opus-4-6",
@@ -141,13 +140,19 @@
       "quantifiedstrategies.com",
       "quantpedia.com",
       "quantconnect.com",
+      "quantstart.com",
       "robotwealth.com",
+      "blog.quantinsti.com",
+      "quantra.quantinsti.com",
+      "quantnomad.com",
 
       "pine-script-docs.tradingview.com",
       "www.tradingview.com",
       "luxalgo.com",
       "pinecoders.com",
+      "strategyquant.com",
 
+      "amberdata.io",
       "kaiko.com",
       "glassnode.com",
       "coinalyze.net",

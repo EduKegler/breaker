@@ -39,15 +39,15 @@ interface ParamConstraint {
 
 const MODULE_CONSTRAINTS: Record<string, Record<string, ParamConstraint>> = {
   M1: {
-    // Breakout — 8 var cap, ATR 1H stop
+    // Breakout — 8 var cap, ATR 1H stop, KB §1.6 min mult 3.0
     donchianPeriod:    { min: 10, max: 55 },
     volMultiplier:     { min: 1.0, max: 3.0 },
-    stopAtrMult:       { min: 2.0, max: 5.0 },
+    stopAtrMult:       { min: 3.0, hardFloor: 3.0, max: 5.0 },
     timeoutBars:       { min: 24, max: 96 },
     tpRR:              { min: 1.0, max: 4.0 },
   },
   M2: {
-    // Mean Reversion — 6 var cap, ATR 1H wide/catastrophic stop
+    // Mean Reversion — 6 var cap, ATR 1H wide/catastrophic stop, KB §1.6 min mult 3.0
     kcPeriod:          { min: 10, max: 30 },
     kcMultiplier:      { min: 1.0, max: 3.0 },
     rsi2Long:          { min: 5, max: 25 },
@@ -57,13 +57,13 @@ const MODULE_CONSTRAINTS: Record<string, Record<string, ParamConstraint>> = {
     stopAtrMult:       { min: 3.0, max: 5.0 },
   },
   M3: {
-    // Pullback — 8 var cap, ATR 1H stop as entry filter
+    // Pullback — 8 var cap, ATR 1H stop as entry filter, KB §1.6 min mult 2.5
     emaPeriod:         { min: 20, max: 200 },
     fibUpper:          { min: 38.2, max: 78.6 },
     fibLower:          { min: 23.6, max: 61.8 },
     rsiPeriod:         { min: 7, max: 21 },
     rsiThreshold:      { min: 30, max: 60 },
-    stopAtrMult:       { min: 1.5, max: 4.0 },
+    stopAtrMult:       { min: 2.5, hardFloor: 2.5, max: 4.0 },
     timeoutBars:       { min: 16, max: 64 },
   },
   M4: {

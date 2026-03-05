@@ -601,6 +601,51 @@ function buildOverfitSection(
     );
   }
 
+  // KB §13.3: "Score increasing but trades decreasing drastically → filtering until it finds noise"
+  if (paramHistory?.iterations?.length && paramHistory.iterations.length >= 3) {
+    const lastIters = paramHistory.iterations.slice(-5);
+    const tradeValues = lastIters
+      .map((i) => i.after?.trades)
+      .filter((v): v is number => v !== undefined);
+    if (tradeValues.length >= 3) {
+      const first = tradeValues[0]!;
+      const last = tradeValues[tradeValues.length - 1]!;
+      if (first > 0 && last < first * 0.5) {
+        warnings.push(
+          `TRADE EROSION: trades dropped from ${first} to ${last} over last ${tradeValues.length} iterations. ` +
+          `Strategy may be filtering to noise — fewer trades + better score = classic overfit.`,
+        );
+      }
+    }
+  }
+
+  // KB §13.2: Module-specific session sanity checks
+  if (tradeAnalysis?.bySession) {
+    const sessions = tradeAnalysis.bySession;
+    const moduleId = paramHistory ? undefined : undefined; // module context not available here
+    // MR: should be consistent 24/7 — flag if one session dominates PF
+    if (sessions.Asia && sessions.London && sessions.NY) {
+      const pfs = [
+        { name: "Asia", pf: sessions.Asia.profitFactor, count: sessions.Asia.count },
+        { name: "London", pf: sessions.London.profitFactor, count: sessions.London.count },
+        { name: "NY", pf: sessions.NY.profitFactor, count: sessions.NY.count },
+      ].filter((s) => s.count >= 5);
+
+      if (pfs.length >= 2) {
+        const maxPf = Math.max(...pfs.map((s) => s.pf));
+        const minPf = Math.min(...pfs.map((s) => s.pf));
+        if (maxPf > 0 && minPf < maxPf * 0.3) {
+          const best = pfs.find((s) => s.pf === maxPf)!;
+          const worst = pfs.find((s) => s.pf === minPf)!;
+          warnings.push(
+            `SESSION IMBALANCE: ${best.name} PF=${best.pf} vs ${worst.name} PF=${worst.pf}. ` +
+            `Large session disparity — edge may be fragile or session-specific.`,
+          );
+        }
+      }
+    }
+  }
+
   if (!warnings.length) return "";
   return "## ROBUSTNESS DIAGNOSTIC\n" + warnings.join("\n") + "\n\n";
 }

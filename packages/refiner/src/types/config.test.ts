@@ -16,7 +16,6 @@ describe("BreakerConfigSchema", () => {
   it("accepts valid complete config", () => {
     const result = BreakerConfigSchema.safeParse({
       criteria: { minPF: 1.5, maxDD: 25, minTrades: 50, minWR: 50, minAvgR: 1.0 },
-      rollbackThreshold: 0.15,
       modelRouting: {
         optimize: "claude-sonnet-4-6",
         fix: "claude-haiku-4-5-20251001",
@@ -41,7 +40,6 @@ describe("BreakerConfigSchema", () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     const data = result.data;
-    expect(data.rollbackThreshold).toBeUndefined();
     expect(data.modelRouting.optimize).toBe("claude-sonnet-4-6");
     expect(data.guardrails.maxRiskTradeUsd).toBe(25);
     expect(data.guardrails.globalMaxTradesDay).toBe(5);
@@ -81,12 +79,19 @@ describe("DateRangeSchema", () => {
     }
   });
 
+  it("accepts arbitrary lastN values", () => {
+    for (const v of ["last60", "last120", "last240", "last1"]) {
+      expect(DateRangeSchema.safeParse(v).success).toBe(true);
+    }
+  });
+
   it("accepts custom:YYYY-MM-DD:YYYY-MM-DD", () => {
     expect(DateRangeSchema.safeParse("custom:2025-08-01:2026-02-01").success).toBe(true);
   });
 
-  it("rejects invalid preset", () => {
-    expect(DateRangeSchema.safeParse("last60").success).toBe(false);
+  it("rejects invalid format", () => {
+    expect(DateRangeSchema.safeParse("last").success).toBe(false);
+    expect(DateRangeSchema.safeParse("something").success).toBe(false);
   });
 
   it("rejects custom with missing end date", () => {
@@ -207,7 +212,7 @@ describe("StrategyEntrySchema", () => {
 
   it("rejects entry with invalid dateRange", () => {
     const result = StrategyEntrySchema.safeParse({
-      dateRange: "last60",
+      dateRange: "invalid-range",
     });
     expect(result.success).toBe(false);
   });

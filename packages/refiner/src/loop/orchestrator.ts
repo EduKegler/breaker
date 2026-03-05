@@ -38,7 +38,7 @@ import { computeScore } from "./stages/scoring.js";
 import { compareScores } from "./stages/compare-scores.js";
 import { buildOptimizePrompt } from "../automation/build-optimize-prompt.js";
 import { buildFixPrompt } from "../automation/build-fix-prompt.js";
-import { buildModuleContext } from "../lib/build-module-context.js";
+import { buildModuleContext, MODULE_CRITERIA } from "../lib/build-module-context.js";
 import { paramWriter } from "./stages/param-writer.js";
 import { conductResearch } from "./stages/research.js";
 import { safeJsonParse } from "../lib/safe-json.js";
@@ -76,6 +76,31 @@ export async function orchestrate(): Promise<void> {
   // Build module context (strategy → KB module mapping)
   const kbPath = path.join(cfg.repoRoot, "docs/knowledge-base.md");
   const moduleContext = buildModuleContext(cfg, kbPath);
+
+  // Enforce KB §10.2: config must be at least as strict as KB module floors
+  const kbFloor = MODULE_CRITERIA[moduleContext.moduleId];
+  if (kbFloor) {
+    if (cfg.criteria.minPF !== undefined && cfg.criteria.minPF < kbFloor.minPF) {
+      log(`KB floor override: minPF ${cfg.criteria.minPF} → ${kbFloor.minPF} (${moduleContext.moduleId})`);
+      cfg.criteria.minPF = kbFloor.minPF;
+    }
+    if (cfg.criteria.maxDD !== undefined && cfg.criteria.maxDD > kbFloor.maxDD) {
+      log(`KB floor override: maxDD ${cfg.criteria.maxDD} → ${kbFloor.maxDD} (${moduleContext.moduleId})`);
+      cfg.criteria.maxDD = kbFloor.maxDD;
+    }
+    if (cfg.criteria.minTrades !== undefined && cfg.criteria.minTrades < kbFloor.minTrades) {
+      log(`KB floor override: minTrades ${cfg.criteria.minTrades} → ${kbFloor.minTrades} (${moduleContext.moduleId})`);
+      cfg.criteria.minTrades = kbFloor.minTrades;
+    }
+    if (kbFloor.minWR !== null && (cfg.criteria.minWR ?? 0) < kbFloor.minWR) {
+      log(`KB floor override: minWR ${cfg.criteria.minWR ?? 0} → ${kbFloor.minWR} (${moduleContext.moduleId})`);
+      cfg.criteria.minWR = kbFloor.minWR;
+    }
+    if (kbFloor.minAvgR !== null && (cfg.criteria.minAvgR ?? 0) < kbFloor.minAvgR) {
+      log(`KB floor override: minAvgR ${cfg.criteria.minAvgR ?? 0} → ${kbFloor.minAvgR} (${moduleContext.moduleId})`);
+      cfg.criteria.minAvgR = kbFloor.minAvgR;
+    }
+  }
 
   // Resolve strategy source file
   cfg.strategyFile = getStrategySourcePath(cfg.repoRoot, cfg.strategyFactory);
@@ -502,8 +527,8 @@ export async function orchestrate(): Promise<void> {
       verdict,
     });
 
-    // ---- Step 3: Criteria check ----
-    if (checkCriteria(metrics, cfg.criteria)) {
+    // ---- Step 3: Criteria check (includes WF overfitFlag per KB §10.1) ----
+    if (checkCriteria(metrics, cfg.criteria, analysis.walkForward)) {
       log(`ALL CRITERIA PASSED at iter ${iter}!`);
       emitEvent({
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,

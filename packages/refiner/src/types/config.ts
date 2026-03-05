@@ -3,8 +3,8 @@ import { z } from "zod";
 // --- Zod Schemas ---
 
 export const DateRangeSchema = z.string().regex(
-  /^(last7|last30|last90|last365|all|custom:\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2})$/,
-  "Must be last7|last30|last90|last365|all|custom:YYYY-MM-DD:YYYY-MM-DD",
+  /^(last\d+|all|custom:\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2})$/,
+  "Must be last<N>|all|custom:YYYY-MM-DD:YYYY-MM-DD",
 );
 
 const AssetClassCriteriaSchema = z.object({
@@ -100,7 +100,6 @@ export const BreakerConfigSchema = z
   .object({
     criteria: CriteriaSchema.default({}),
     dateRange: DateRangeSchema.default("last365"),
-    rollbackThreshold: z.number().min(0).max(1).optional(), // legacy: unused, rollback uses score-based compareScores()
     modelRouting: ModelRoutingSchema.default({
       optimize: "claude-sonnet-4-6",
       fix: "claude-haiku-4-5-20251001",

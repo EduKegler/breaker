@@ -15,7 +15,6 @@ describe("loadConfig", () => {
   it("parses a valid config with all fields", () => {
     const configPath = writeTempConfig({
       criteria: { minTrades: 150, minPF: 1.25, maxDD: 12, minWR: 20, minAvgR: 0.15, minTradesForFilter: 6 },
-      rollbackThreshold: 0.15,
       modelRouting: { optimize: "claude-sonnet-4-6", fix: "claude-haiku-4-5-20251001", plan: "claude-opus-4-6" },
       assetClasses: {
         "crypto-major": { minPF: 1.25, maxDD: 12, minTrades: 150, minWR: 20, minAvgR: 0.15 },
@@ -52,7 +51,6 @@ describe("loadConfig", () => {
     const { config } = loadConfig(configPath);
 
     expect(config.criteria).toEqual({});
-    expect(config.rollbackThreshold).toBeUndefined();
     expect(config.modelRouting.optimize).toBe("claude-sonnet-4-6");
     expect(config.guardrails.maxRiskTradeUsd).toBe(25);
     expect(config.assets).toEqual({});
@@ -68,11 +66,6 @@ describe("loadConfig", () => {
 
   it("throws for nonexistent file", () => {
     expect(() => loadConfig("/tmp/nonexistent-breaker-config-xyz.json")).toThrow();
-  });
-
-  it("rejects rollbackThreshold outside 0-1 range", () => {
-    const configPath = writeTempConfig({ rollbackThreshold: 1.5 });
-    expect(() => loadConfig(configPath)).toThrow();
   });
 
   it("rejects asset referencing undefined class", () => {
