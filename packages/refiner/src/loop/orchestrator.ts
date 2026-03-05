@@ -819,6 +819,11 @@ export async function orchestrate(): Promise<void> {
       const structureViolations = validateStrategyStructure(afterSource);
       if (structureViolations.length > 0) {
         log(`Structural guardrail violations: ${structureViolations.map((v) => v.reason).join("; ")} — rejecting`);
+        // Revert strategy file to checkpoint and clear needsRebuild so next
+        // iteration doesn't run the rejected restructured code.
+        checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
+        actor.send({ type: "SET_NEEDS_REBUILD", value: false });
+        log("Reverted strategy to checkpoint after structural guardrail rejection");
         emitEvent({
           artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
           stage: "GUARDRAIL_VIOLATION", status: "warn",

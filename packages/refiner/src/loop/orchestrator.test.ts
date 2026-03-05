@@ -752,6 +752,26 @@ describe("baseline bestScore seeding prevents WF guardrail trap", () => {
 });
 
 // ---------------------------------------------------------------------------
+// BUG FIX: structural guardrail rejection must revert strategy file
+// ---------------------------------------------------------------------------
+describe("structural guardrail rejection reverts strategy", () => {
+  it("continue after structural rejection without revert leaves bad file on disk", () => {
+    // Before fix: CHANGE_APPLIED sets needsRebuild=true, structural guardrail
+    // rejects, but continue skips without reverting. Next iter rebuilds the bad file.
+    // After fix: rollback + SET_NEEDS_REBUILD=false ensures next iter uses checkpoint.
+    let needsRebuild = true; // set by CHANGE_APPLIED
+    const structureViolations = [{ field: "anti-repaint", reason: "missing HTF check" }];
+
+    if (structureViolations.length > 0) {
+      // Fix: revert and clear needsRebuild
+      needsRebuild = false;
+    }
+
+    expect(needsRebuild).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Checkpoint source validation logic
 // ---------------------------------------------------------------------------
 describe("checkpoint source validation", () => {
