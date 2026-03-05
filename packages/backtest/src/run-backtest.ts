@@ -139,6 +139,8 @@ async function main(): Promise<void> {
   console.log(`Win Rate: ${metrics.winRate?.toFixed(1) ?? "N/A"}%`);
   console.log(`Max Drawdown: ${metrics.maxDrawdownPct?.toFixed(2) ?? "N/A"}%`);
   console.log(`Avg R: ${metrics.avgR?.toFixed(2) ?? "N/A"}`);
+  console.log(`Avg Win R: ${metrics.avgWinR?.toFixed(2) ?? "N/A"} | Avg Loss R: ${metrics.avgLossR?.toFixed(2) ?? "N/A"} | Max Loss R: ${metrics.maxLossR?.toFixed(2) ?? "N/A"}`);
+  console.log(`Expectancy: ${metrics.expectancy?.toFixed(3) ?? "N/A"}R per trade`);
   console.log(`Final Equity: $${result.finalEquity.toFixed(2)}`);
 
   if (analysis.byDirection["Long"]) {

@@ -713,17 +713,13 @@ describe("duplicate entry orders", () => {
   });
 });
 
-describe("bankruptcy check", () => {
-  it("stops entering new trades when equity drops to zero", () => {
-    const t0 = new Date("2024-06-01T12:00:00Z").getTime();
-    const ms15 = 900_000;
+describe("equity floor", () => {
+  const t0 = new Date("2024-06-01T12:00:00Z").getTime();
+  const ms15 = 900_000;
 
-    // Build candles: steady drop so every long trade hits SL
-    // Entry at bar open, SL 10 below → each trade loses $10
-    // With $50 capital, after 5 losing trades equity hits 0
+  function makeDecliningCandles(count: number): Candle[] {
     const candles: Candle[] = [];
-    for (let i = 0; i < 200; i++) {
-      // Slowly declining price: each bar has a low that hits SL
+    for (let i = 0; i < count; i++) {
       const price = 1000 - i * 0.5;
       candles.push(makeCandle(
         t0 + i * ms15,
@@ -733,42 +729,59 @@ describe("bankruptcy check", () => {
         price - 1,
       ));
     }
+    return candles;
+  }
 
-    /** Always-long strategy with tight SL (10 below entry). */
-    const losingStrategy: Strategy = {
-      name: "always-lose",
-      params: {},
-      onCandle(ctx: StrategyContext): Signal | null {
-        if (ctx.index < 2) return null;
-        return {
-          direction: "long",
-          entryPrice: null,
-          stopLoss: ctx.currentCandle.c - 10, // $10 risk per trade
-          takeProfits: [],
-          comment: "Losing trade",
-        };
-      },
-    };
+  /** Always-long strategy with tight SL (10 below entry). */
+  const losingStrategy: Strategy = {
+    name: "always-lose",
+    params: {},
+    onCandle(ctx: StrategyContext): Signal | null {
+      if (ctx.index < 2) return null;
+      return {
+        direction: "long",
+        entryPrice: null,
+        stopLoss: ctx.currentCandle.c - 10, // $10 risk per trade
+        takeProfits: [],
+        comment: "Losing trade",
+      };
+    },
+  };
 
-    const config: BacktestConfig = {
-      ...DEFAULT_BACKTEST_CONFIG,
-      initialCapital: 50, // Only $50 → bankrupt after ~5 losses
-      riskPerTradeUsd: 10,
-      cooldownBars: 0,
-      maxTradesPerDay: Number.MAX_SAFE_INTEGER,
-      maxDailyLossR: Number.MAX_SAFE_INTEGER,
-      maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
-      execution: { slippageBps: 0, commissionPct: 0, fundingRate8h: 0 },
-    };
+  const baseConfig: BacktestConfig = {
+    ...DEFAULT_BACKTEST_CONFIG,
+    initialCapital: 100,
+    riskPerTradeUsd: 10,
+    cooldownBars: 0,
+    maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+    maxDailyLossR: Number.MAX_SAFE_INTEGER,
+    maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
+    execution: { slippageBps: 0, commissionPct: 0, fundingRate8h: 0 },
+  };
 
-    const result = runBacktest(candles, losingStrategy, config);
+  it("stops trading when equity falls below 20% of initial capital (default)", () => {
+    const candles = makeDecliningCandles(200);
+    const result = runBacktest(candles, losingStrategy, baseConfig);
 
-    // With $50 capital and $10 risk, should stop after ~5 trades
-    // Without bankruptcy check, would keep trading for all 200 bars
-    expect(result.trades.length).toBeLessThanOrEqual(8); // some tolerance for partial fills
-    expect(result.finalEquity).toBeGreaterThanOrEqual(-15); // last open trade may push slightly negative
-    // DD bounded: without fix it was -3000%+, with fix it's ~-100% (last trade may overshoot slightly)
-    expect(result.maxDrawdownPct).toBeGreaterThanOrEqual(-120);
+    // $100 capital, 20% floor = $20. With $10 risk/trade, ~8 losses to hit floor.
+    // Should stop well before exhausting all 200 bars.
+    expect(result.trades.length).toBeLessThanOrEqual(12);
+    // Equity should stay near the floor, not go to zero
+    expect(result.finalEquity).toBeGreaterThanOrEqual(0);
+  });
+
+  it("respects custom equityFloorPct", () => {
+    const candles = makeDecliningCandles(200);
+    // 50% floor = $50 → should stop after ~5 losses
+    const config50 = { ...baseConfig, equityFloorPct: 0.5 };
+    const result50 = runBacktest(candles, losingStrategy, config50);
+
+    // 0% floor = effectively disabled → runs until equity <= 0
+    const config0 = { ...baseConfig, equityFloorPct: 0 };
+    const result0 = runBacktest(candles, losingStrategy, config0);
+
+    expect(result50.trades.length).toBeLessThan(result0.trades.length);
+    expect(result50.finalEquity).toBeGreaterThan(result0.finalEquity);
   });
 });
 

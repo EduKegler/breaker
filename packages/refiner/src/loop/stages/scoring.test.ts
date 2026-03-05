@@ -10,6 +10,10 @@ describe("computeScore", () => {
     maxDrawdownPct: 6,
     winRate: 25,
     avgR: 0.3,
+    avgWinR: 1.5,
+    avgLossR: -0.7,
+    maxLossR: -1.2,
+    expectancy: 0.3,
   };
 
   it("returns score in 0-100 range", () => {
@@ -21,7 +25,7 @@ describe("computeScore", () => {
   it("returns higher score for better metrics", () => {
     const good = computeScore(goodMetrics, 3, 200);
     const bad = computeScore(
-      { totalPnl: 50, numTrades: 80, profitFactor: 0.8, maxDrawdownPct: 20, winRate: 15, avgR: 0.05 },
+      { totalPnl: 50, numTrades: 80, profitFactor: 0.8, maxDrawdownPct: 20, winRate: 15, avgR: 0.05, avgWinR: 0.5, avgLossR: -0.4, maxLossR: -1.0, expectancy: -0.1 },
       3,
       80,
     );
@@ -55,6 +59,10 @@ describe("computeScore", () => {
       maxDrawdownPct: null,
       winRate: null,
       avgR: null,
+      avgWinR: null,
+      avgLossR: null,
+      maxLossR: null,
+      expectancy: null,
     };
     const score = computeScore(nullMetrics, 0, 0);
     expect(score.weighted).toBeGreaterThanOrEqual(0);

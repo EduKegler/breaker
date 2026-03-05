@@ -26,6 +26,7 @@ export interface BacktestConfig {
   maxDailyLossR: number;
   maxGlobalTradesDay: number;
   cooldownBars: number;
+  equityFloorPct: number;
 }
 
 export const DEFAULT_BACKTEST_CONFIG: BacktestConfig = {
@@ -38,6 +39,7 @@ export const DEFAULT_BACKTEST_CONFIG: BacktestConfig = {
   maxDailyLossR: 2,
   maxGlobalTradesDay: 5,
   cooldownBars: 4,
+  equityFloorPct: 0.2,
 };
 
 export interface BacktestResult {
@@ -195,8 +197,8 @@ export function runBacktest(
     if (positionTracker.isFlat()) {
       barsSinceExit++;
 
-      // Bankruptcy check: stop trading when equity is depleted
-      if (equityCurve.getEquity() <= 0) continue;
+      // Equity floor: stop trading when account is effectively dead
+      if (equityCurve.getEquity() <= config.initialCapital * config.equityFloorPct) continue;
 
       const tradingAllowed = checkCanTrade({
         barsSinceExit, cooldownBars: config.cooldownBars,

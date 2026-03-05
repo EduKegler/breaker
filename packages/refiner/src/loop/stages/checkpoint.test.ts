@@ -20,6 +20,10 @@ const sampleMetrics: Metrics = {
   maxDrawdownPct: 6.11,
   winRate: 21.3,
   avgR: 0.257,
+  avgWinR: 1.5,
+  avgLossR: -0.7,
+  maxLossR: -1.2,
+  expectancy: 0.257,
 };
 
 describe("checkpoint.save / checkpoint.load", () => {

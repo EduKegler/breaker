@@ -72,4 +72,47 @@ describe("computeMetrics", () => {
     expect(metrics.winRate).toBe(100);
     expect(metrics.totalPnl).toBe(5);
   });
+
+  it("computes R-multiple diagnostics for mixed trades", () => {
+    const trades = [
+      makeTrade(10, 2),   // win
+      makeTrade(-5, -1),  // loss
+      makeTrade(15, 3),   // win
+      makeTrade(-3, -0.5),// loss
+    ];
+    const metrics = computeMetrics(trades, -10);
+
+    expect(metrics.avgWinR).toBeCloseTo(2.5, 5);    // (2+3)/2
+    expect(metrics.avgLossR).toBeCloseTo(-0.75, 5);  // (-1+-0.5)/2
+    expect(metrics.maxLossR).toBeCloseTo(-1, 5);
+    // expectancy = avgWin*wr + avgLoss*(1-wr) in R-units
+    // = 2.5*0.5 + (-0.75)*0.5 = 0.875
+    expect(metrics.expectancy).toBeCloseTo(0.875, 5);
+  });
+
+  it("R-diagnostics are null for empty trades", () => {
+    const metrics = computeMetrics([], -5);
+    expect(metrics.avgWinR).toBeNull();
+    expect(metrics.avgLossR).toBeNull();
+    expect(metrics.maxLossR).toBeNull();
+    expect(metrics.expectancy).toBeNull();
+  });
+
+  it("R-diagnostics handle all winners", () => {
+    const trades = [makeTrade(10, 2), makeTrade(20, 4)];
+    const metrics = computeMetrics(trades, 0);
+    expect(metrics.avgWinR).toBeCloseTo(3, 5);
+    expect(metrics.avgLossR).toBeNull();
+    expect(metrics.maxLossR).toBeNull();
+    expect(metrics.expectancy).toBeCloseTo(3, 5); // all wins → expectancy = avgWinR
+  });
+
+  it("R-diagnostics handle all losers", () => {
+    const trades = [makeTrade(-10, -2), makeTrade(-20, -4)];
+    const metrics = computeMetrics(trades, -50);
+    expect(metrics.avgWinR).toBeNull();
+    expect(metrics.avgLossR).toBeCloseTo(-3, 5);
+    expect(metrics.maxLossR).toBeCloseTo(-4, 5);
+    expect(metrics.expectancy).toBeCloseTo(-3, 5); // all losses → expectancy = avgLossR
+  });
 });

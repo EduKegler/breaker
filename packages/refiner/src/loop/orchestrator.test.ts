@@ -223,6 +223,10 @@ describe("checkCriteria", () => {
     maxDrawdownPct: 5,
     winRate: 45,
     avgR: 0.3,
+    avgWinR: 1.5,
+    avgLossR: -0.7,
+    maxLossR: -1.2,
+    expectancy: 0.3,
   };
 
   const criteria = {
@@ -273,6 +277,10 @@ describe("checkCriteria", () => {
       maxDrawdownPct: null,
       winRate: null,
       avgR: null,
+      avgWinR: null,
+      avgLossR: null,
+      maxLossR: null,
+      expectancy: null,
     };
     expect(checkCriteria(nullMetrics, criteria)).toBe(false);
   });
@@ -544,6 +552,7 @@ describe("bestScore restoration from checkpoint", () => {
     const checkpointMetrics = {
       totalPnl: 500, numTrades: 200, profitFactor: 2.0,
       maxDrawdownPct: 5, winRate: 35, avgR: 0.25,
+      avgWinR: 1.5, avgLossR: -0.7, maxLossR: -1.2, expectancy: 0.25,
     };
     const score = computeScore(checkpointMetrics, 8, checkpointMetrics.numTrades, cfg.scoring.weights);
     expect(score.weighted).toBeGreaterThan(0);
@@ -553,12 +562,14 @@ describe("bestScore restoration from checkpoint", () => {
     const checkpointMetrics = {
       totalPnl: 500, numTrades: 200, profitFactor: 2.0,
       maxDrawdownPct: 5, winRate: 35, avgR: 0.25,
+      avgWinR: 1.5, avgLossR: -0.7, maxLossR: -1.2, expectancy: 0.25,
     };
     const cpScore = computeScore(checkpointMetrics, 8, 200, cfg.scoring.weights);
 
     const iterMetrics = {
       totalPnl: 100, numTrades: 80, profitFactor: 1.1,
       maxDrawdownPct: 10, winRate: 22, avgR: 0.08,
+      avgWinR: 0.5, avgLossR: -0.4, maxLossR: -0.9, expectancy: -0.1,
     };
     const iterScore = computeScore(iterMetrics, 8, 80, cfg.scoring.weights);
 

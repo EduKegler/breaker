@@ -17,6 +17,10 @@ export function computeMetrics(
       maxDrawdownPct: maxDrawdownPct,
       winRate: null,
       avgR: null,
+      avgWinR: null,
+      avgLossR: null,
+      maxLossR: null,
+      expectancy: null,
     };
   }
 
@@ -31,6 +35,18 @@ export function computeMetrics(
   const winRate = (wins.length / trades.length) * 100;
   const avgR = trades.reduce((sum, t) => sum + t.rMultiple, 0) / trades.length;
 
+  const avgWinR = wins.length > 0
+    ? wins.reduce((sum, t) => sum + t.rMultiple, 0) / wins.length
+    : null;
+  const avgLossR = losses.length > 0
+    ? losses.reduce((sum, t) => sum + t.rMultiple, 0) / losses.length
+    : null;
+  const maxLossR = losses.length > 0
+    ? Math.min(...losses.map((t) => t.rMultiple))
+    : null;
+  const wr = wins.length / trades.length;
+  const expectancy = (avgWinR ?? 0) * wr + (avgLossR ?? 0) * (1 - wr);
+
   return {
     totalPnl,
     numTrades: trades.length,
@@ -38,5 +54,9 @@ export function computeMetrics(
     maxDrawdownPct,
     winRate,
     avgR,
+    avgWinR,
+    avgLossR,
+    maxLossR,
+    expectancy,
   };
 }

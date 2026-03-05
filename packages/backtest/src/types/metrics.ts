@@ -7,6 +7,10 @@ export interface Metrics {
   maxDrawdownPct: number | null;
   winRate: number | null;
   avgR: number | null;
+  avgWinR: number | null;
+  avgLossR: number | null;
+  maxLossR: number | null;
+  expectancy: number | null;
 }
 
 export interface Thresholds {
