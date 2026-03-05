@@ -144,6 +144,14 @@ export function createEmaPullback(
         close > currEmaSlow &&
         currRsi > rsiOversold
       ) {
+        // KB §5.1 rule 3: Structural confirmation — close above pullback high
+        let pullbackHigh = -Infinity;
+        for (let i = index - 1; i >= 0; i--) {
+          if (isNaN(emaFastArr[i]) || candles[i].c >= emaFastArr[i]) break;
+          pullbackHigh = Math.max(pullbackHigh, candles[i].h);
+        }
+        if (close <= pullbackHigh) return null;
+
         return {
           direction: "long",
           entryPrice: null,
@@ -161,6 +169,14 @@ export function createEmaPullback(
         close < currEmaSlow &&
         currRsi < rsiOverbought
       ) {
+        // KB §5.1 rule 3: Structural confirmation — close below pullback low
+        let pullbackLow = Infinity;
+        for (let i = index - 1; i >= 0; i--) {
+          if (isNaN(emaFastArr[i]) || candles[i].c <= emaFastArr[i]) break;
+          pullbackLow = Math.min(pullbackLow, candles[i].l);
+        }
+        if (close >= pullbackLow) return null;
+
         return {
           direction: "short",
           entryPrice: null,

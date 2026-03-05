@@ -484,4 +484,122 @@ describe("createEmaPullback", () => {
     const ctx = makeCtx(candles, 50, htf);
     expect(() => strategy.onCandle(ctx)).not.toThrow();
   });
+
+  describe("structural pullback confirmation (KB §5.1 rule 3)", () => {
+    // Build long dataset with controlled pullback range (affects high values)
+    function buildLongDataset(pullbackRange: number, recoveryOffset: number) {
+      const strategy = createEmaPullback({ emaFast: 5, emaSlow: 10, rsiPeriod: 5, rsiOversold: 20 });
+      const base = new Date("2024-01-01T00:00:00Z").getTime();
+      const candles: Candle[] = [];
+      let price = 100;
+
+      // Phase 1: strong uptrend for 30 days (4H EMA 21 warmup)
+      for (let i = 0; i < 96 * 30; i++) {
+        price += 0.3 + (Math.random() - 0.5) * 0.5;
+        candles.push(makeCandle(base + i * MS_15M, price, 2));
+      }
+
+      const peakPrice = price;
+
+      // Phase 2: pullback — close drops below EMA fast, range controls high values
+      for (let i = 0; i < 8; i++) {
+        price = peakPrice - 5 - i * 0.5;
+        candles.push(makeCandle(base + (96 * 30 + i) * MS_15M, price, pullbackRange));
+      }
+
+      // Phase 3: recovery — close crosses back above EMA fast
+      for (let i = 0; i < 4; i++) {
+        price = peakPrice + recoveryOffset + i * 0.5;
+        candles.push(makeCandle(base + (96 * 30 + 8 + i) * MS_15M, price, 2));
+      }
+
+      const htf1h = generate1hCandles(candles);
+      const htf4h = generate4hCandles(candles);
+      const htf = { "1h": htf1h, "4h": htf4h };
+      strategy.init!(candles, htf);
+      return { strategy, candles, htf };
+    }
+
+    // Build short dataset with controlled pullback range (affects low values)
+    function buildShortDataset(pullbackRange: number, recoveryOffset: number) {
+      const strategy = createEmaPullback({ emaFast: 5, emaSlow: 10, rsiPeriod: 5, rsiOversold: 20 });
+      const base = new Date("2024-01-01T00:00:00Z").getTime();
+      const candles: Candle[] = [];
+      let price = 500;
+
+      // Phase 1: strong downtrend for 30 days
+      for (let i = 0; i < 96 * 30; i++) {
+        price -= 0.3 + (Math.random() - 0.5) * 0.5;
+        candles.push(makeCandle(base + i * MS_15M, price, 2));
+      }
+
+      const troughPrice = price;
+
+      // Phase 2: pullback up — close rises above EMA fast, range controls low values
+      for (let i = 0; i < 8; i++) {
+        price = troughPrice + 5 + i * 0.5;
+        candles.push(makeCandle(base + (96 * 30 + i) * MS_15M, price, pullbackRange));
+      }
+
+      // Phase 3: resumption — close drops back below EMA fast
+      for (let i = 0; i < 4; i++) {
+        price = troughPrice - recoveryOffset - i * 0.5;
+        candles.push(makeCandle(base + (96 * 30 + 8 + i) * MS_15M, price, 2));
+      }
+
+      const htf1h = generate1hCandles(candles);
+      const htf4h = generate4hCandles(candles);
+      const htf = { "1h": htf1h, "4h": htf4h };
+      strategy.init!(candles, htf);
+      return { strategy, candles, htf };
+    }
+
+    it("long: rejected when close <= pullback high", () => {
+      // pullbackRange=20 → high = close + 10 ≈ peakPrice + 5
+      // recovery close ≈ peakPrice + 2 → close <= pullbackHigh → no signal
+      const { strategy, candles, htf } = buildLongDataset(20, 2);
+      let found = false;
+      for (let i = Math.max(candles.length - 50, 100); i < candles.length; i++) {
+        const signal = strategy.onCandle(makeCtx(candles, i, htf));
+        if (signal?.direction === "long") { found = true; break; }
+      }
+      expect(found).toBe(false);
+    });
+
+    it("long: accepted when close > pullback high", () => {
+      // pullbackRange=2 → high = close + 1 ≈ peakPrice - 4
+      // recovery close ≈ peakPrice + 2 → close > pullbackHigh → signal
+      const { strategy, candles, htf } = buildLongDataset(2, 2);
+      let found = false;
+      for (let i = Math.max(candles.length - 50, 100); i < candles.length; i++) {
+        const signal = strategy.onCandle(makeCtx(candles, i, htf));
+        if (signal?.direction === "long") { found = true; break; }
+      }
+      expect(found).toBe(true);
+    });
+
+    it("short: rejected when close >= pullback low", () => {
+      // pullbackRange=20 → low = close - 10 ≈ troughPrice - 5
+      // recovery close ≈ troughPrice - 2 → close >= pullbackLow → no signal
+      const { strategy, candles, htf } = buildShortDataset(20, 2);
+      let found = false;
+      for (let i = Math.max(candles.length - 50, 100); i < candles.length; i++) {
+        const signal = strategy.onCandle(makeCtx(candles, i, htf));
+        if (signal?.direction === "short") { found = true; break; }
+      }
+      expect(found).toBe(false);
+    });
+
+    it("short: accepted when close < pullback low", () => {
+      // pullbackRange=2 → low = close - 1 ≈ troughPrice + 4
+      // recovery close ≈ troughPrice - 2 → close < pullbackLow → signal
+      const { strategy, candles, htf } = buildShortDataset(2, 2);
+      let found = false;
+      for (let i = Math.max(candles.length - 50, 100); i < candles.length; i++) {
+        const signal = strategy.onCandle(makeCtx(candles, i, htf));
+        if (signal?.direction === "short") { found = true; break; }
+      }
+      expect(found).toBe(true);
+    });
+  });
 });
