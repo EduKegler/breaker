@@ -596,6 +596,212 @@
       },
       "verdict": "neutral",
       "note": "Tightest KC multiplier — tests if extreme squeeze selectivity (KC width = 1x ATR) improves signal quality by filtering out low-conviction squeeze setups"
+    },
+    {
+      "iter": 33,
+      "date": "2026-03-06",
+      "change": {
+        "param": "kcMult",
+        "from": 1,
+        "to": 2.25
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "verdict": "neutral",
+      "note": "Sweep sequencial de kcMult: testando 2.25 (KC mais largo). kcMult=1.5 foi baseline antes da iteração anterior (PF=1.31, informalmente testado). kcMult=2.0 já degradou PF de 1.31 para 1.21 — esperado comportamento similar ou pior em 2.25."
+    },
+    {
+      "iter": 34,
+      "date": "2026-03-06",
+      "change": {
+        "param": "kcMult",
+        "from": 1.5,
+        "to": 2.5
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "verdict": "neutral",
+      "note": "Exaurir kcMult axis — 2.5 é o único valor formal não testado. Todos os valores anteriores (1.0, 1.25, 1.75, 2.0, 2.25) mostraram no_trade_impact ou leve degradação. Após exaurir kcMult, atrStopMult e tpRR ficam desbloqueados para corrigir DD (-6.4 pts) e WR=68.7% (acima do limiar de rejeição 55%)."
+    },
+    {
+      "iter": 35,
+      "date": "2026-03-06",
+      "change": {
+        "param": "tpRR",
+        "from": 1.5,
+        "to": 2
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "verdict": "neutral",
+      "note": "Widening TP target to reduce WR from 68.7% (above 55% hard rejection) to ~50%, fix avgR score gap (-10.5 pts), and improve PF by capturing larger moves per trade."
+    },
+    {
+      "iter": 36,
+      "date": "2026-03-06",
+      "change": {
+        "param": "atrStopMult",
+        "from": 3,
+        "to": 3.5
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "verdict": "neutral",
+      "note": "Widen safety stop from 3.0 to 3.5 ATR. kcMult is now exhausted (current value 1.5 was the last untested value), unblocking atrStopMult sweep. Wider hard stop reduces early hard-stop interference, giving trailing stop more room to operate on trades that would otherwise hit the safety stop before the trail activates."
+    },
+    {
+      "iter": 37,
+      "date": "2026-03-06",
+      "change": {
+        "param": "trailMult",
+        "from": 3,
+        "to": 2.5
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "verdict": "neutral",
+      "note": "Tighten trailing stop from 3 ATR to 2.5 ATR. Losers hold 40 bars vs winners 29 — trail is not cutting losses early enough on the 47 signal exits (WR=51%, PnL=-77 USD). Tighter trail exits losing trades faster before full reversal. kcMult remaining value (1.5) is the current value = no-op; kcMult sweep effectively complete, unblocking trailMult."
+    },
+    {
+      "iter": 38,
+      "date": "2026-03-06",
+      "change": {
+        "param": "atrStopMult",
+        "from": 3,
+        "to": 4
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "verdict": "neutral",
+      "note": "Widen safety stop from 3 ATR to 4 ATR. kcMult sweep now complete (1.5 = current value = no-op). Continuing core sequential sweep: atrStopMult next. Previous value 3.5 showed no_trade_impact (only 3 SL hits total); testing 4.0 to potentially allow SL exits to survive and exit via trail/signal instead of hard stop."
+    },
+    {
+      "iter": 39,
+      "date": "2026-03-06",
+      "change": {
+        "param": "bbStdDev",
+        "from": 2,
+        "to": 2.25
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "verdict": "neutral",
+      "note": "Wider BB standard deviation forces stricter squeeze detection (BB must fit inside KC). Reduces low-quality breakout entries that currently exit via reversal signal at 51% WR with -77 USD PnL total."
+    },
+    {
+      "iter": 40,
+      "date": "2026-03-06",
+      "change": {
+        "param": "timeoutBars",
+        "from": 48,
+        "to": 40
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "verdict": "neutral",
+      "note": "Reduzir timeout de 48→40 bars. Winners avg 29.3 bars (maioria termina bem antes de 40). Losers avg 40.4 bars — trades que hoje signal-exitam entre bars 40–48 passam a fazer timeout exit em 40, cortando losers mais cedo."
+    },
+    {
+      "iter": 41,
+      "date": "2026-03-06",
+      "change": {
+        "param": "trailMult",
+        "from": 3,
+        "to": 3.5
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "verdict": "neutral",
+      "note": "Wider trailing stop (3→3.5 ATR) to allow winners more room before trail exit. Remaining untested hypothesis from iter 36/37."
+    },
+    {
+      "iter": 42,
+      "date": "2026-03-06",
+      "change": {
+        "param": "volMult",
+        "from": 2,
+        "to": 1.5
+      },
+      "before": {
+        "pnl": 47.27856543912711,
+        "trades": 83,
+        "pf": 1.3033219633188646
+      },
+      "after": null,
+      "verdict": "pending",
+      "note": "Reduce volume spike requirement from 2x to 1.5x SMA. volMult=2.5 caused severe PF degradation (0.75), suggesting stricter volume filter eliminates good setups. More permissive filter should increase trade count and improve sample score (currently 11.1/20)."
     }
   ],
   "neverWorked": [
@@ -670,6 +876,60 @@
       "value": 1,
       "iter": 32,
       "reason": "no_trade_impact"
+    },
+    {
+      "param": "kcMult",
+      "value": 2.25,
+      "iter": 33,
+      "reason": "no_trade_impact"
+    },
+    {
+      "param": "kcMult",
+      "value": 2.5,
+      "iter": 34,
+      "reason": "no_trade_impact"
+    },
+    {
+      "param": "tpRR",
+      "value": 2,
+      "iter": 35,
+      "reason": "no_trade_impact"
+    },
+    {
+      "param": "atrStopMult",
+      "value": 3.5,
+      "iter": 36,
+      "reason": "no_trade_impact"
+    },
+    {
+      "param": "trailMult",
+      "value": 2.5,
+      "iter": 37,
+      "reason": "no_trade_impact"
+    },
+    {
+      "param": "atrStopMult",
+      "value": 4,
+      "iter": 38,
+      "reason": "no_trade_impact"
+    },
+    {
+      "param": "bbStdDev",
+      "value": 2.25,
+      "iter": 39,
+      "reason": "no_trade_impact"
+    },
+    {
+      "param": "timeoutBars",
+      "value": 40,
+      "iter": 40,
+      "reason": "no_trade_impact"
+    },
+    {
+      "param": "trailMult",
+      "value": 3.5,
+      "iter": 41,
+      "reason": "no_trade_impact"
     }
   ],
   "exploredRanges": {
@@ -690,13 +950,33 @@
       14
     ],
     "volMult": [
-      2.5
+      2.5,
+      1.5
     ],
     "kcMult": [
       2,
       1.75,
       1.25,
-      1
+      1,
+      2.25,
+      2.5
+    ],
+    "tpRR": [
+      2
+    ],
+    "atrStopMult": [
+      3.5,
+      4
+    ],
+    "trailMult": [
+      2.5,
+      3.5
+    ],
+    "bbStdDev": [
+      2.25
+    ],
+    "timeoutBars": [
+      40
     ]
   },
   "pendingHypotheses": [
@@ -844,54 +1124,173 @@
       "iter": 28,
       "rank": 2,
       "hypothesis": "volMult=2.0 filtraria signal exits de baixa convicção (51t, WR=51%, PnL=-47.47 USD), melhorando PF em +0.10 a +0.20",
-      "expired": false
+      "expired": true,
+      "note": "expired: >5 iters old (current: 33)"
     },
     {
       "iter": 28,
       "rank": 3,
       "hypothesis": "tpRR=1.5 converteria algumas signal exits em TP1 hits, melhorando PnL líquido levemente",
-      "expired": false
+      "expired": true,
+      "note": "expired: >5 iters old (current: 33)"
     },
     {
       "iter": 29,
       "rank": 2,
       "hypothesis": "kcMult=1.25 (tighter KC) would detect more squeezes but likely add more noise and increase signal exits further.",
-      "expired": false
+      "expired": true,
+      "note": "expired: >5 iters old (current: 34)"
     },
     {
       "iter": 29,
       "rank": 3,
       "hypothesis": "volMult=2.0 would filter low-conviction entries via volume requirement, reducing bad signal exits by ~10-15 trades.",
-      "expired": false
+      "expired": true,
+      "note": "expired: >5 iters old (current: 34)"
     },
     {
       "iter": 31,
       "rank": 2,
       "hypothesis": "tpRR=1.5 converteria signal exits em TP1 hits (est. +15-25 USD), melhorando PF em +0.05 a +0.10",
-      "expired": false
+      "expired": true,
+      "note": "expired: >5 iters old (current: 36)"
     },
     {
       "iter": 30,
       "rank": 3,
       "hypothesis": "kcMult=1.25 (KC mais apertado) detectaria mais squeezes mas adicionaria noise, aumentando signal exits",
-      "expired": false
+      "expired": true,
+      "note": "expired: >5 iters old (current: 35)"
     },
     {
       "iter": 31,
       "rank": 3,
       "hypothesis": "kcMult=2.25 (KC mais largo) reduziria entradas mas provavelmente degradaria PF, pois kcMult=2.0 já degradou de 1.31 para 1.21.",
-      "expired": false
+      "expired": true,
+      "note": "expired: >5 iters old (current: 36)"
     },
     {
       "iter": 32,
       "rank": 2,
       "hypothesis": "tpRR=1.5 would convert signal exits (47t, WR=51%, PnL=-35.64) into TP1 hits, improving PF by +0.05-0.10 and avgR by +0.05-0.10R",
-      "expired": false
+      "expired": true,
+      "note": "expired: >5 iters old (current: 37)"
     },
     {
       "iter": 32,
       "rank": 3,
       "hypothesis": "kcMult=2.25 would further degrade PF below 1.31 (kcMult=2.0 already dropped PF from 1.31 to 1.21)",
+      "expired": true,
+      "note": "expired: >5 iters old (current: 37)"
+    },
+    {
+      "iter": 33,
+      "rank": 2,
+      "hypothesis": "tpRR=2.0 converteria TP1 em alvos mais distantes, reduzindo WR de 68.7% para ~50% (dentro do range de breakout), melhorando PF em +0.15-0.25. Bloqueado até kcMult ser exaurido.",
+      "expired": true,
+      "note": "expired: >5 iters old (current: 38)"
+    },
+    {
+      "iter": 33,
+      "rank": 3,
+      "hypothesis": "kcMult=2.5 (máximo do range) degradaria ainda mais PF e trades, confirmando que o range superior de kcMult é subótimo para esta estratégia.",
+      "expired": true,
+      "note": "expired: >5 iters old (current: 38)"
+    },
+    {
+      "iter": 34,
+      "rank": 2,
+      "hypothesis": "tpRR=2.0 — reduzir WR de 68.7% para ~50% (dentro do range de breakout), melhorar avgR em +0.10-0.15R. BLOQUEADO até kcMult ser exaurido.",
+      "expired": true,
+      "note": "expired: >5 iters old (current: 39)"
+    },
+    {
+      "iter": 34,
+      "rank": 3,
+      "hypothesis": "atrStopMult=3.5 — melhorar DD (score gap -6.4 pts). BLOQUEADO até kcMult ser exaurido.",
+      "expired": true,
+      "note": "expired: >5 iters old (current: 39)"
+    },
+    {
+      "iter": 35,
+      "rank": 2,
+      "hypothesis": "atrStopMult=3.5 would widen SL, reducing SL frequency and improving DD score gap (-6.1 pts). Deferred to next iteration.",
+      "expired": true,
+      "note": "expired: >5 iters old (current: 40)"
+    },
+    {
+      "iter": 36,
+      "rank": 2,
+      "hypothesis": "trailMult=3.5 would allow winners to run longer, improving avgR. Deferred pending tpRR result.",
+      "expired": true,
+      "note": "expired: >5 iters old (current: 41)"
+    },
+    {
+      "iter": 37,
+      "rank": 2,
+      "hypothesis": "trailMult=3.5 (wider trail 3→3.5): allow winners more room to run. Lower priority — avgR already at 0.477R (well above 0.21R stretch). Problem is on losing signal exits, not winning ones.",
+      "expired": true,
+      "note": "expired: >5 iters old (current: 42)"
+    },
+    {
+      "iter": 37,
+      "rank": 3,
+      "hypothesis": "kcMult=1.5 (current value): completing the sweep. No-op — value unchanged from baseline. Skip.",
+      "expired": true,
+      "note": "expired: >5 iters old (current: 42)"
+    },
+    {
+      "iter": 38,
+      "rank": 2,
+      "hypothesis": "bbStdDev=2.25: wider BB → stricter squeeze detection → fewer but higher-quality breakout entries → WR drops from 68.7% toward 55%, PF improves. Untested, high potential.",
+      "expired": false
+    },
+    {
+      "iter": 38,
+      "rank": 3,
+      "hypothesis": "tpRR=2.5: wider TP targets, but signal exits dominate (47 trades exit via signal before TP). tpRR=2.0 already confirmed no_trade_impact; 2.5 likely same.",
+      "expired": false
+    },
+    {
+      "iter": 39,
+      "rank": 2,
+      "hypothesis": "trailMult=3.5 — trail mais largo para deixar winners correr, mas signal exits dominam (47/83 trades) e o trailing não é o gargalo.",
+      "expired": false
+    },
+    {
+      "iter": 39,
+      "rank": 3,
+      "hypothesis": "timeoutBars=56 — timeout maior para dar mais tempo às trades, mas sem impacto esperado dado que losers já duram 40 bars em média.",
+      "expired": false
+    },
+    {
+      "iter": 40,
+      "rank": 2,
+      "hypothesis": "Problema é estrutural: 100% das trades são short, signal exits dominam (47/83 = -77 USD), WR=68.7% acima do threshold de rejeição. Escalação para RESTRUCTURE é necessária para redesenhar lógica de signal exit e reativar longs.",
+      "expired": false
+    },
+    {
+      "iter": 41,
+      "rank": 2,
+      "hypothesis": "trailMult=4: even wider trail, but diminishing returns likely",
+      "expired": false
+    },
+    {
+      "iter": 41,
+      "rank": 3,
+      "hypothesis": "timeoutBars=56: more time for trades, but losers avg 40.4 bars so extending timeout may increase loss exposure",
+      "expired": false
+    },
+    {
+      "iter": 42,
+      "rank": 2,
+      "hypothesis": "bbStdDev=1.75 — narrower BB fits inside KC more easily, detecting more squeezes and generating more entries. Similar intent to rank#1 but volume filter is likely the binding constraint.",
+      "expired": false
+    },
+    {
+      "iter": 42,
+      "rank": 3,
+      "hypothesis": "timeoutBars=56 — more time per trade. Losers avg 40.4 bars so more time could increase loss exposure. Low upside.",
       "expired": false
     }
   ],

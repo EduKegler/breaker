@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 let logLevelOverrides: Record<string, string> = {};
 
 function getBaseLevel(): string {
-  return process.env.LOG_LEVEL ?? "debug";
+  return process.env.LOG_LEVEL ?? "info";
 }
 
 function createPinoLogger(): pino.Logger {

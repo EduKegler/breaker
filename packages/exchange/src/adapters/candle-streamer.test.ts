@@ -90,6 +90,44 @@ describe("CandleStreamer", () => {
 
       expect(streamer.getCandles()).toHaveLength(1);
     });
+
+    it("deduplicates concurrent warmup calls (same bars)", async () => {
+      const candles = [makeCandle(1000), makeCandle(2000)];
+      vi.mocked(fetchCandles).mockResolvedValueOnce(candles);
+
+      const streamer = new CandleStreamer(config);
+      const [r1, r2] = await Promise.all([streamer.warmup(200), streamer.warmup(200)]);
+
+      expect(r1).toBe(r2); // same reference
+      expect(fetchCandles).toHaveBeenCalledTimes(1);
+    });
+
+    it("deduplicates when second call requests fewer bars", async () => {
+      const candles = [makeCandle(1000), makeCandle(2000)];
+      vi.mocked(fetchCandles).mockResolvedValueOnce(candles);
+
+      const streamer = new CandleStreamer(config);
+      const r1 = await streamer.warmup(500);
+      const r2 = await streamer.warmup(200);
+
+      expect(r1).toBe(r2);
+      expect(fetchCandles).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-fetches when second call requests more bars", async () => {
+      const candles1 = [makeCandle(1000)];
+      const candles2 = [makeCandle(500), makeCandle(1000)];
+      vi.mocked(fetchCandles)
+        .mockResolvedValueOnce(candles1)
+        .mockResolvedValueOnce(candles2);
+
+      const streamer = new CandleStreamer(config);
+      await streamer.warmup(200);
+      const r2 = await streamer.warmup(500);
+
+      expect(fetchCandles).toHaveBeenCalledTimes(2);
+      expect(r2).toEqual(candles2);
+    });
   });
 
   describe("getCandles / getLatest", () => {

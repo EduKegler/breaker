@@ -43,6 +43,8 @@ export class CandleStreamer extends EventEmitter {
   private reconnectAttempt = 0;
   private running = false;
   private reconcileChain: Promise<void> = Promise.resolve();
+  private warmupPromise: Promise<Candle[]> | null = null;
+  private warmupBarsRequested = 0;
 
   /** @internal — override for testing */
   _streamOverride?: typeof streamCandles;
@@ -55,6 +57,15 @@ export class CandleStreamer extends EventEmitter {
   }
 
   async warmup(bars: number): Promise<Candle[]> {
+    if (this.warmupPromise && bars <= this.warmupBarsRequested) {
+      return this.warmupPromise;
+    }
+    this.warmupBarsRequested = bars;
+    this.warmupPromise = this.doWarmup(bars);
+    return this.warmupPromise;
+  }
+
+  private async doWarmup(bars: number): Promise<Candle[]> {
     const ivlMs = intervalToMs(this.config.interval);
     const endTime = Date.now();
     const startTime = endTime - bars * ivlMs;

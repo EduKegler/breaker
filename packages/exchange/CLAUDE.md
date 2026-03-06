@@ -119,7 +119,8 @@ src/
 - `handle-signal` fetches fresh mid-price from HL before placing IOC entry — stale candle close in fast markets causes limit misses. Falls back to candle close on failure
 - Signal handler has SL failure rollback (compensating transaction) and entry order error handling (`entry_order_error` event with full context)
 - Strategy indicator caches (EMA, RSI, ATR, etc.) are pre-computed by `init()` — the runner re-calls `init()` on every candle close to extend caches for new candles; without this, `onCandle()` reads undefined values beyond the warmup range
-- StrategyRunner auto-corrects `warmupBars` at startup via `computeMinWarmupBars()` — if config value is below strategy's `requiredWarmup`, the runner uses the computed minimum and logs a warning
+- `warmupBars` auto-correction happens in `daemon.ts` (not the runner): `effectiveWarmup = Math.max(strat.warmupBars, computeMinWarmupBars())` is passed to StrategyRunner, which uses it directly without applying any floor
+- CandleStreamer deduplicates concurrent `warmup()` calls via promise caching — when two runners share the same streamer (e.g. BTC:15m), only one HTTP fetch is made
 - HL `getHistoricalOrders` does NOT include trigger orders (SL/TP) — `resolveHistoricalStatuses()` adds parallel fallback via `getOrderStatus(oid)` for missing OIDs
 - SDK `getMeta()` applies `symbolConversion` by default (e.g. "SOL" → "SOL-PERP") — `loadSzDecimals()` normalizes via `fromSymbol()` so cache keys match domain naming. Without this, `getSzDecimals()` returns 5 (fallback) → wrong truncation → exchange rejects orders
 - Off-by-one guard in `processClosedCandle`: the WS may deliver the first tick of candle N+1 before the async REST reconciliation completes for candle N, making `candles.length - 1` point to N+1. Both `processClosedCandle` and `tick()` resolve the correct index by timestamp rather than assuming the closed candle is at the end of the array

@@ -214,7 +214,6 @@ async function main() {
   // Set leverage per coin before any trading (parallel — independent per coin)
   await Promise.all(config.coins.map(async (coinCfg) => {
     await hlClient.setLeverage(coinCfg.coin, coinCfg.leverage, config.marginType === "cross");
-    logger.info({ coin: coinCfg.coin, leverage: coinCfg.leverage }, "Leverage set");
     await eventLog.append({
       type: "leverage_set",
       timestamp: new Date().toISOString(),
@@ -335,10 +334,11 @@ async function main() {
       const strategy = createStrategy(strat.name);
 
       const minRequired = computeMinWarmupBars(strategy, strat.interval as CandleInterval);
+      const effectiveWarmup = Math.max(strat.warmupBars, minRequired);
       if (minRequired > strat.warmupBars) {
         log.warn(
-          { coin: coinCfg.coin, strategy: strat.name, configured: strat.warmupBars, required: minRequired },
-          "Config warmupBars is below strategy minimum — will be auto-corrected at warmup",
+          { coin: coinCfg.coin, strategy: strat.name, configured: strat.warmupBars, required: minRequired, effective: effectiveWarmup },
+          "Config warmupBars is below strategy minimum — auto-corrected",
         );
       }
 
@@ -347,7 +347,7 @@ async function main() {
         coin: coinCfg.coin,
         leverage: coinCfg.leverage,
         interval: strat.interval as CandleInterval,
-        warmupBars: strat.warmupBars,
+        warmupBars: effectiveWarmup,
         autoTradingEnabled: strat.autoTradingEnabled,
         strategy,
         strategyConfigName: strat.name,
@@ -440,7 +440,7 @@ async function main() {
   }
 
   // Warmup all runners in parallel (each fetches from independent APIs)
-  logger.info({ runners: runners.map((r) => `${r.getCoin()}:${r.getInterval()}`) }, "Starting warmups...");
+  logger.info({ runners: runners.map((r) => `${r.getCoin()}:${r.getStrategyName()}:${r.getInterval()}`) }, "Starting warmups...");
   await Promise.all(runners.map((r) => r.warmup()));
   logger.info("All warmups complete");
 

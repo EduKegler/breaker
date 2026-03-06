@@ -3,7 +3,6 @@ import {
   canTrade,
   createUtcDayFormatter,
   aggregateCandles,
-  intervalToMs,
   bollingerBands,
   keltner,
   detectSqueeze,
@@ -123,21 +122,12 @@ export class StrategyRunner {
   }
 
   async warmup(): Promise<void> {
-    const oneYearBars = Math.ceil(365 * 86_400_000 / intervalToMs(this.deps.interval));
-    const effectiveWarmup = Math.max(this.deps.warmupBars, oneYearBars);
-    if (effectiveWarmup > this.deps.warmupBars) {
-      log.warn(
-        { coin: this.deps.coin, configured: this.deps.warmupBars, oneYearFloor: oneYearBars, effective: effectiveWarmup },
-        "warmupBars raised to 1-year floor",
-      );
-    }
-
-    const candles = await this.deps.streamer.warmup(effectiveWarmup);
+    const candles = await this.deps.streamer.warmup(this.deps.warmupBars);
 
     const minBars = Math.ceil(this.deps.warmupBars * 0.5);
     if (candles.length < minBars) {
       throw new Error(
-        `Insufficient warmup data: got ${candles.length}, need ≥${minBars} (${effectiveWarmup} requested)`,
+        `Insufficient warmup data: got ${candles.length}, need ≥${minBars} (${this.deps.warmupBars} requested)`,
       );
     }
 
