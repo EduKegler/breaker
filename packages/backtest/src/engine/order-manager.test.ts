@@ -187,6 +187,81 @@ describe("OrderManager", () => {
     expect(om.getPendingOrders()).toHaveLength(0);
   });
 
+  it("buy-stop fills at open when bar gaps above stop (gap-up)", () => {
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
+    om.addOrder(
+      makeOrder({ type: "stop", side: "buy", price: 110, tag: "entry" }),
+      "test",
+    );
+    // Bar opens at 115, well above the stop at 110
+    const candle = makeCandle(115, 120, 114, 118);
+    const result = om.checkOrders(candle);
+
+    expect(result.fills).toHaveLength(1);
+    // Should fill at open (115), not stop price (110) — gap-up worsens buy fill
+    expect(result.fills[0].price).toBe(115);
+  });
+
+  it("sell-stop fills at open when bar gaps below stop (gap-down)", () => {
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
+    om.addOrder(
+      makeOrder({ type: "stop", side: "sell", price: 90, tag: "sl" }),
+      "test",
+    );
+    // Bar opens at 85, well below the stop at 90
+    const candle = makeCandle(85, 87, 82, 84);
+    const result = om.checkOrders(candle);
+
+    expect(result.fills).toHaveLength(1);
+    // Should fill at open (85), not stop price (90) — gap-down worsens sell fill
+    expect(result.fills[0].price).toBe(85);
+  });
+
+  it("buy-stop gap-up with slippage: slippage applied on gap-adjusted price", () => {
+    const om = new OrderManager({ slippageBps: 10, commissionPct: 0, fundingRate8h: 0 }); // 10bps
+    om.addOrder(
+      makeOrder({ type: "stop", side: "buy", price: 110, tag: "entry" }),
+      "test",
+    );
+    // Gap-up: open 115
+    const candle = makeCandle(115, 120, 114, 118);
+    const result = om.checkOrders(candle);
+
+    // Base = max(110, 115) = 115, slippage up: 115 * 1.001 = 115.115
+    expect(result.fills[0].price).toBeCloseTo(115.115, 3);
+    // Slippage cost is relative to basePrice (115), not stop price (110)
+    expect(result.fills[0].slippage).toBeCloseTo(0.115, 3);
+  });
+
+  it("sell-stop gap-down with slippage: slippage applied on gap-adjusted price", () => {
+    const om = new OrderManager({ slippageBps: 10, commissionPct: 0, fundingRate8h: 0 }); // 10bps
+    om.addOrder(
+      makeOrder({ type: "stop", side: "sell", price: 90, tag: "sl", size: 1 }),
+      "test",
+    );
+    // Gap-down: open 85
+    const candle = makeCandle(85, 87, 82, 84);
+    const result = om.checkOrders(candle);
+
+    // Base = min(90, 85) = 85, slippage down: 85 * 0.999 = 84.915
+    expect(result.fills[0].price).toBeCloseTo(84.915, 3);
+    expect(result.fills[0].slippage).toBeCloseTo(0.085, 3);
+  });
+
+  it("buy-stop no gap: fill at stop price when open is below stop", () => {
+    const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
+    om.addOrder(
+      makeOrder({ type: "stop", side: "buy", price: 110, tag: "entry" }),
+      "test",
+    );
+    // Open below stop, high reaches stop
+    const candle = makeCandle(105, 112, 103, 108);
+    const result = om.checkOrders(candle);
+
+    // No gap: max(110, 105) = 110 → fill at stop price
+    expect(result.fills[0].price).toBe(110);
+  });
+
   it("cancels all TPs when SL and multiple TPs trigger on same bar", () => {
     const om = new OrderManager({ slippageBps: 0, commissionPct: 0, fundingRate8h: 0 });
     om.addOrder(

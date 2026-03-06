@@ -78,9 +78,13 @@ export class OrderManager {
       if (order.type === "stop" && order.price !== null) {
         const triggered = this.isStopTriggered(order, candle);
         if (triggered) {
-          const fillPrice = applySlippage(order.price, order.side, this.execConfig.slippageBps);
+          // Gap fill: if bar opens beyond stop, use open (worst-case for the trader)
+          const basePrice = order.side === "buy"
+            ? Math.max(order.price, candle.o)
+            : Math.min(order.price, candle.o);
+          const fillPrice = applySlippage(basePrice, order.side, this.execConfig.slippageBps);
           const fee = calculateCommission(fillPrice, order.size, this.execConfig.commissionPct);
-          const slippageCost = Math.abs(fillPrice - order.price) * order.size;
+          const slippageCost = Math.abs(fillPrice - basePrice) * order.size;
           fills.push({
             orderId: order.id,
             price: fillPrice,

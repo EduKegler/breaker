@@ -23,13 +23,17 @@ export function donchian(candles: Candle[], period: number): DonchianResult {
   for (let i = period - 1; i < len; i++) {
     let hi = -Infinity;
     let lo = Infinity;
+    let hasValidHi = false;
+    let hasValidLo = false;
     for (let j = i - period + 1; j <= i; j++) {
-      if (candles[j].h > hi) hi = candles[j].h;
-      if (candles[j].l < lo) lo = candles[j].l;
+      const h = candles[j].h;
+      const l = candles[j].l;
+      if (!isNaN(h) && h > hi) { hi = h; hasValidHi = true; }
+      if (!isNaN(l) && l < lo) { lo = l; hasValidLo = true; }
     }
-    upper[i] = hi;
-    lower[i] = lo;
-    mid[i] = (hi + lo) / 2;
+    upper[i] = hasValidHi ? hi : NaN;
+    lower[i] = hasValidLo ? lo : NaN;
+    mid[i] = hasValidHi && hasValidLo ? (hi + lo) / 2 : NaN;
   }
 
   return { upper, lower, mid };

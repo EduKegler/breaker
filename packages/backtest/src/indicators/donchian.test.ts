@@ -66,11 +66,27 @@ describe("donchian", () => {
     expect(Number.isFinite(result.mid[1])).toBe(true);
   });
 
-  it("returns -Infinity upper when candle.h is NaN (documents behavior)", () => {
+  it("returns NaN upper when candle.h is NaN (not -Infinity)", () => {
     const candles = [makeCandle(NaN, 5), makeCandle(NaN, 3)];
     const result = donchian(candles, 1);
-    // NaN > hi is always false, so hi stays at -Infinity
-    expect(result.upper[0]).toBe(-Infinity);
+    // NaN high should produce NaN upper, not -Infinity
+    expect(result.upper[0]).toBeNaN();
     expect(result.lower[0]).toBe(5);
+  });
+
+  it("returns NaN lower when candle.l is NaN (not Infinity)", () => {
+    const candles = [makeCandle(10, NaN), makeCandle(8, NaN)];
+    const result = donchian(candles, 1);
+    expect(result.upper[0]).toBe(10);
+    // NaN low should produce NaN lower, not Infinity
+    expect(result.lower[0]).toBeNaN();
+  });
+
+  it("returns all NaN when entire window has NaN", () => {
+    const candles = [makeCandle(NaN, NaN), makeCandle(NaN, NaN)];
+    const result = donchian(candles, 2);
+    expect(result.upper[1]).toBeNaN();
+    expect(result.lower[1]).toBeNaN();
+    expect(result.mid[1]).toBeNaN();
   });
 });

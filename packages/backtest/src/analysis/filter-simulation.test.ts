@@ -75,6 +75,36 @@ describe("computeFilterSimulations", () => {
     expect(monSim.pnlAfter).toBe(10);
   });
 
+  it("handles all trades in same hour", () => {
+    const baseTs = new Date("2024-06-15T10:00:00Z").getTime();
+    const trades = [
+      makeTrade(10, baseTs),
+      makeTrade(-3, baseTs + 60000),      // 1 min later, still hour 10
+      makeTrade(5, baseTs + 120000),       // 2 min later, still hour 10
+    ];
+    const result = computeFilterSimulations(trades);
+
+    // All trades in hour 10 — removing that hour zeroes PnL
+    expect(result.byHour).toHaveLength(1);
+    expect(result.byHour[0].hour).toBe(10);
+    expect(result.byHour[0].tradesRemoved).toBe(3);
+    expect(result.byHour[0].pnlAfter).toBe(0);
+    expect(result.byHour[0].tradesAfter).toBe(0);
+  });
+
+  it("handles single trade", () => {
+    const result = computeFilterSimulations([
+      makeTrade(7, new Date("2024-06-15T14:00:00Z").getTime()),
+    ]);
+
+    expect(result.totalPnl).toBe(7);
+    expect(result.totalTrades).toBe(1);
+    expect(result.byHour).toHaveLength(1);
+    expect(result.byHour[0].pnlAfter).toBe(0);
+    expect(result.byDay).toHaveLength(1);
+    expect(result.byDay[0].pnlAfter).toBe(0);
+  });
+
   it("simulates removing all SL exits", () => {
     const trades = [
       makeTrade(-5, Date.now(), "sl"),

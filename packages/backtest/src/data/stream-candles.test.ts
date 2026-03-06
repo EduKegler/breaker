@@ -121,6 +121,76 @@ describe("streamCandles", () => {
     ).rejects.toThrow("Unsupported interval: 99m");
   });
 
+  it("detects multiple consecutive candle closes", async () => {
+    const ts1 = 1700000000000;
+    const ts2 = 1700000900000;  // 15m later
+    const ts3 = 1700001800000;  // 30m later
+    const exchange = createMockExchange([
+      [row(ts1, 100)],
+      [row(ts2, 105)],  // ts change → close ts1
+      [row(ts3, 110)],  // ts change → close ts2
+    ]);
+
+    const ac = new AbortController();
+    const calls: Array<{ candle: Candle; isClosed: boolean }> = [];
+
+    const promise = streamCandles("BTC", "15m", {
+      _exchange: exchange,
+      signal: ac.signal,
+      onCandle: (candle, isClosed) => {
+        calls.push({ candle: { ...candle }, isClosed });
+        if (calls.length >= 5) ac.abort();
+      },
+    });
+    await promise;
+
+    // Sequence:
+    // 1. ts1 c=100, isClosed=false
+    // 2. ts1 c=100, isClosed=true (close detected when ts2 arrives)
+    // 3. ts2 c=105, isClosed=false
+    // 4. ts2 c=105, isClosed=true (close detected when ts3 arrives)
+    // 5. ts3 c=110, isClosed=false
+    expect(calls).toHaveLength(5);
+    expect(calls[1].isClosed).toBe(true);
+    expect(calls[1].candle.t).toBe(ts1);
+    expect(calls[3].isClosed).toBe(true);
+    expect(calls[3].candle.t).toBe(ts2);
+    expect(calls[4].isClosed).toBe(false);
+    expect(calls[4].candle.t).toBe(ts3);
+  });
+
+  it("handles burst of updates on same candle", async () => {
+    const ts = 1700000000000;
+    const exchange = createMockExchange([
+      [row(ts, 100)],
+      [row(ts, 101)],
+      [row(ts, 102)],
+      [row(ts, 103)],
+    ]);
+
+    const ac = new AbortController();
+    const calls: Array<{ candle: Candle; isClosed: boolean }> = [];
+
+    const promise = streamCandles("BTC", "15m", {
+      _exchange: exchange,
+      signal: ac.signal,
+      onCandle: (candle, isClosed) => {
+        calls.push({ candle: { ...candle }, isClosed });
+        if (calls.length >= 4) ac.abort();
+      },
+    });
+    await promise;
+
+    // All same timestamp → all in-progress, no close events
+    expect(calls).toHaveLength(4);
+    for (const call of calls) {
+      expect(call.isClosed).toBe(false);
+      expect(call.candle.t).toBe(ts);
+    }
+    expect(calls[0].candle.c).toBe(100);
+    expect(calls[3].candle.c).toBe(103);
+  });
+
   it("stops when AbortSignal is aborted before first call", async () => {
     const exchange = createMockExchange([]);
     const ac = new AbortController();

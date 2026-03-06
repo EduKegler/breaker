@@ -81,10 +81,12 @@ export class PositionTracker {
         ? (fill.price - entryPrice) * size
         : (entryPrice - fill.price) * size;
 
-    const totalCommission =
-      fills.reduce((s, f) => s + f.fee, 0) + fill.fee;
-    const totalSlippage =
-      fills.reduce((s, f) => s + f.slippage, 0) + fill.slippage;
+    const entryFills = fills.filter(f => f.tag === "entry");
+    const originalSize = entryFills.reduce((s, f) => s + f.size, 0);
+    const entryFees = entryFills.reduce((s, f) => s + f.fee, 0);
+    const totalCommission = (size / originalSize) * entryFees + fill.fee;
+    const entrySlip = entryFills.reduce((s, f) => s + f.slippage, 0);
+    const totalSlippage = (size / originalSize) * entrySlip + fill.slippage;
 
     const netPnl = pnl - totalCommission - fundingCost;
 
@@ -149,14 +151,12 @@ export class PositionTracker {
         ? (fill.price - entryPrice) * fill.size
         : (entryPrice - fill.price) * fill.size;
 
-    const entryCommissionShare =
-      (fill.size / this.position.size) *
-      this.position.fills.reduce((s, f) => s + f.fee, 0);
-    const totalCommission = entryCommissionShare + fill.fee;
-    const totalSlippage =
-      (fill.size / this.position.size) *
-      this.position.fills.reduce((s, f) => s + f.slippage, 0) +
-      fill.slippage;
+    const entryFills = this.position.fills.filter(f => f.tag === "entry");
+    const originalSize = entryFills.reduce((s, f) => s + f.size, 0);
+    const entryFees = entryFills.reduce((s, f) => s + f.fee, 0);
+    const totalCommission = (fill.size / originalSize) * entryFees + fill.fee;
+    const entrySlip = entryFills.reduce((s, f) => s + f.slippage, 0);
+    const totalSlippage = (fill.size / originalSize) * entrySlip + fill.slippage;
 
     const netPnl = pnl - totalCommission - fundingCost;
     const rMultiple =

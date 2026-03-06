@@ -52,6 +52,48 @@ describe("keltner", () => {
     expect(wideWidth).toBeCloseTo(narrowWidth * 2, 5);
   });
 
+  it("computes exact band values for period=1 (no EMA smoothing)", () => {
+    // With period=1, EMA equals the input value itself
+    const candles = [
+      makeCandle(100, 105, 95, 100),  // TR = 10
+      makeCandle(102, 108, 98, 104),  // TR = max(10, |108-100|, |98-100|) = 10
+      makeCandle(106, 112, 100, 108), // TR = max(12, |112-104|, |100-104|) = 12
+    ];
+    const result = keltner(candles, 1, 1, 2.0);
+
+    // mid = close, upper = close + 2*TR, lower = close - 2*TR
+    expect(result.mid[0]).toBe(100);
+    expect(result.upper[0]).toBe(120); // 100 + 2*10
+    expect(result.lower[0]).toBe(80);  // 100 - 2*10
+
+    expect(result.mid[1]).toBe(104);
+    expect(result.upper[1]).toBe(124); // 104 + 2*10
+    expect(result.lower[1]).toBe(84);  // 104 - 2*10
+
+    expect(result.mid[2]).toBe(108);
+    expect(result.upper[2]).toBe(132); // 108 + 2*12
+    expect(result.lower[2]).toBe(84);  // 108 - 2*12
+  });
+
+  it("warmup NaN count matches max(emaPeriod, rangePeriod) - 1", () => {
+    const candles = Array.from({ length: 20 }, (_, i) =>
+      makeCandle(100 + i, 108 + i, 92 + i, 100 + i),
+    );
+    const result = keltner(candles, 5, 3, 1.5);
+
+    // emaPeriod=5 → first 4 NaN, rangePeriod=3 → first 2 NaN
+    // keltner NaN count = max(4, 2) = 4
+    for (let i = 0; i < 4; i++) {
+      expect(result.mid[i]).toBeNaN();
+      expect(result.upper[i]).toBeNaN();
+      expect(result.lower[i]).toBeNaN();
+    }
+    // Index 4 should be the first non-NaN
+    expect(result.mid[4]).not.toBeNaN();
+    expect(result.upper[4]).not.toBeNaN();
+    expect(result.lower[4]).not.toBeNaN();
+  });
+
   it("output arrays have same length as input", () => {
     const candles = Array.from({ length: 20 }, (_, i) =>
       makeCandle(100 + i, 105 + i, 95 + i, 102 + i),

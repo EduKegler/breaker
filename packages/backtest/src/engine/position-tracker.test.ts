@@ -166,6 +166,101 @@ describe("PositionTracker", () => {
     expect(trade.fundingCost).toBe(1.0);
   });
 
+  it("partial + full close: commission not contaminated by prior exit fee", () => {
+    const pt = new PositionTracker();
+    const entryFill = makeFill(100, 2, "buy"); // fee=0.5, slippage=0.1
+    pt.openPosition("long", entryFill, 5);
+    pt.setEntryBarIndex(0);
+
+    // Partial close 1 of 2 units
+    const tp1Fill: Fill = {
+      orderId: "tp1", price: 110, size: 1, side: "sell",
+      fee: 0.3, slippage: 0.05, timestamp: Date.now(), tag: "tp1",
+    };
+    const trade1 = pt.partialClose(tp1Fill, 5, "tp1", "TP1", "entry");
+    // Entry comm share: (1/2)*0.5 = 0.25, total = 0.25 + 0.3 = 0.55
+    expect(trade1.commission).toBeCloseTo(0.55, 5);
+
+    // Full close remaining 1 unit — should NOT include tp1's fee (0.3)
+    const slFill: Fill = {
+      orderId: "sl", price: 95, size: 1, side: "sell",
+      fee: 0.4, slippage: 0.08, timestamp: Date.now(), tag: "sl",
+    };
+    const trade2 = pt.closePosition(slFill, 10, "sl", "SL hit", "entry");
+    // Entry comm share: (1/2)*0.5 = 0.25, total = 0.25 + 0.4 = 0.65
+    expect(trade2.commission).toBeCloseTo(0.65, 5);
+  });
+
+  it("two partials + full close: no prior exit fees contaminate", () => {
+    const pt = new PositionTracker();
+    const entryFill: Fill = {
+      orderId: "entry", price: 100, size: 4, side: "buy",
+      fee: 0.8, slippage: 0.2, timestamp: Date.now(), tag: "entry",
+    };
+    pt.openPosition("long", entryFill, 5);
+    pt.setEntryBarIndex(0);
+
+    // Partial 1: close 1 of 4
+    const tp1: Fill = {
+      orderId: "tp1", price: 110, size: 1, side: "sell",
+      fee: 0.3, slippage: 0.05, timestamp: Date.now(), tag: "tp1",
+    };
+    const t1 = pt.partialClose(tp1, 5, "tp1", "TP1", "entry");
+    // Entry share: (1/4)*0.8 = 0.2, total = 0.2 + 0.3 = 0.5
+    expect(t1.commission).toBeCloseTo(0.5, 5);
+
+    // Partial 2: close 1 of remaining 3
+    const tp2: Fill = {
+      orderId: "tp2", price: 115, size: 1, side: "sell",
+      fee: 0.3, slippage: 0.05, timestamp: Date.now(), tag: "tp2",
+    };
+    const t2 = pt.partialClose(tp2, 8, "tp2", "TP2", "entry");
+    // Entry share: (1/4)*0.8 = 0.2, total = 0.2 + 0.3 = 0.5
+    expect(t2.commission).toBeCloseTo(0.5, 5);
+
+    // Full close remaining 2 units
+    const slFill: Fill = {
+      orderId: "sl", price: 90, size: 2, side: "sell",
+      fee: 0.5, slippage: 0.1, timestamp: Date.now(), tag: "sl",
+    };
+    const t3 = pt.closePosition(slFill, 15, "sl", "SL", "entry");
+    // Entry share: (2/4)*0.8 = 0.4, total = 0.4 + 0.5 = 0.9
+    expect(t3.commission).toBeCloseTo(0.9, 5);
+
+    // Total entry fee across all trades: 0.2+0.2+0.4 = 0.8 (exact original entry fee)
+    const totalEntryComm = (t1.commission - 0.3) + (t2.commission - 0.3) + (t3.commission - 0.5);
+    expect(totalEntryComm).toBeCloseTo(0.8, 5);
+  });
+
+  it("slippage not double-counted in chain of partials", () => {
+    const pt = new PositionTracker();
+    const entryFill: Fill = {
+      orderId: "entry", price: 100, size: 2, side: "buy",
+      fee: 0.5, slippage: 0.2, timestamp: Date.now(), tag: "entry",
+    };
+    pt.openPosition("long", entryFill, 5);
+    pt.setEntryBarIndex(0);
+
+    // Partial close 1 of 2
+    const tp1: Fill = {
+      orderId: "tp1", price: 110, size: 1, side: "sell",
+      fee: 0.3, slippage: 0.1, timestamp: Date.now(), tag: "tp1",
+    };
+    const t1 = pt.partialClose(tp1, 5, "tp1", "TP1", "entry");
+    // Entry slippage share: (1/2)*0.2 = 0.1, total = 0.1 + 0.1 = 0.2
+    expect(t1.slippageCost).toBeCloseTo(0.2, 5);
+
+    // Close remaining 1 unit
+    const slFill: Fill = {
+      orderId: "sl", price: 95, size: 1, side: "sell",
+      fee: 0.4, slippage: 0.15, timestamp: Date.now(), tag: "sl",
+    };
+    const t2 = pt.closePosition(slFill, 10, "sl", "SL", "entry");
+    // Entry slippage share: (1/2)*0.2 = 0.1, total = 0.1 + 0.15 = 0.25
+    // NOT: (0.2+0.1)/1 + 0.15 = 0.45 (contaminated by tp1 slippage)
+    expect(t2.slippageCost).toBeCloseTo(0.25, 5);
+  });
+
   it("throws when closing with no position", () => {
     const pt = new PositionTracker();
     expect(() =>
