@@ -46,10 +46,12 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - `pnpm promote <name> --from-checkpoint <path>` promotes from a refiner checkpoint
 - After promote, run `pnpm build` to compile and restart daemon
 - The refiner can freely modify `src/strategies/{asset}/*.ts` without affecting the running daemon
+- Strategy files in `src/strategies/` (excluding `deployed/`) are **AI-generated** by the refiner — do NOT create hand-maintained tests for them. Fixes go in the refiner prompt or engine runtime validation, not in the strategy file directly.
+- `pctOfPosition` in `takeProfits` is a **fraction (0-1)**, not a percentage. Engine throws if `> 1`. Use `0.50` for 50%.
 
 ## Build and test
 - `pnpm build` — compile TypeScript
 - `pnpm test` — run all tests
 - `pnpm typecheck` — type-check without emitting
 - `pnpm promote` — promote strategies to deployed/
-- Every src file has a matching test file (TDD-first)
+- Every src file has a matching test file (TDD-first) — except AI-generated strategy files in `src/strategies/` (excluded from coverage)

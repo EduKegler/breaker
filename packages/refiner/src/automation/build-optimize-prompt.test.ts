@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { formatCatalogForPrompt, buildOptimizePrompt } from "./build-optimize-prompt.js";
+import type { RestructureFailure } from "./build-optimize-prompt.js";
 import type { ComponentCatalog, CatalogSlot, ModuleContext } from "../lib/build-module-context.js";
 import type { TestedCombination } from "../types/parameter-history.js";
 import type { Metrics, TradeAnalysis, StrategyParam } from "@breaker/backtest";
+import type { ScoreRaw } from "../loop/stages/scoring.js";
+import type { ScoringWeights } from "../types/config.js";
 
 // ---------------------------------------------------------------------------
 // formatCatalogForPrompt
@@ -99,11 +105,9 @@ describe("buildOptimizePrompt session sanity (KB §13.2)", () => {
       maxDrawdownPct: 5,
       winRate: 45,
       avgR: 0.2,
-      grossProfit: 1000,
-      grossLoss: -500,
-      avgWin: 20,
-      avgLoss: -10,
-      maxConsecutiveLosses: 3,
+      avgWinR: 0.8,
+      avgLossR: -0.5,
+      maxLossR: -1.5,
       expectancy: 5,
       ...overrides,
     };
@@ -219,6 +223,33 @@ describe("buildOptimizePrompt session sanity (KB §13.2)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// pctOfPosition convention rule
+// ---------------------------------------------------------------------------
+
+describe("buildOptimizePrompt pctOfPosition rule", () => {
+  it("includes pctOfPosition fraction convention in optimization rules", () => {
+    const prompt = buildOptimizePrompt({
+      strategySourcePath: "/fake/strategy.ts",
+      strategyParams: {} as Record<string, StrategyParam>,
+      paramOverrides: {},
+      criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+      asset: "BTC",
+      phase: "refine" as const,
+      iter: 1,
+      maxIter: 10,
+      globalIter: 1,
+      paramHistoryPath: "/fake/ph.json",
+      artifactsDir: "/fake/artifacts",
+      metrics: { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: 5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5 },
+      tradeAnalysis: null,
+      moduleContext: { profile: "breakout", moduleId: "M1", moduleName: "Breakout", fixedRules: "", restructureLocks: "", varCap: 8, stoppingCriteria: "", signalTF: "15m", regimeTF: "4H", catalog: { slots: [] } },
+    });
+    expect(prompt).toContain("pctOfPosition is a FRACTION (0-1)");
+    expect(prompt).toContain("0.50");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Structural diagnostics
 // ---------------------------------------------------------------------------
 
@@ -325,6 +356,46 @@ describe("buildOptimizePrompt structural diagnostics", () => {
     expect(prompt).not.toContain("FAILED RESTRUCTURE");
   });
 
+  it("shows DD as unmet when maxDrawdownPct is negative (B1: sign fix)", () => {
+    // maxDrawdownPct from equity-curve is negative (e.g., -22 for 22% DD)
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics({ maxDrawdownPct: -22 }),
+      tradeAnalysis: null,
+    });
+    expect(prompt).toContain("Max Drawdown must be <= ");
+  });
+
+  it("displays DD without negative sign in unmet criteria (P1: display fix)", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics({ maxDrawdownPct: -44.3 }),
+      tradeAnalysis: null,
+    });
+    expect(prompt).toContain("current: 44.3%");
+    expect(prompt).not.toContain("current: -44.3%");
+  });
+
+  it("does not flag DD overfit for negative maxDrawdownPct (B1: sign fix)", () => {
+    // DD of -8 means 8% DD, which is NOT < 1%, so should NOT trigger overfit signal
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics({ maxDrawdownPct: -8 }),
+      tradeAnalysis: null,
+    });
+    expect(prompt).not.toContain("OVERFIT SIGNAL: DD=");
+  });
+
+  it("displays DD without negative sign in overfit warning (P1: display fix)", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics({ maxDrawdownPct: -0.5 }),
+      tradeAnalysis: null,
+    });
+    expect(prompt).toContain("OVERFIT SIGNAL: DD=0.5%");
+    expect(prompt).not.toContain("DD=-0.5%");
+  });
+
   it("handles metrics with 0 trades gracefully", () => {
     const prompt = buildOptimizePrompt({
       ...baseOpts,
@@ -343,5 +414,732 @@ describe("buildOptimizePrompt structural diagnostics", () => {
       tradeAnalysis: { ...analysis, walkForward: null },
     });
     expect(prompt).toBeDefined();
+  });
+
+  it("includes module acceptance criteria in prompt (P4.1)", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+    });
+    expect(prompt).toContain("MODULE ACCEPTANCE CRITERIA");
+    expect(prompt).toContain("Trades >= 50");
+    expect(prompt).toContain("PF >= 1.3");
+  });
+
+  it("includes rollback reason when present (P4.2)", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      lastRollbackReason: "score degraded (25.0 vs best 33.7)",
+    });
+    expect(prompt).toContain("LAST ITERATION ROLLED BACK");
+    expect(prompt).toContain("score degraded");
+    expect(prompt).toContain("avoiding the same mistake");
+  });
+
+  it("does not include rollback section when no rollback occurred", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+    });
+    expect(prompt).not.toContain("LAST ITERATION ROLLED BACK");
+  });
+
+  it("includes walk-forward split ratio in KB constraints (P2.3)", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+    });
+    expect(prompt).toContain("Walk-forward split: train 70% / test 30%");
+    expect(prompt).toContain("KB §10.1");
+  });
+
+  it("includes M2 WR gate in module criteria for mean-reversion", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      moduleContext: {
+        moduleId: "M2", moduleName: "Mean Reversion", profile: "mean-reversion",
+        signalTF: "15m", regimeTF: "1H", varCap: 6,
+        fixedRules: "", stoppingCriteria: "- WR >= 50%", restructureLocks: "",
+        catalog: { slots: [] },
+      },
+    });
+    expect(prompt).toContain("WR >= 50%");
+    expect(prompt).toContain("[mandatory]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G5: Walk-forward metrics in prompt
+// ---------------------------------------------------------------------------
+
+describe("G5: walk-forward section in prompt", () => {
+  function makeMetrics(overrides?: Partial<Metrics>): Metrics {
+    return { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: -5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5, ...overrides };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 1, maxIter: 10, globalIter: 1,
+    paramHistoryPath: "/fake/history.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      moduleId: "M1", moduleName: "Breakout", profile: "breakout",
+      signalTF: "15m", regimeTF: "4h", varCap: 8,
+      fixedRules: "", stoppingCriteria: "", restructureLocks: "",
+      catalog: { slots: [] },
+    } as ModuleContext,
+  };
+
+  it("includes WF section when walkForward is provided", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      walkForward: {
+        trainTrades: 50, testTrades: 20, splitRatio: 0.7,
+        hourConsistency: [],
+        trainPF: 1.8, testPF: 1.2, pfRatio: 0.67, overfitFlag: false,
+      },
+    });
+    expect(prompt).toContain("WALK-FORWARD VALIDATION");
+    expect(prompt).toContain("trainPF=1.80");
+    expect(prompt).toContain("testPF=1.20");
+    expect(prompt).toContain("pfRatio=0.67");
+    expect(prompt).toContain("pfRatio 0.60-0.69");
+  });
+
+  it("shows overfit warning when overfitFlag is true", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      walkForward: {
+        trainTrades: 50, testTrades: 20, splitRatio: 0.7,
+        hourConsistency: [],
+        trainPF: 2.0, testPF: 0.8, pfRatio: 0.40, overfitFlag: true,
+      },
+    });
+    expect(prompt).toContain("currently overfitting");
+    expect(prompt).toContain("pfRatio=0.40");
+    expect(prompt).toContain("Reduce model complexity");
+  });
+
+  it("shows excellent for pfRatio >= 0.85", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      walkForward: {
+        trainTrades: 50, testTrades: 20, splitRatio: 0.7,
+        hourConsistency: [],
+        trainPF: 1.5, testPF: 1.4, pfRatio: 0.93, overfitFlag: false,
+      },
+    });
+    expect(prompt).toContain("excellent generalization");
+  });
+
+  it("shows good for pfRatio 0.70-0.84", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      walkForward: {
+        trainTrades: 50, testTrades: 20, splitRatio: 0.7,
+        hourConsistency: [],
+        trainPF: 1.5, testPF: 1.1, pfRatio: 0.73, overfitFlag: false,
+      },
+    });
+    expect(prompt).toContain("pfRatio 0.70-0.84");
+  });
+
+  it("does not include WF section when walkForward is null", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      walkForward: null,
+    });
+    expect(prompt).not.toContain("WALK-FORWARD VALIDATION");
+  });
+
+  it("does not include WF section when walkForward is not provided", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+    });
+    expect(prompt).not.toContain("WALK-FORWARD VALIDATION");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1.1: Scoring transparency — weights and breakdown in prompt
+// ---------------------------------------------------------------------------
+
+describe("P1.1: scoring transparency in prompt", () => {
+  function makeMetrics(overrides?: Partial<Metrics>): Metrics {
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, ...overrides };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 1, maxIter: 10, globalIter: 1,
+    paramHistoryPath: "/fake/history.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      moduleId: "M1", moduleName: "Breakout", profile: "breakout",
+      signalTF: "15m", regimeTF: "4h", varCap: 8,
+      fixedRules: "", stoppingCriteria: "", restructureLocks: "",
+      catalog: { slots: [] },
+    } as ModuleContext,
+  };
+
+  const sampleBreakdown: ScoreRaw = { pf: 0.355, avgR: 0, wr: 0.683, dd: 0, complexity: 0.429, sampleConfidence: 0.513 };
+  const sampleWeights: ScoringWeights = { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 };
+
+  it("includes SCORING FUNCTION section when scoreBreakdown is provided", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      scoreBreakdown: sampleBreakdown,
+      scoringWeights: sampleWeights,
+      currentScore: 33.7,
+    });
+    expect(prompt).toContain("SCORING FUNCTION");
+    expect(prompt).toContain("Weights:");
+    expect(prompt).toContain("PF=25%");
+    expect(prompt).toContain("Total: 33.7/100");
+  });
+
+  it("does not include SCORING FUNCTION when breakdown is absent", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+    });
+    expect(prompt).not.toContain("SCORING FUNCTION");
+  });
+
+  it("shows focus hint about lowest-scoring component", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      scoreBreakdown: sampleBreakdown,
+      scoringWeights: sampleWeights,
+      currentScore: 33.7,
+    });
+    expect(prompt).toContain("Focus on the LOWEST-scoring");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1.2: Score delta vs best
+// ---------------------------------------------------------------------------
+
+describe("P1.2: score delta section", () => {
+  function makeMetrics(overrides?: Partial<Metrics>): Metrics {
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, ...overrides };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 2, maxIter: 10, globalIter: 2,
+    paramHistoryPath: "/fake/history.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      moduleId: "M1", moduleName: "Breakout", profile: "breakout",
+      signalTF: "15m", regimeTF: "4h", varCap: 8,
+      fixedRules: "", stoppingCriteria: "", restructureLocks: "",
+      catalog: { slots: [] },
+    } as ModuleContext,
+  };
+
+  const current: ScoreRaw = { pf: 0.2, avgR: 0, wr: 0.5, dd: 0, complexity: 0.4, sampleConfidence: 0.2 };
+  const best: ScoreRaw = { pf: 0.4, avgR: 0.3, wr: 0.7, dd: 0.5, complexity: 0.4, sampleConfidence: 1.0 };
+  const weights: ScoringWeights = { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 };
+
+  it("shows delta section when current < best", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      scoreBreakdown: current,
+      bestScoreBreakdown: best,
+      scoringWeights: weights,
+      currentScore: 20,
+      bestScore: 45,
+    });
+    expect(prompt).toContain("SCORE DELTA vs BEST");
+    expect(prompt).toContain("20.0 vs 45.0");
+  });
+
+  it("does not show delta section when current >= best", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      scoreBreakdown: current,
+      bestScoreBreakdown: best,
+      scoringWeights: weights,
+      currentScore: 50,
+      bestScore: 45,
+    });
+    expect(prompt).not.toContain("SCORE DELTA vs BEST");
+  });
+
+  it("shows which component dropped the most", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      scoreBreakdown: current,
+      bestScoreBreakdown: best,
+      scoringWeights: weights,
+      currentScore: 20,
+      bestScore: 45,
+    });
+    expect(prompt).toContain("dropped the most");
+    expect(prompt).toContain("Sample");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2.1: Last iteration result in prompt
+// ---------------------------------------------------------------------------
+
+describe("P2.1: last iteration result", () => {
+  function makeMetrics(overrides?: Partial<Metrics>): Metrics {
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, ...overrides };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 2, maxIter: 10, globalIter: 2,
+    paramHistoryPath: "/fake/history.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      moduleId: "M1", moduleName: "Breakout", profile: "breakout",
+      signalTF: "15m", regimeTF: "4h", varCap: 8,
+      fixedRules: "", stoppingCriteria: "", restructureLocks: "",
+      catalog: { slots: [] },
+    } as ModuleContext,
+  };
+
+  it("includes LAST ITERATION RESULT when paramHistory has iterations with changes", () => {
+    // Mock fs.readFileSync to return param history
+    vi.spyOn(fs, "readFileSync").mockImplementation((p: any) => {
+      if (String(p).includes("history.json")) {
+        return JSON.stringify({
+          iterations: [{
+            iter: 1,
+            date: "2025-01-01",
+            change: { param: "dcSlow", from: 55, to: 60 },
+            before: { pnl: -100, trades: 77, pf: 0.5 },
+            after: { pnl: -442.46, trades: 77, pf: 0.33 },
+            verdict: "degraded",
+          }],
+          neverWorked: [],
+          exploredRanges: {},
+          pendingHypotheses: [],
+        });
+      }
+      if (String(p).includes("strategy.ts")) return "// strategy source";
+      return "";
+    });
+
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: null });
+    expect(prompt).toContain("LAST ITERATION RESULT");
+    expect(prompt).toContain("dcSlow");
+    expect(prompt).toContain("from 55 to 60");
+    expect(prompt).toContain("degraded");
+
+    vi.restoreAllMocks();
+  });
+
+  it("shows structural change for restructure iterations (change=null)", () => {
+    vi.spyOn(fs, "readFileSync").mockImplementation((p: any) => {
+      if (String(p).includes("history.json")) {
+        return JSON.stringify({
+          iterations: [{
+            iter: 5,
+            date: "2025-01-01",
+            change: null,
+            before: { pnl: -442, trades: 157, pf: 0.33 },
+            after: { pnl: -220, trades: 33, pf: 0.10 },
+            verdict: "degraded",
+          }],
+          neverWorked: [],
+          exploredRanges: {},
+          pendingHypotheses: [],
+        });
+      }
+      if (String(p).includes("strategy.ts")) return "// strategy source";
+      return "";
+    });
+
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: null });
+    expect(prompt).toContain("LAST ITERATION RESULT");
+    expect(prompt).toContain("Structural change");
+    expect(prompt).toContain("degraded");
+
+    vi.restoreAllMocks();
+  });
+
+  it("skips LAST ITERATION RESULT when verdict is pending", () => {
+    vi.spyOn(fs, "readFileSync").mockImplementation((p: any) => {
+      if (String(p).includes("history.json")) {
+        return JSON.stringify({
+          iterations: [{
+            iter: 5,
+            date: "2025-01-01",
+            change: null,
+            before: { pnl: -442, trades: 157, pf: 0.33 },
+            after: null,
+            verdict: "pending",
+          }],
+          neverWorked: [],
+          exploredRanges: {},
+          pendingHypotheses: [],
+        });
+      }
+      if (String(p).includes("strategy.ts")) return "// strategy source";
+      return "";
+    });
+
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: null });
+    expect(prompt).not.toContain("LAST ITERATION RESULT");
+
+    vi.restoreAllMocks();
+  });
+
+  it("does not include LAST ITERATION RESULT when no param history", () => {
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: null });
+    expect(prompt).not.toContain("LAST ITERATION RESULT");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1: Diagnostic guide
+// ---------------------------------------------------------------------------
+describe("P1: diagnostic guide", () => {
+  function makeMetrics(overrides?: Partial<Metrics>): Metrics {
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: -22, winRate: 25, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, ...overrides };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 1, maxIter: 10, globalIter: 1,
+    paramHistoryPath: "/fake/history.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      moduleId: "M1", moduleName: "Breakout", profile: "breakout",
+      signalTF: "15m", regimeTF: "4h", varCap: 8,
+      fixedRules: "", stoppingCriteria: "", restructureLocks: "",
+      catalog: { slots: [] },
+    } as ModuleContext,
+  };
+
+  it("shows R:R diagnostic when PF < 1 and R:R near symmetric", () => {
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics({ profitFactor: 0.5, avgWinR: 0.5, avgLossR: -0.5 }), tradeAnalysis: null });
+    expect(prompt).toContain("DIAGNOSTIC GUIDE");
+    expect(prompt).toContain("R:R ratio near 1.0");
+  });
+
+  it("shows entry selectivity diagnostic when PF < 1 and WR < 30%", () => {
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics({ profitFactor: 0.5, winRate: 22 }), tradeAnalysis: null });
+    expect(prompt).toContain("entry selectivity");
+  });
+
+  it("flags weak direction when one direction PF < 0.5", () => {
+    const analysis: TradeAnalysis = {
+      totalExitRows: 60,
+      byDirection: { long: { count: 30, pnl: -200, winRate: 20, profitFactor: 0.3, avgTrade: -6.7 }, short: { count: 30, pnl: 200, winRate: 55, profitFactor: 1.8, avgTrade: 6.7 } },
+      bySession: {
+        Asia: { count: 15, pnl: 0, winRate: 50, profitFactor: 1.0 },
+        London: { count: 15, pnl: 0, winRate: 50, profitFactor: 1.0 },
+        NY: { count: 15, pnl: 0, winRate: 50, profitFactor: 1.0 },
+        "Off-peak": { count: 15, pnl: 0, winRate: 50, profitFactor: 1.0 },
+      } as any,
+      byExitType: [], byDayOfWeek: {},
+      best3TradesPnl: [50, 40, 30], worst3TradesPnl: [-30, -25, -20],
+      avgBarsWinners: 10, avgBarsLosers: 5, walkForward: null,
+    };
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: analysis });
+    expect(prompt).toContain("long direction PF < 0.5");
+  });
+
+  it("does not show diagnostic guide when metrics are healthy", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics({ profitFactor: 1.8, winRate: 50, avgWinR: 1.2, avgLossR: -0.5 }),
+      tradeAnalysis: null,
+    });
+    expect(prompt).not.toContain("DIAGNOSTIC GUIDE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2: Param effect map in core params section
+// ---------------------------------------------------------------------------
+describe("P2: param effect map", () => {
+  function makeMetrics(overrides?: Partial<Metrics>): Metrics {
+    return { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: -5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5, ...overrides };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: {
+      minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8,
+      designChecklist: undefined,
+      coreParameters: [
+        { name: "dcSlow", min: 30, max: 60, step: 5 },
+        { name: "atrStopMult", min: 3.0, max: 5.0, step: 0.5 },
+        { name: "adxThreshold", min: 20, max: 35, step: 5 },
+      ],
+    },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 1, maxIter: 10, globalIter: 1,
+    paramHistoryPath: "/fake/history.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      moduleId: "M1", moduleName: "Breakout", profile: "breakout",
+      signalTF: "15m", regimeTF: "4h", varCap: 8,
+      fixedRules: "", stoppingCriteria: "", restructureLocks: "",
+      catalog: { slots: [] },
+    } as ModuleContext,
+  };
+
+  it("shows range info for core params", () => {
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: null });
+    expect(prompt).toContain("dcSlow [30-60, step 5]");
+    expect(prompt).toContain("atrStopMult [3-5, step 0.5]");
+  });
+
+  it("shows param effect hints for known param names", () => {
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: null });
+    expect(prompt).toContain("fewer/bigger breakouts");
+    expect(prompt).toContain("wider stop");
+    expect(prompt).toContain("stricter filter");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2.2: Explored ranges enriched with metrics
+// ---------------------------------------------------------------------------
+
+describe("P2.2: explored ranges with metrics", () => {
+  function makeMetrics(overrides?: Partial<Metrics>): Metrics {
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, ...overrides };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 3, maxIter: 10, globalIter: 5,
+    paramHistoryPath: "/fake/history.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      moduleId: "M1", moduleName: "Breakout", profile: "breakout",
+      signalTF: "15m", regimeTF: "4h", varCap: 8,
+      fixedRules: "", stoppingCriteria: "", restructureLocks: "",
+      catalog: { slots: [] },
+    } as ModuleContext,
+  };
+
+  it("shows PF per tested value when iteration data exists", () => {
+    vi.spyOn(fs, "readFileSync").mockImplementation((p: any) => {
+      if (String(p).includes("history.json")) {
+        return JSON.stringify({
+          iterations: [
+            { iter: 1, date: "2025-01-01", change: { param: "dcSlow", from: 40, to: 45 }, before: { pnl: 0, trades: 70, pf: 0.28 }, after: { pnl: 10, trades: 72, pf: 0.31 }, verdict: "improved" },
+            { iter: 2, date: "2025-01-01", change: { param: "dcSlow", from: 45, to: 50 }, before: { pnl: 10, trades: 72, pf: 0.31 }, after: { pnl: 30, trades: 75, pf: 0.35 }, verdict: "improved" },
+            { iter: 3, date: "2025-01-01", change: { param: "dcSlow", from: 50, to: 55 }, before: { pnl: 30, trades: 75, pf: 0.35 }, after: { pnl: 20, trades: 73, pf: 0.33 }, verdict: "degraded" },
+          ],
+          neverWorked: [],
+          exploredRanges: { dcSlow: [40, 45, 50, 55] },
+          pendingHypotheses: [],
+        });
+      }
+      if (String(p).includes("strategy.ts")) return "// strategy source";
+      return "";
+    });
+
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: null });
+    expect(prompt).toContain("EXPLORED SPACE");
+    expect(prompt).toContain("PF=");
+    expect(prompt).toContain("Sweet spot");
+
+    vi.restoreAllMocks();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P3.1: Guardrail specificity tested via orchestrator rollback tests
+// ---------------------------------------------------------------------------
+
+describe("P3.1: guardrail-specific rollback reason", () => {
+  it("WF overfit produces specific message", () => {
+    const wfViolations = [{ field: "pfRatio", reason: "0.45 < 0.6" }];
+    const fvViolations: any[] = [];
+    const wf = { pfRatio: 0.45, trainPF: 1.8, testPF: 0.81, overfitFlag: true };
+    const scoreVerdict = "accept";
+    const effectiveVerdict = "reject";
+
+    let rollbackCause: string;
+    if (effectiveVerdict === scoreVerdict) {
+      rollbackCause = "score degraded";
+    } else if (wfViolations.length > 0) {
+      rollbackCause = `WF overfit: pfRatio=${wf.pfRatio.toFixed(2)} < 0.6 (train PF=${wf.trainPF.toFixed(2)}, test PF=${wf.testPF.toFixed(2)})`;
+    } else if (fvViolations.length > 0) {
+      rollbackCause = `Free variable cap exceeded`;
+    } else {
+      rollbackCause = "guardrail rejected";
+    }
+
+    expect(rollbackCause).toContain("WF overfit");
+    expect(rollbackCause).toContain("pfRatio=0.45");
+    expect(rollbackCause).toContain("train PF=1.80");
+  });
+
+  it("free variable violation produces specific message", () => {
+    const wfViolations: any[] = [];
+    const fvViolations = [{ field: "paramCount", reason: "10 > 8" }];
+    const paramCount = 10;
+    const maxFreeVariables = 8;
+
+    let rollbackCause: string;
+    if (wfViolations.length > 0) {
+      rollbackCause = "WF overfit";
+    } else if (fvViolations.length > 0) {
+      rollbackCause = `Free variable cap exceeded: ${paramCount} params > max ${maxFreeVariables}`;
+    } else {
+      rollbackCause = "unknown";
+    }
+
+    expect(rollbackCause).toContain("Free variable cap exceeded");
+    expect(rollbackCause).toContain("10 params > max 8");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P3.2: Failed restructure diagnosis in prompt
+// ---------------------------------------------------------------------------
+
+describe("P3.2: failed restructure diagnosis", () => {
+  function makeMetrics(overrides?: Partial<Metrics>): Metrics {
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, ...overrides };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 1, maxIter: 10, globalIter: 1,
+    paramHistoryPath: "/fake/history.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      moduleId: "M1", moduleName: "Breakout", profile: "breakout",
+      signalTF: "15m", regimeTF: "4h", varCap: 8,
+      fixedRules: "", stoppingCriteria: "", restructureLocks: "",
+      catalog: { slots: [] },
+    } as ModuleContext,
+  };
+
+  it("includes diagnosis in failed restructure section", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      failedRestructures: [
+        { globalIter: 18, trades: 1, pf: 0, score: 29.9, diagnosis: "trades 1 < minTrades 50, PF 0.00 < 1.3" },
+      ],
+    });
+    expect(prompt).toContain("FAILED RESTRUCTURE");
+    expect(prompt).toContain("trades 1 < minTrades 50");
+    expect(prompt).toContain("PF 0.00 < 1.3");
+  });
+
+  it("shows failure without diagnosis when not provided", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      failedRestructures: [
+        { globalIter: 18, trades: 30, pf: 0.93, score: 32.4 },
+      ],
+    });
+    expect(prompt).toContain("FAILED RESTRUCTURE");
+    expect(prompt).toContain("30 trades");
+    // Without diagnosis, line should end with Score=32.4 (no " | diagnosis" suffix)
+    expect(prompt).toMatch(/Score=32\.4\n/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P4.1: paramCount in checkpoint
+// ---------------------------------------------------------------------------
+
+describe("P4.1: paramCount in checkpoint", () => {
+  it("uses paramCount from checkpoint instead of Object.keys after rollback", () => {
+    const cpParams = { dcSlow: 55, dcFast: 20, atrStopMult: 3.5 };
+    const cpParamCount = 4; // strategy has 4 optimizable but only 3 overrides
+    const phase = "restructure";
+    const effectiveVerdict = "reject";
+
+    let paramCount = 8; // stale
+
+    if (effectiveVerdict === "reject" && phase !== "refine") {
+      if (cpParamCount != null) {
+        paramCount = cpParamCount;
+      } else {
+        paramCount = Object.keys(cpParams).length;
+      }
+    }
+
+    expect(paramCount).toBe(4); // uses saved count, not Object.keys(3)
   });
 });

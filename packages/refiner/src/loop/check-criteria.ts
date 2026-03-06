@@ -33,7 +33,7 @@ export function checkCriteria(
     pnl > 0 &&
     trades >= minTrades &&
     pf >= minPF &&
-    dd <= maxDD &&
+    Math.abs(dd) <= maxDD &&
     wr >= minWR &&
     avgR >= minAvgR
   );

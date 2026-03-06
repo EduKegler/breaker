@@ -128,4 +128,33 @@ describe("computeScore", () => {
     expect(score.raw.dd).toBe(0);
     expect(score.breakdown).toContain("DD: 0.0/15");
   });
+
+  it("applies harsh penalty when trades < 20 (Bug B: score inflation)", () => {
+    // 2 winning trades produce perfect WR/DD/avgR but are statistically meaningless.
+    // Before fix: scored 49.5. After fix: score * (2/20) = ~5.
+    const twoTradeMetrics: Metrics = {
+      totalPnl: 12, numTrades: 2, profitFactor: 0,
+      maxDrawdownPct: 0, winRate: 100, avgR: 0.6,
+      avgWinR: 0.6, avgLossR: 0, maxLossR: 0, expectancy: 0.6,
+    };
+    const score = computeScore(twoTradeMetrics, 3, 2);
+    expect(score.weighted).toBeLessThan(10);
+  });
+
+  it("does not apply sample floor penalty when trades >= 20", () => {
+    const score = computeScore(goodMetrics, 3, 25);
+    expect(score.weighted).toBeGreaterThan(30);
+  });
+
+  it("sample floor penalty is proportional to trades/20", () => {
+    const metrics: Metrics = {
+      totalPnl: 50, numTrades: 10, profitFactor: 1.5,
+      maxDrawdownPct: 5, winRate: 50, avgR: 0.3,
+      avgWinR: 1.0, avgLossR: -0.5, maxLossR: -1.0, expectancy: 0.3,
+    };
+    const score10 = computeScore(metrics, 3, 10);
+    const score20 = computeScore({ ...metrics, numTrades: 20 }, 3, 20);
+    // 10 trades should be roughly half the score of 20 trades (from the multiplier)
+    expect(score10.weighted).toBeLessThan(score20.weighted * 0.7);
+  });
 });

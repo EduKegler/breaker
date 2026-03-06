@@ -29,6 +29,7 @@ describe("state-machine: initial context", () => {
     expect(ctx.phaseIterCount).toBe(0);
     expect(ctx.neutralStreak).toBe(0);
     expect(ctx.noChangeCount).toBe(0);
+    expect(ctx.wfRejectStreak).toBe(0);
     expect(ctx.fixAttempts).toBe(0);
     expect(ctx.transientFailures).toBe(0);
     expect(ctx.phaseCycles).toBe(0);
@@ -412,10 +413,32 @@ describe("state-machine: CRITERIA_MET", () => {
 // RESEARCH_DONE event
 // ---------------------------------------------------------------------------
 describe("state-machine: RESEARCH_DONE", () => {
-  it("sets researchBriefPath when research succeeds", () => {
+  it("transitions from research to restructure and sets briefPath (Bug C fix)", () => {
     const actor = startActor({ initialPhase: "research" });
     actor.send({ type: "RESEARCH_DONE", briefPath: "/artifacts/research-brief.json" });
+    expect(actor.getSnapshot().value).toBe("restructure");
     expect(actor.getSnapshot().context.researchBriefPath).toBe("/artifacts/research-brief.json");
+  });
+
+  it("resets phase counters on RESEARCH_DONE transition", () => {
+    const actor = startActor({
+      initialPhase: "research",
+      phaseIterCount: 3,
+      neutralStreak: 2,
+      noChangeCount: 1,
+    });
+    actor.send({ type: "RESEARCH_DONE", briefPath: "/brief.json" });
+    const ctx = actor.getSnapshot().context;
+    expect(ctx.phaseIterCount).toBe(0);
+    expect(ctx.neutralStreak).toBe(0);
+    expect(ctx.noChangeCount).toBe(0);
+  });
+
+  it("also works in restructure state (stores briefPath without transition)", () => {
+    const actor = startActor({ initialPhase: "restructure" });
+    actor.send({ type: "RESEARCH_DONE", briefPath: "/brief.json" });
+    expect(actor.getSnapshot().value).toBe("restructure");
+    expect(actor.getSnapshot().context.researchBriefPath).toBe("/brief.json");
   });
 });
 
@@ -510,6 +533,73 @@ describe("state-machine: transientFailures survive phase transitions", () => {
     const actor = startActor({ transientFailures: 3 });
     actor.send({ type: "BACKTEST_OK", currentScore: 50, currentPnl: 100 });
     expect(actor.getSnapshot().context.transientFailures).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B1 fix: WF_REJECT event and wfRejectStreak escalation
+// ---------------------------------------------------------------------------
+describe("state-machine: WF_REJECT and wfRejectStreak", () => {
+  it("WF_REJECT increments wfRejectStreak", () => {
+    const actor = startActor();
+    expect(actor.getSnapshot().context.wfRejectStreak).toBe(0);
+    actor.send({ type: "WF_REJECT" });
+    expect(actor.getSnapshot().context.wfRejectStreak).toBe(1);
+    actor.send({ type: "WF_REJECT" });
+    expect(actor.getSnapshot().context.wfRejectStreak).toBe(2);
+  });
+
+  it("escalates refine -> research when wfRejectStreak >= 2", () => {
+    const actor = startActor({ wfRejectStreak: 2, maxCycles: 2 });
+    actor.send({ type: "ESCALATE" });
+    expect(actor.getSnapshot().value).toBe("research");
+  });
+
+  it("does NOT escalate when wfRejectStreak < 2 and other counters low", () => {
+    const actor = startActor({ wfRejectStreak: 1, neutralStreak: 1, noChangeCount: 0 });
+    actor.send({ type: "ESCALATE" });
+    expect(actor.getSnapshot().value).toBe("refine");
+  });
+
+  it("CHECKPOINT_SAVED resets wfRejectStreak", () => {
+    const actor = startActor({ wfRejectStreak: 3 });
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 50, bestPnl: 100, bestIter: 1 });
+    expect(actor.getSnapshot().context.wfRejectStreak).toBe(0);
+  });
+
+  it("VERDICT degraded does NOT reset wfRejectStreak", () => {
+    const actor = startActor({ wfRejectStreak: 1 });
+    actor.send({ type: "VERDICT", verdict: "degraded" });
+    expect(actor.getSnapshot().context.wfRejectStreak).toBe(1);
+  });
+
+  it("resetPhaseCounters resets wfRejectStreak on phase transition", () => {
+    const actor = startActor({ wfRejectStreak: 3, neutralStreak: 3, maxCycles: 2 });
+    actor.send({ type: "ESCALATE" });
+    expect(actor.getSnapshot().value).toBe("research");
+    expect(actor.getSnapshot().context.wfRejectStreak).toBe(0);
+  });
+
+  it("B1 scenario: 3 consecutive WF rejections trigger escalation", () => {
+    const actor = startActor({ maxCycles: 2 });
+
+    // Simulate 3 iterations where Claude makes changes but WF rejects
+    for (let i = 0; i < 3; i++) {
+      actor.send({ type: "ITER_START" });
+      actor.send({ type: "CHANGE_APPLIED" }); // Claude applied a change
+      actor.send({ type: "BACKTEST_OK", currentScore: 50, currentPnl: 100 });
+      actor.send({ type: "VERDICT", verdict: "degraded" }); // WF forced reject
+      actor.send({ type: "WF_REJECT" }); // WF-specific event
+    }
+
+    expect(actor.getSnapshot().context.wfRejectStreak).toBe(3);
+    expect(actor.getSnapshot().context.noChangeCount).toBe(0); // CHANGE_APPLIED resets this
+    expect(actor.getSnapshot().context.neutralStreak).toBe(0); // degraded verdict resets this
+
+    // Without the fix, ESCALATE would fail (noChangeCount=0, neutralStreak=0)
+    // With the fix, wfRejectStreak=3 >= 2 triggers escalation
+    actor.send({ type: "ESCALATE" });
+    expect(actor.getSnapshot().value).toBe("research");
   });
 });
 

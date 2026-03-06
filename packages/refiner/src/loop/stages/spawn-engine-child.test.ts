@@ -63,7 +63,7 @@ describe("runEngineChild", () => {
   });
 
   it("throws when child process returns invalid JSON", () => {
-    vi.mocked(execaSync).mockReturnValue({ stdout: "not json" } as any);
+    vi.mocked(execaSync).mockReturnValue({ stdout: "not json at all {{{" } as any);
 
     expect(() =>
       runEngineChild({
@@ -77,5 +77,47 @@ describe("runEngineChild", () => {
         endTime: 1,
       }),
     ).toThrow();
+  });
+
+  it("returns paramCount from child process result (B3)", () => {
+    const fakeResult = {
+      metrics: { totalPnl: 42, numTrades: 5 },
+      analysis: { byDirection: {}, byExitType: {} },
+      trades: [],
+      paramCount: 4,
+    };
+    vi.mocked(execaSync).mockReturnValue({ stdout: JSON.stringify(fakeResult) } as any);
+
+    const result = runEngineChild({
+      repoRoot: "/repo",
+      factoryName: "createDonchianAdx",
+      dbPath: "/db",
+      coin: "BTC",
+      source: "binance",
+      interval: "15m",
+      startTime: 0,
+      endTime: 1,
+    });
+
+    expect(result.paramCount).toBe(4);
+  });
+
+  it("handles truncated JSON via safeJsonParse repair", () => {
+    // safeJsonParse with repair=true uses jsonrepair to fix truncated JSON
+    const truncated = '{"metrics":{"totalPnl":42},"analysis":{"byDirection":{}},"trades":[]}';
+    vi.mocked(execaSync).mockReturnValue({ stdout: truncated } as any);
+
+    const result = runEngineChild({
+      repoRoot: "/repo",
+      factoryName: "createDonchianAdx",
+      dbPath: "/db",
+      coin: "BTC",
+      source: "binance",
+      interval: "15m",
+      startTime: 0,
+      endTime: 1,
+    });
+
+    expect(result.metrics).toEqual({ totalPnl: 42 });
   });
 });

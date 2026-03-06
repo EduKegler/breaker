@@ -11,6 +11,7 @@ export default defineConfig({
         "src/types/**",
         "src/**/index.ts",
         "src/run-backtest.ts",
+        "src/strategies/**",
       ],
     },
   },

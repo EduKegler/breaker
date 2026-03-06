@@ -70,7 +70,10 @@ async function main(): Promise<void> {
     const metrics = computeMetrics(result.trades, result.maxDrawdownPct);
     const analysis = analyzeTradeList(result.trades);
 
-    process.stdout.write(JSON.stringify({ metrics, analysis, trades: result.trades }));
+    // B3: Include paramCount from the freshly-loaded strategy (ESM cache is clean in child process)
+    const paramCount = Object.values(strategy.params).filter((p) => p.optimizable !== false).length;
+
+    process.stdout.write(JSON.stringify({ metrics, analysis, trades: result.trades, paramCount }));
   } finally {
     cache.close();
   }

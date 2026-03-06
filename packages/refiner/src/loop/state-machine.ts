@@ -17,6 +17,7 @@ interface BreakerContext {
   phaseIterCount: number;
   neutralStreak: number;
   noChangeCount: number;
+  wfRejectStreak: number;
   fixAttempts: number;
   transientFailures: number;
   phaseCycles: number;
@@ -45,7 +46,8 @@ type BreakerEvent =
   | { type: "CHECKPOINT_SAVED"; bestScore: number; bestPnl: number; bestIter: number }
   | { type: "CRITERIA_MET" }
   | { type: "RESEARCH_DONE"; briefPath: string }
-  | { type: "SET_NEEDS_REBUILD"; value: boolean };
+  | { type: "SET_NEEDS_REBUILD"; value: boolean }
+  | { type: "WF_REJECT" };
 
 // ---------------------------------------------------------------------------
 // Input (used to configure initial state and context)
@@ -55,6 +57,7 @@ export interface BreakerInput {
   phaseIterCount?: number;
   neutralStreak?: number;
   noChangeCount?: number;
+  wfRejectStreak?: number;
   fixAttempts?: number;
   transientFailures?: number;
   phaseCycles?: number;
@@ -81,9 +84,10 @@ const commonPhaseEvents = {
   COMPILE_ERROR: { actions: "incrementFixAttempts" as const },
   TRANSIENT_ERROR: { actions: "incrementTransient" as const },
   BACKTEST_OK: { actions: ["resetErrors" as const, "updateCurrentScore" as const] },
-  CHECKPOINT_SAVED: { actions: "updateBest" as const },
+  CHECKPOINT_SAVED: { actions: ["updateBest" as const, "resetWfReject" as const] },
   CRITERIA_MET: { target: "done" as const },
   SET_NEEDS_REBUILD: { actions: "setNeedsRebuild" as const },
+  WF_REJECT: { actions: "incrementWfReject" as const },
 };
 
 // ---------------------------------------------------------------------------
@@ -100,7 +104,7 @@ export const breakerMachine = setup({
     isInitialRestructure: ({ context }) => context.initialPhase === "restructure",
 
     shouldEscalateRefine: ({ context }) =>
-      (context.neutralStreak >= 3 || context.noChangeCount >= 2) &&
+      (context.neutralStreak >= 3 || context.noChangeCount >= 2 || context.wfRejectStreak >= 2) &&
       context.phaseCycles < context.maxCycles,
 
     shouldEscalateResearchOrRestructure: ({ context }) =>
@@ -125,6 +129,7 @@ export const breakerMachine = setup({
     resetPhaseCounters: assign({
       neutralStreak: 0,
       noChangeCount: 0,
+      wfRejectStreak: 0,
       phaseIterCount: 0,
     }),
     incrementPhaseIter: assign({
@@ -149,6 +154,12 @@ export const breakerMachine = setup({
     }),
     incrementNoChange: assign({
       noChangeCount: ({ context }) => context.noChangeCount + 1,
+    }),
+    incrementWfReject: assign({
+      wfRejectStreak: ({ context }) => context.wfRejectStreak + 1,
+    }),
+    resetWfReject: assign({
+      wfRejectStreak: 0,
     }),
     resetNoChange: assign({
       noChangeCount: 0,
@@ -206,6 +217,7 @@ export const breakerMachine = setup({
     phaseIterCount: input?.phaseIterCount ?? 0,
     neutralStreak: input?.neutralStreak ?? 0,
     noChangeCount: input?.noChangeCount ?? 0,
+    wfRejectStreak: input?.wfRejectStreak ?? 0,
     fixAttempts: input?.fixAttempts ?? 0,
     transientFailures: input?.transientFailures ?? 0,
     phaseCycles: input?.phaseCycles ?? 0,
@@ -259,7 +271,10 @@ export const breakerMachine = setup({
           target: "restructure",
           actions: "resetPhaseCounters",
         },
-        RESEARCH_DONE: { actions: "setResearchBriefPath" },
+        RESEARCH_DONE: {
+          target: "restructure",
+          actions: ["setResearchBriefPath", "resetPhaseCounters"],
+        },
       },
     },
 

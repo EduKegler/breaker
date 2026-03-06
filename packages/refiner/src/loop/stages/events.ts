@@ -86,3 +86,14 @@ export function emitEvent(opts: {
 
   log.info(event, "");
 }
+
+/**
+ * Close all open pino loggers and clear the cache.
+ * Call at the end of a run to avoid leaking file handles.
+ */
+export function closeLoggers(): void {
+  for (const [, logger] of loggers) {
+    logger.flush();
+  }
+  loggers.clear();
+}

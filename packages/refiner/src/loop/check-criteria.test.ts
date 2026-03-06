@@ -86,6 +86,15 @@ describe("checkCriteria", () => {
     expect(checkCriteria(goodMetrics, baseCriteria)).toBe(true);
   });
 
+  it("returns false when DD is negative and abs value exceeds maxDD (B1: sign fix)", () => {
+    // equity-curve.ts returns maxDrawdownPct as negative (e.g., -15 for 15% DD)
+    expect(checkCriteria({ ...goodMetrics, maxDrawdownPct: -15 }, baseCriteria)).toBe(false);
+  });
+
+  it("returns true when DD is negative and abs value is within maxDD (B1: sign fix)", () => {
+    expect(checkCriteria({ ...goodMetrics, maxDrawdownPct: -5 }, baseCriteria)).toBe(true);
+  });
+
   it("handles null metric fields gracefully", () => {
     const nullMetrics = {
       totalPnl: null,

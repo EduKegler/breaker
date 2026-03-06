@@ -1,4 +1,5 @@
 import path from "node:path";
+import { z } from "zod";
 import { execaSync } from "execa";
 import type {
   CandleInterval,
@@ -6,11 +7,13 @@ import type {
   TradeAnalysis,
   CompletedTrade,
 } from "@breaker/backtest";
+import { safeJsonParse } from "../../lib/safe-json.js";
 
 interface EngineResult {
   metrics: Metrics;
   analysis: TradeAnalysis;
   trades: CompletedTrade[];
+  paramCount?: number;
 }
 
 /**
@@ -50,6 +53,13 @@ export function runEngineChild(opts: {
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  const result = JSON.parse(stdout) as EngineResult;
+  const engineResultSchema = z.object({
+    metrics: z.object({}).passthrough(),
+    analysis: z.object({}).passthrough(),
+    trades: z.array(z.object({}).passthrough()),
+    paramCount: z.number().optional(),
+  }).passthrough();
+
+  const result = safeJsonParse<EngineResult>(stdout, { repair: true, schema: engineResultSchema as unknown as z.ZodType<EngineResult> });
   return result;
 }

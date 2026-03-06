@@ -345,6 +345,9 @@ function placeEntryOrders(
   // Take profit orders
   for (let j = 0; j < signal.takeProfits.length; j++) {
     const tp = signal.takeProfits[j];
+    if (tp.pctOfPosition > 1) {
+      throw new Error(`pctOfPosition must be a fraction (0-1), got ${tp.pctOfPosition}. Use 0.50 for 50%, not 50.`);
+    }
     const tpSize = size * tp.pctOfPosition;
     const tpOrder: Order = {
       id: createOrderId(),

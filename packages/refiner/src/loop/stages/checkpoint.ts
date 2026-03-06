@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
 import type { CheckpointData } from "../types.js";
-import type { Metrics, CompletedTrade } from "@breaker/backtest";
+import type { Metrics, CompletedTrade, StrategyParam } from "@breaker/backtest";
 import { safeJsonParse } from "../../lib/safe-json.js";
 
 /**
@@ -21,44 +21,57 @@ export const checkpoint = {
     iter: number,
     params?: Record<string, number>,
     trades?: CompletedTrade[],
+    paramCount?: number,
+    strategyParams?: Record<string, StrategyParam>,
   ): void {
-    if (!fs.existsSync(checkpointDir)) {
-      fs.mkdirSync(checkpointDir, { recursive: true });
-    }
-
     const strategyPath = path.join(checkpointDir, "best-strategy.ts.bak");
     const metricsPath = path.join(checkpointDir, "best-metrics.json");
     const paramsPath = path.join(checkpointDir, "best-params.json");
 
-    writeFileAtomic.sync(strategyPath, strategyContent, "utf8");
-    writeFileAtomic.sync(
-      metricsPath,
-      JSON.stringify({ ...metrics, iter, timestamp: new Date().toISOString() }, null, 2),
-      "utf8",
-    );
-
-    if (params) {
-      writeFileAtomic.sync(paramsPath, JSON.stringify(params, null, 2), "utf8");
-    }
-
-    if (trades && trades.length > 0) {
-      const csvHeader = "direction,entryPrice,exitPrice,pnl,rMultiple,entryTimestamp,exitTimestamp,barsHeld,exitType,entryComment";
-      const csvRows = trades.map((t) =>
-        [
-          t.direction,
-          t.entryPrice,
-          t.exitPrice,
-          t.pnl,
-          t.rMultiple,
-          new Date(t.entryTimestamp).toISOString(),
-          new Date(t.exitTimestamp).toISOString(),
-          t.barsHeld,
-          t.exitType,
-          `"${(t.entryComment || "").replace(/"/g, '""')}"`,
-        ].join(","),
+    // Write all checkpoint files. If any write fails (e.g. disk full),
+    // catch and re-throw with context so the caller knows the checkpoint is partial.
+    try {
+      if (!fs.existsSync(checkpointDir)) {
+        fs.mkdirSync(checkpointDir, { recursive: true });
+      }
+      writeFileAtomic.sync(strategyPath, strategyContent, "utf8");
+      writeFileAtomic.sync(
+        metricsPath,
+        JSON.stringify({
+          ...metrics,
+          iter,
+          timestamp: new Date().toISOString(),
+          ...(paramCount != null ? { paramCount } : {}),
+          ...(strategyParams != null ? { strategyParams } : {}),
+        }, null, 2),
+        "utf8",
       );
-      const csvPath = path.join(checkpointDir, "best-trades.csv");
-      writeFileAtomic.sync(csvPath, [csvHeader, ...csvRows].join("\n") + "\n", "utf8");
+
+      if (params) {
+        writeFileAtomic.sync(paramsPath, JSON.stringify(params, null, 2), "utf8");
+      }
+
+      if (trades && trades.length > 0) {
+        const csvHeader = "direction,entryPrice,exitPrice,pnl,rMultiple,entryTimestamp,exitTimestamp,barsHeld,exitType,entryComment";
+        const csvRows = trades.map((t) =>
+          [
+            t.direction,
+            t.entryPrice,
+            t.exitPrice,
+            t.pnl,
+            t.rMultiple,
+            new Date(t.entryTimestamp).toISOString(),
+            new Date(t.exitTimestamp).toISOString(),
+            t.barsHeld,
+            t.exitType,
+            `"${(t.entryComment || "").replace(/"/g, '""')}"`,
+          ].join(","),
+        );
+        const csvPath = path.join(checkpointDir, "best-trades.csv");
+        writeFileAtomic.sync(csvPath, [csvHeader, ...csvRows].join("\n") + "\n", "utf8");
+      }
+    } catch (err) {
+      throw new Error(`Checkpoint save failed (partial state possible): ${(err as Error).message}`);
     }
   },
 
@@ -86,6 +99,15 @@ export const checkpoint = {
       expectancy: z.number().nullable().optional(),
       iter: z.number().optional(),
       timestamp: z.string().optional(),
+      paramCount: z.number().optional(),
+      strategyParams: z.record(z.string(), z.object({
+        value: z.number(),
+        min: z.number(),
+        max: z.number(),
+        step: z.number(),
+        optimizable: z.boolean(),
+        description: z.string().optional(),
+      })).optional(),
     }).passthrough();
 
     try {
@@ -117,6 +139,8 @@ export const checkpoint = {
           expectancy: raw.expectancy ?? null,
         },
         params,
+        paramCount: raw.paramCount,
+        strategyParams: raw.strategyParams as Record<string, StrategyParam> | undefined,
         iter: raw.iter ?? 0,
         timestamp: raw.timestamp ?? "",
       };

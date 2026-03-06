@@ -15,7 +15,7 @@ export const phaseHelpers = {
    */
   shouldEscalate(state: IterationState, _cfg: LoopConfig): boolean {
     if (state.currentPhase === "refine") {
-      return state.neutralStreak >= 3 || state.noChangeCount >= 2;
+      return state.neutralStreak >= 3 || state.noChangeCount >= 2 || (state.wfRejectStreak ?? 0) >= 2;
     }
     if (state.currentPhase === "research" || state.currentPhase === "restructure") {
       return state.noChangeCount >= 2;
@@ -66,13 +66,18 @@ export const phaseHelpers = {
   },
 
   /**
-   * Downgrade "accept" verdict to "neutral" when trades are below minTrades.
+   * Adjust verdict when trades are below minTrades.
+   * - accept → neutral (don't save checkpoint for statistically weak results)
+   * - neutral → reject (trigger rollback to prevent cascading degradation)
    */
   computeEffectiveVerdict(
     scoreVerdict: ScoreVerdict,
     meetsMinTrades: boolean,
   ): ScoreVerdict {
-    if (scoreVerdict === "accept" && !meetsMinTrades) return "neutral";
+    if (!meetsMinTrades) {
+      if (scoreVerdict === "accept") return "neutral";
+      if (scoreVerdict === "neutral") return "reject";
+    }
     return scoreVerdict;
   },
 };

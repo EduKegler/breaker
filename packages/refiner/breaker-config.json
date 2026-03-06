@@ -2,7 +2,7 @@
   "dateRange": "last240",
   "criteria": {
     "minTrades": 70,
-    "minPF": 1.8,
+    "minPF": 1.3,
     "maxDD": 4,
     "minWR": 0,
     "minAvgR": 0.15,
@@ -15,7 +15,7 @@
     "plan": "claude-opus-4-6"
   },
   "assetClasses": {
-    "crypto-major":    { "minPF": 1.8, "maxDD": 4, "minTrades": 70, "minWR": 0, "minAvgR": 0.0 },
+    "crypto-major":    { "minPF": 1.3, "maxDD": 4, "minTrades": 70, "minWR": 0, "minAvgR": 0.0 },
     "crypto-volatile": { "minPF": 1.5, "maxDD": 20, "minTrades": 100 },
     "rwa":             { "minPF": 1.3, "maxDD": 10, "minTrades": 50  }
   },

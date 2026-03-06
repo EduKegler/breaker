@@ -105,9 +105,10 @@ export const paramWriter = {
     // Fill after + verdict
     last.after = { pnl: currentMetrics.pnl, trades: currentMetrics.trades, pf: currentMetrics.pf };
     if (last.before) {
-      const changePct = last.before.pnl !== 0
-        ? (currentMetrics.pnl - last.before.pnl) / Math.abs(last.before.pnl)
-        : 0;
+      const oldPnl = last.before.pnl;
+      const changePct = oldPnl !== 0
+        ? (currentMetrics.pnl - oldPnl) / Math.abs(oldPnl)
+        : (currentMetrics.pnl > oldPnl ? 1 : currentMetrics.pnl < oldPnl ? -1 : 0);
       if (changePct > 0.05) last.verdict = "improved";
       else if (changePct < -0.05) last.verdict = "degraded";
       else last.verdict = "neutral";
@@ -174,9 +175,10 @@ export const paramWriter = {
 
         // Determine verdict
         if (prev.before) {
-          const changePct = prev.before.pnl !== 0
-            ? (currentMetrics.pnl - prev.before.pnl) / Math.abs(prev.before.pnl)
-            : 0;
+          const oldPnl = prev.before.pnl;
+          const changePct = oldPnl !== 0
+            ? (currentMetrics.pnl - oldPnl) / Math.abs(oldPnl)
+            : (currentMetrics.pnl > oldPnl ? 1 : currentMetrics.pnl < oldPnl ? -1 : 0);
           if (changePct > 0.05) prev.verdict = "improved";
           else if (changePct < -0.05) prev.verdict = "degraded";
           else prev.verdict = "neutral";

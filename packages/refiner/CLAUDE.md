@@ -42,12 +42,24 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - JSON parsing: `safeJsonParse()` from `src/lib/safe-json.ts` — `jsonrepair` for LLM output, Zod schemas for validation
 - State management: xstate v5 machine in `src/loop/state-machine.ts` advises phase/counter state; for-loop still drives iteration flow
 
+## Config vs KB alignment
+- `breaker-config.json` top-level `minPF` set to KB floor (1.3). Strategy profiles can set stricter values.
+- Orchestrator enforces KB module floors at runtime via `MODULE_CRITERIA` — config values less strict than KB are auto-bumped.
+- M2 (mean-reversion) WR gate: KB requires WR >= 50%. Enforced by MODULE_CRITERIA + orchestrator floor override.
+
+## Strategy files are AI-generated (critical)
+- Strategy `.ts` files in `packages/backtest/src/strategies/` are **generated and updated by the refiner's Claude optimizer** via prompts.
+- **Never fix bugs by editing strategy files directly** — the next refiner run will overwrite changes.
+- Fixes must go into the **prompt** (`build-optimize-prompt.ts`) as hard rules, and/or into the **engine** as runtime validation guards.
+- Strategy files should **not have hand-maintained unit tests** — they are ephemeral artifacts. Engine-level tests cover correctness.
+
 ## Known pitfalls
 - Can't run breaker inside Claude Code session (nested session protection); use `unset CLAUDECODE`
 - `run-engine-child.ts` child-process path E2E validated (~280ms with 26k candles after init() optimization)
 - `backoffDelay` extracted to `@breaker/kit` — import from kit, not from loop/
+- `pctOfPosition` in `takeProfits` is a **fraction (0-1)**, not a percentage. Engine validates at runtime (`> 1` throws). Enforced in optimizer prompt as hard rule.
 
 ## Build and test (breaker-specific)
 - Coverage: `pnpm vitest run --coverage`
-- Tests: `pnpm test` (352 tests across 27 files)
+- Tests: `pnpm test` (571 tests across 30 files)
 - After strategy code changes in restructure phase: `pnpm --filter @breaker/backtest typecheck` then `pnpm --filter @breaker/backtest build`

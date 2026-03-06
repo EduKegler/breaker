@@ -246,6 +246,33 @@ describe("conductResearch", () => {
     expect(result.error).toContain("not created");
   });
 
+  it("B2 fix: includes DD gap in research priority when dd is negative (sign bug)", async () => {
+    let capturedPrompt = "";
+    vi.mocked(runClaude).mockImplementation(async (args) => {
+      capturedPrompt = args[args.length - 1] as string;
+      return { status: 1, stdout: "", stderr: "" };
+    });
+
+    await conductResearch({
+      asset: "BTC",
+      moduleContext: stubModuleContext,
+      currentMetrics: { pnl: 200, pf: 1.5, wr: 22, dd: -44.3, trades: 50, avgR: 0.15 },
+      failureHistory: [],
+      exhaustedApproaches: [],
+      artifactsDir: tmpDir,
+      model: "claude-sonnet-4-6",
+      timeoutMs: 5000,
+      repoRoot: tmpDir,
+      kbPath: path.join(tmpDir, "kb.md"),
+      criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: null, minAvgR: 0.15 },
+    });
+
+    // DD=44.3% exceeds maxDD=10 → must appear as SEVERE gap
+    expect(capturedPrompt).toContain("DD:");
+    expect(capturedPrompt).toContain("44.3%");
+    expect(capturedPrompt).toContain("SEVERE");
+  });
+
   it("returns failure when suggestedApproaches is not an array", async () => {
     const briefPath = path.join(tmpDir, "research-brief.json");
     const badBrief = {

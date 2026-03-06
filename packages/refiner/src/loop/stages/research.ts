@@ -46,6 +46,59 @@ function log(msg: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// P5.1: Research priority — criteria distance
+// ---------------------------------------------------------------------------
+
+function buildResearchPriority(
+  currentMetrics: { pnl: number; pf: number; wr: number; dd: number; trades: number; avgR: number },
+  criteria?: { minTrades?: number; minPF?: number; maxDD?: number; minWR?: number | null; minAvgR?: number | null },
+): string {
+  if (!criteria) return "";
+
+  const gaps: Array<{ label: string; gap: number; severity: string }> = [];
+
+  if ((criteria.minPF ?? 0) > 0 && currentMetrics.pf < (criteria.minPF ?? 0)) {
+    const gap = (criteria.minPF ?? 0) - currentMetrics.pf;
+    gaps.push({ label: `PF: ${currentMetrics.pf.toFixed(2)} → need ${criteria.minPF} (gap: ${gap.toFixed(2)})`, gap, severity: gap > 0.5 ? "CRITICAL" : "MODERATE" });
+  }
+  if (currentMetrics.pnl <= 0) {
+    gaps.push({ label: `PnL: $${currentMetrics.pnl.toFixed(0)} → need >0 (gap: $${Math.abs(currentMetrics.pnl).toFixed(0)})`, gap: Math.abs(currentMetrics.pnl), severity: "CRITICAL" });
+  }
+  const absDd = Math.abs(currentMetrics.dd);
+  if ((criteria.maxDD ?? 100) < absDd) {
+    const gap = absDd - (criteria.maxDD ?? 100);
+    gaps.push({ label: `DD: ${absDd.toFixed(1)}% → need ≤${criteria.maxDD}% (gap: ${gap.toFixed(1)}%)`, gap, severity: gap > 10 ? "SEVERE" : "MODERATE" });
+  }
+  if (criteria.minWR != null && currentMetrics.wr < criteria.minWR) {
+    const gap = criteria.minWR - currentMetrics.wr;
+    gaps.push({ label: `WR: ${currentMetrics.wr.toFixed(1)}% → need ≥${criteria.minWR}% (gap: ${gap.toFixed(1)}%)`, gap, severity: gap > 10 ? "SEVERE" : "MODERATE" });
+  }
+  if (criteria.minAvgR != null && currentMetrics.avgR < criteria.minAvgR) {
+    const gap = criteria.minAvgR - currentMetrics.avgR;
+    gaps.push({ label: `avgR: ${currentMetrics.avgR.toFixed(3)} → need ≥${criteria.minAvgR} (gap: ${gap.toFixed(3)})`, gap, severity: gap > 0.1 ? "MODERATE" : "LOW" });
+  }
+
+  const tradesMet = (criteria.minTrades ?? 0) <= currentMetrics.trades;
+  if (!tradesMet) {
+    gaps.push({ label: `Trades: ${currentMetrics.trades} → need ≥${criteria.minTrades} (gap: ${(criteria.minTrades ?? 0) - currentMetrics.trades})`, gap: (criteria.minTrades ?? 0) - currentMetrics.trades, severity: "MODERATE" });
+  }
+
+  if (gaps.length === 0) return "";
+
+  // Sort by severity (CRITICAL first) then gap size
+  const severityOrder: Record<string, number> = { CRITICAL: 0, SEVERE: 1, MODERATE: 2, LOW: 3 };
+  gaps.sort((a, b) => (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3) || b.gap - a.gap);
+
+  const lines = ["\n## RESEARCH PRIORITY (address in this order)"];
+  for (let i = 0; i < gaps.length; i++) {
+    const g = gaps[i];
+    lines.push(`${i + 1}. ${g.label} ← ${g.severity}`);
+  }
+
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -61,11 +114,12 @@ export async function conductResearch(opts: {
   repoRoot: string;
   kbPath: string;
   allowedDomains?: string[];
+  criteria?: { minTrades?: number; minPF?: number; maxDD?: number; minWR?: number | null; minAvgR?: number | null };
 }): Promise<StageResult<ResearchBrief>> {
   const {
     asset, moduleContext, currentMetrics, failureHistory,
     exhaustedApproaches, artifactsDir, model, timeoutMs,
-    repoRoot, kbPath, allowedDomains,
+    repoRoot, kbPath, allowedDomains, criteria,
   } = opts;
 
   const briefPath = path.join(artifactsDir, "research-brief.json");
@@ -105,6 +159,10 @@ Research must suggest improvements WITHIN this architecture. Changing the archit
     ? `\n## KB Component Catalog (extracted — prefer these over novel approaches)\n${formatCatalogForPrompt(moduleContext.catalog, [], moduleContext.restructureLocks)}`
     : "";
 
+  // P5.1: Research priority — compute criteria distance
+  const prioritySection = buildResearchPriority(currentMetrics, criteria);
+
+
   // -----------------------------------------------------------------------
   // Main prompt
   // -----------------------------------------------------------------------
@@ -132,7 +190,7 @@ ${restructureSection}
 - Max Drawdown: ${currentMetrics.dd}%
 - Trade count: ${currentMetrics.trades}
 - Average R: ${currentMetrics.avgR}
-${failureSection}${exhaustedSection}${domainSection}${catalogSection}
+${prioritySection}${failureSection}${exhaustedSection}${domainSection}${catalogSection}
 
 ## Knowledge Base
 Read the knowledge base at: ${kbPath}

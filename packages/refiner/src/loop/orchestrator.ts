@@ -26,7 +26,7 @@ import { parseArgs } from "./parse-args.js";
 import { buildLoopConfig } from "./build-loop-config.js";
 import { checkCriteria } from "./check-criteria.js";
 import { phaseHelpers } from "./phase-helpers.js";
-import { emitEvent } from "./stages/events.js";
+import { emitEvent, closeLoggers } from "./stages/events.js";
 import { checkpoint } from "./stages/checkpoint.js";
 import { validateParamGuardrails, validateWalkForward, validateFreeVariableCount, validateStrategyStructure } from "./stages/guardrails.js";
 import { buildSessionSummary } from "./stages/summary.js";
@@ -36,6 +36,7 @@ import { optimizeStrategy } from "./stages/optimize.js";
 import { fixStrategy } from "./stages/fix-strategy.js";
 import { integrity } from "./stages/integrity.js";
 import { computeScore } from "./stages/scoring.js";
+import type { ScoreRaw } from "./stages/scoring.js";
 import { compareScores } from "./stages/compare-scores.js";
 import { buildOptimizePrompt } from "../automation/build-optimize-prompt.js";
 import type { RestructureFailure } from "../automation/build-optimize-prompt.js";
@@ -164,13 +165,17 @@ export async function orchestrate(): Promise<void> {
 
   // Create initial strategy to get params
   const initialStrategy = factory(paramOverrides);
-  const strategyParams = initialStrategy.params;
-  let paramCount = countOptimizableParams(strategyParams);
+  let lastStrategyParams = initialStrategy.params;
+  let paramCount = countOptimizableParams(lastStrategyParams);
+
+  // F8: Track last analysis for fallback in prompt after rollback
+  let lastAnalysis: TradeAnalysis | null = null;
 
   // Load existing checkpoint to seed best scores
   let initialBestPnl = 0;
   let initialBestIter = 0;
   let initialBestScore = 0;
+  let bestScoreBreakdown: ScoreRaw | undefined;
   const existingCheckpoint = checkpoint.load(cfg.checkpointDir);
   let checkpointRestored = false;
   if (existingCheckpoint) {
@@ -207,6 +212,7 @@ export async function orchestrate(): Promise<void> {
       cfg.scoring.weights,
     );
     initialBestScore = cpScore.weighted;
+    bestScoreBreakdown = cpScore.raw;
     log(`Loaded checkpoint: bestPnl=$${initialBestPnl.toFixed(2)} score=${initialBestScore.toFixed(1)} from iter ${initialBestIter}`);
   } else {
     // No checkpoint — run baseline backtest and save with real metrics.
@@ -222,11 +228,14 @@ export async function orchestrate(): Promise<void> {
       sourceInterval: cfg.interval as CandleInterval,
     });
     const baselineMetrics = baselineResult.metrics;
-    checkpoint.save(cfg.checkpointDir, baselineSource, baselineMetrics, 0, paramOverrides, baselineResult.trades);
+    // F8: Save baseline analysis for the first iteration's prompt
+    lastAnalysis = baselineResult.analysis;
+    checkpoint.save(cfg.checkpointDir, baselineSource, baselineMetrics, 0, paramOverrides, baselineResult.trades, paramCount, lastStrategyParams);
 
     initialBestPnl = baselineMetrics.totalPnl ?? 0;
     const baselineScoreResult = computeScore(baselineMetrics, paramCount, baselineMetrics.numTrades ?? 0, cfg.scoring.weights);
     initialBestScore = baselineScoreResult.weighted;
+    bestScoreBreakdown = baselineScoreResult.raw;
     log(`Saved baseline checkpoint (iter 0): PnL=$${initialBestPnl.toFixed(2)} score=${initialBestScore.toFixed(1)} trades=${baselineMetrics.numTrades}`);
   }
 
@@ -282,6 +291,7 @@ export async function orchestrate(): Promise<void> {
   // Baseline checkpoint was already saved with real metrics in the else-branch above
 
   let lastContentHash: string | undefined;
+  let lastRollbackReason: string | undefined;
   const failedRestructures: RestructureFailure[] = [];
 
   for (let iter = 1; iter <= cfg.maxIter; iter++) {
@@ -309,19 +319,19 @@ export async function orchestrate(): Promise<void> {
     }
 
     if (phaseAfterEscalation !== prevPhase) {
-      log(`Escalating: ${prevPhase} -> ${phaseAfterEscalation} | bestScore=${mCtx.bestScore.toFixed(1)} bestPnl=$${mCtx.bestPnl.toFixed(2)} bestIter=${mCtx.bestIter} (neutralStreak=${mCtx.neutralStreak}, noChange=${mCtx.noChangeCount})`);
+      log(`Escalating: ${prevPhase} -> ${phaseAfterEscalation} | bestScore=${mCtx.bestScore.toFixed(1)} bestPnl=$${mCtx.bestPnl.toFixed(2)} bestIter=${mCtx.bestIter} (neutralStreak=${mCtx.neutralStreak}, noChange=${mCtx.noChangeCount}, wfReject=${mCtx.wfRejectStreak})`);
       emitEvent({
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "PHASE_CHANGE", status: "info",
         message: `${prevPhase} -> ${phaseAfterEscalation}`,
-        escalationReason: `neutralStreak=${mCtx.neutralStreak}, noChangeCount=${mCtx.noChangeCount}, phaseCycles=${mCtx.phaseCycles}`,
+        escalationReason: `neutralStreak=${mCtx.neutralStreak}, noChangeCount=${mCtx.noChangeCount}, wfRejectStreak=${mCtx.wfRejectStreak}, phaseCycles=${mCtx.phaseCycles}`,
       });
     }
 
-    // Check phase iter limits
+    // Check phase iter limits — only if ESCALATE didn't already transition (P1.4)
     const activePhase = snap.value as LoopPhase;
     const phaseMaxIter = phaseHelpers.getMaxIter(activePhase, cfg);
-    if (snap.context.phaseIterCount > phaseMaxIter) {
+    if (phaseAfterEscalation === prevPhase && snap.context.phaseIterCount > phaseMaxIter) {
       const prevPhase2 = activePhase;
       actor.send({ type: "PHASE_TIMEOUT" });
       snap = actor.getSnapshot();
@@ -365,9 +375,13 @@ export async function orchestrate(): Promise<void> {
           wr: lastMetric?.wr ?? 0,
           dd: lastMetric?.dd ?? 0,
           trades: lastMetric?.trades ?? 0,
-          avgR: 0,
+          avgR: lastMetric?.avgR ?? 0,
         },
-        failureHistory: [],
+        failureHistory: failedRestructures.map((f) => ({
+          approachName: `globalIter ${f.globalIter}`,
+          failureMode: f.diagnosis ?? "score degraded",
+          metrics: { pnl: 0, pf: f.pf, wr: 0, dd: 0, trades: f.trades, avgR: 0 },
+        })),
         exhaustedApproaches,
         artifactsDir: cfg.artifactsDir,
         model: cfg.research.model,
@@ -375,6 +389,7 @@ export async function orchestrate(): Promise<void> {
         repoRoot: cfg.repoRoot,
         kbPath,
         allowedDomains: cfg.research.allowedDomains,
+        criteria: cfg.criteria,
       });
 
       if (researchResult.success) {
@@ -407,8 +422,13 @@ export async function orchestrate(): Promise<void> {
         log(`Build failed: ${errMsg}`);
         actor.send({ type: "COMPILE_ERROR" });
         if (actor.getSnapshot().context.fixAttempts > cfg.maxFixAttempts) {
-          log(`Max fix attempts (${cfg.maxFixAttempts}) exceeded. Aborting.`);
-          break;
+          log(`Max fix attempts (${cfg.maxFixAttempts}) exceeded — rolling back to checkpoint`);
+          checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
+          actor.send({ type: "SET_NEEDS_REBUILD", value: false });
+          const restoredSource = fs.readFileSync(cfg.strategyFile, "utf8");
+          lastContentHash = integrity.computeHash(restoredSource);
+          lastRollbackReason = `Build failed ${cfg.maxFixAttempts} times — rolled back to checkpoint`;
+          continue;
         }
 
         // Try to fix the compilation error
@@ -470,8 +490,13 @@ export async function orchestrate(): Promise<void> {
         actor.send({ type: "COMPILE_ERROR" });
         const mCtxErr = actor.getSnapshot().context;
         if (mCtxErr.fixAttempts > cfg.maxFixAttempts) {
-          log(`Max fix attempts (${cfg.maxFixAttempts}) exceeded. Aborting.`);
-          break;
+          log(`Max fix attempts (${cfg.maxFixAttempts}) exceeded — rolling back to checkpoint`);
+          checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
+          actor.send({ type: "SET_NEEDS_REBUILD", value: false });
+          const restoredSource = fs.readFileSync(cfg.strategyFile, "utf8");
+          lastContentHash = integrity.computeHash(restoredSource);
+          lastRollbackReason = `Compile error persisted after ${cfg.maxFixAttempts} fix attempts — rolled back`;
+          continue;
         }
         const fixPrompt = buildFixPrompt({
           strategySourcePath: cfg.strategyFile,
@@ -518,11 +543,18 @@ export async function orchestrate(): Promise<void> {
     // Backtest succeeded — reset error counters via BACKTEST_OK
     let { metrics } = engineResult;
     let analysis: TradeAnalysis | null = engineResult.analysis;
+    // F8: Persist analysis for fallback in next iteration if analysis gets nulled by rollback
+    if (analysis) lastAnalysis = analysis;
     const { trades } = engineResult;
     let currentPnl = metrics.totalPnl ?? 0;
 
-    // Recompute param count (accurate in refine; stale in restructure due to ESM cache)
-    paramCount = countOptimizableParams(factory(paramOverrides).params);
+    // B3: Only recompute paramCount from factory() when ESM cache is reliable (in-process path).
+    // For child-process path, use paramCount from the freshly-loaded strategy in the child.
+    if ('paramCount' in engineResult && typeof engineResult.paramCount === 'number') {
+      paramCount = engineResult.paramCount;
+    } else {
+      paramCount = countOptimizableParams(factory(paramOverrides).params);
+    }
 
     // Compute score
     const scoreResult = computeScore(
@@ -589,6 +621,7 @@ export async function orchestrate(): Promise<void> {
         message: wfViolations.map((v) => v.reason).join("; "),
       });
       effectiveVerdict = "reject";
+      actor.send({ type: "WF_REJECT" });
     }
 
     // Free variable count gate (KB §13.1): reject if optimizable params exceed profile limit
@@ -622,6 +655,7 @@ export async function orchestrate(): Promise<void> {
       dd: metrics.maxDrawdownPct ?? 0,
       wr: metrics.winRate ?? 0,
       trades: metrics.numTrades ?? 0,
+      avgR: metrics.avgR ?? 0,
       verdict,
     });
 
@@ -640,7 +674,8 @@ export async function orchestrate(): Promise<void> {
       state.bestScore = scoreResult.weighted;
       state.bestPnl = currentPnl;
       state.bestIter = iter;
-      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, trades);
+      bestScoreBreakdown = scoreResult.raw;
+      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, trades, paramCount, lastStrategyParams);
       break;
     }
 
@@ -654,23 +689,64 @@ export async function orchestrate(): Promise<void> {
       state.bestScore = scoreResult.weighted;
       state.bestPnl = currentPnl;
       state.bestIter = iter;
-      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, trades);
+      bestScoreBreakdown = scoreResult.raw;
+      checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, trades, paramCount, lastStrategyParams);
+      lastRollbackReason = undefined; // Clear on successful checkpoint
       log(`Checkpoint saved: iter=${iter} score=${scoreResult.weighted.toFixed(1)} PnL=$${currentPnl.toFixed(2)} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)}`);
       log(`New best: Score=${scoreResult.weighted.toFixed(1)} PnL=$${currentPnl.toFixed(2)} at iter ${iter}`);
     } else if (scoreResult.weighted > bestScore && !meetsMinTrades) {
       log(`Score ${scoreResult.weighted.toFixed(1)} is best but trades=${metrics.numTrades} < minTrades=${cfg.criteria.minTrades} -- not saving checkpoint`);
+      // B2: In restructure/research phase, rollback to prevent compounding degradation
+      // from a filtered strategy that trades too little.
+      if (phase !== "refine") {
+        const bestParams = checkpoint.loadParams(cfg.checkpointDir);
+        if (bestParams) paramOverrides = bestParams;
+        const restored = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
+        if (restored) {
+          log(`B2: Rolled back restructure with insufficient trades to checkpoint (iter ${state.bestIter})`);
+          actor.send({ type: "SET_NEEDS_REBUILD", value: true });
+          const restoredSource = fs.readFileSync(cfg.strategyFile, "utf8");
+          lastContentHash = integrity.computeHash(restoredSource);
+          const cpData = checkpoint.load(cfg.checkpointDir);
+          if (cpData?.metrics) {
+            metrics = cpData.metrics as Metrics;
+            analysis = null;
+            currentPnl = metrics.totalPnl ?? 0;
+          }
+          if (cpData?.paramCount != null) {
+            paramCount = cpData.paramCount;
+          } else if (cpData?.params) {
+            paramCount = Object.keys(cpData.params).length;
+          }
+          if (cpData?.strategyParams) {
+            lastStrategyParams = cpData.strategyParams;
+          }
+        }
+      }
     } else if (effectiveVerdict === "reject") {
       log(`Rolling back: ${effectiveVerdict === scoreVerdict ? "score degraded" : "guardrail rejected"} (score=${scoreResult.weighted.toFixed(1)} vs best=${bestScore.toFixed(1)})`);
 
-      // Track failed restructure for prompt feedback
+      // Track failed restructure for prompt feedback (P3.2: include diagnosis)
       if (phase !== "refine") {
+        const diagParts: string[] = [];
+        const trades = metrics.numTrades ?? 0;
+        const minTrades = cfg.criteria.minTrades ?? 50;
+        if (trades < minTrades) diagParts.push(`trades ${trades} < minTrades ${minTrades}`);
+        if ((metrics.profitFactor ?? 0) < (cfg.criteria.minPF ?? 1.3)) diagParts.push(`PF ${(metrics.profitFactor ?? 0).toFixed(2)} < ${cfg.criteria.minPF ?? 1.3}`);
+        if (Math.abs(metrics.maxDrawdownPct ?? 0) > (cfg.criteria.maxDD ?? 10)) diagParts.push(`DD ${Math.abs(metrics.maxDrawdownPct ?? 0).toFixed(1)}% > ${cfg.criteria.maxDD ?? 10}%`);
+        if (cfg.criteria.minWR != null && (metrics.winRate ?? 0) < cfg.criteria.minWR) diagParts.push(`WR ${(metrics.winRate ?? 0).toFixed(1)}% < ${cfg.criteria.minWR}%`);
+        if (wfViolations.length > 0) diagParts.push("WF overfit");
+        if (fvViolations.length > 0) diagParts.push(`free vars ${paramCount} > ${cfg.criteria.maxFreeVariables}`);
+        const diagnosis = diagParts.length > 0 ? diagParts.join(", ") : "score degraded";
+
         failedRestructures.push({
           globalIter: state.globalIter,
-          trades: metrics.numTrades ?? 0,
+          trades,
           pf: metrics.profitFactor ?? 0,
           score: scoreResult.weighted,
+          diagnosis,
         });
-        log(`Tracked failed restructure: globalIter=${state.globalIter} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)} score=${scoreResult.weighted.toFixed(1)}`);
+        log(`Tracked failed restructure: globalIter=${state.globalIter} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)} score=${scoreResult.weighted.toFixed(1)} | ${diagnosis}`);
       }
 
       // Restore best params
@@ -687,7 +763,25 @@ export async function orchestrate(): Promise<void> {
         if (phase !== "refine") {
           actor.send({ type: "SET_NEEDS_REBUILD", value: true });
         }
+        // P1.1: Recalculate lastContentHash from restored file so next refine
+        // iteration correctly detects "unchanged source" and uses in-process path.
+        const restoredSource = fs.readFileSync(cfg.strategyFile, "utf8");
+        lastContentHash = integrity.computeHash(restoredSource);
       }
+
+      // P1.2: Track rollback reason for next iteration's prompt (P3.1: specific guardrail type)
+      let rollbackCause: string;
+      if (effectiveVerdict === scoreVerdict) {
+        rollbackCause = `score degraded (${scoreResult.weighted.toFixed(1)} vs best ${bestScore.toFixed(1)})`;
+      } else if (wfViolations.length > 0) {
+        const wf = analysis.walkForward;
+        rollbackCause = `WF overfit: pfRatio=${wf?.pfRatio?.toFixed(2) ?? "?"} < 0.6 (train PF=${wf?.trainPF?.toFixed(2) ?? "?"}, test PF=${wf?.testPF?.toFixed(2) ?? "?"})`;
+      } else if (fvViolations.length > 0) {
+        rollbackCause = `Free variable cap exceeded: ${paramCount} params > max ${cfg.criteria.maxFreeVariables}`;
+      } else {
+        rollbackCause = `guardrail rejected`;
+      }
+      lastRollbackReason = `Iteration ${iter} rolled back: ${rollbackCause}`;
 
       // Use checkpoint metrics so the optimizer prompt matches the restored source
       if (phase !== "refine") {
@@ -697,6 +791,17 @@ export async function orchestrate(): Promise<void> {
           analysis = null;
           currentPnl = metrics.totalPnl ?? 0;
           log(`Using checkpoint metrics after rollback: PnL=$${currentPnl.toFixed(2)} Trades=${metrics.numTrades}`);
+        }
+        // P1.3/P4.1: Use saved paramCount from checkpoint (accurate optimizable count).
+        // After restructure rollback, ESM cache makes factory() stale.
+        if (cpData?.paramCount != null) {
+          paramCount = cpData.paramCount;
+        } else if (cpData?.params) {
+          paramCount = Object.keys(cpData.params).length;
+        }
+        // B4: Restore strategy params metadata from checkpoint (avoids ESM-stale min/max/step)
+        if (cpData?.strategyParams) {
+          lastStrategyParams = cpData.strategyParams;
         }
       }
 
@@ -720,13 +825,14 @@ export async function orchestrate(): Promise<void> {
 
     log(`Optimizing with ${optimizeModel} (phase=${effectivePhase}, timeout=${optimizeTimeout / 1000}s)...`);
 
-    // Build prompt
+    // Build prompt (B4: use checkpoint strategyParams after restructure rollback to avoid ESM staleness)
     const currentStrategy = factory(paramOverrides);
+    lastStrategyParams = currentStrategy.params;
     const prompt = buildOptimizePrompt({
       metrics,
-      tradeAnalysis: analysis,
+      tradeAnalysis: analysis ?? lastAnalysis,
       strategySourcePath: cfg.strategyFile,
-      strategyParams: currentStrategy.params,
+      strategyParams: lastStrategyParams,
       paramOverrides,
       criteria: cfg.criteria,
       asset: cfg.asset,
@@ -739,6 +845,13 @@ export async function orchestrate(): Promise<void> {
       artifactsDir: cfg.artifactsDir,
       researchBriefPath: currentResearchBriefPath,
       failedRestructures: failedRestructures.length > 0 ? failedRestructures : undefined,
+      lastRollbackReason,
+      scoreBreakdown: scoreResult.raw,
+      scoringWeights: cfg.scoring.weights as import("../types/config.js").ScoringWeights,
+      currentScore: scoreResult.weighted,
+      bestScoreBreakdown,
+      bestScore: actor.getSnapshot().context.bestScore,
+      walkForward: (analysis ?? lastAnalysis)?.walkForward ?? null,
     });
 
     emitEvent({
@@ -829,6 +942,7 @@ export async function orchestrate(): Promise<void> {
           stage: "GUARDRAIL_VIOLATION", status: "warn",
           message: structureViolations.map((v) => `${v.field}: ${v.reason}`).join("; "),
         });
+        actor.send({ type: "VERDICT", verdict: "degraded" });
         continue;
       }
 
@@ -957,8 +1071,9 @@ export async function orchestrate(): Promise<void> {
     log(`WhatsApp send failed: ${msg}`);
   }
 
-  // Stop the actor
+  // Stop the actor and clean up
   actor.stop();
+  closeLoggers();
 
   } finally {
     lock.release(cfg.asset);

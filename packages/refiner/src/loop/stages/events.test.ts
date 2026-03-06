@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { emitEvent } from "./events.js";
+import { emitEvent, closeLoggers } from "./events.js";
 
 let tmpDir: string;
 
@@ -134,6 +134,31 @@ describe("emitEvent", () => {
     expect(event.pf).toBe(0);
     expect(event.dd).toBe(0);
     expect(event.trades).toBe(0);
+  });
+
+  it("closeLoggers clears the logger cache without crashing", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pine-events-"));
+    emitEvent({
+      artifactsDir: tmpDir,
+      runId: "r1",
+      asset: "BTC",
+      iter: 1,
+      stage: "X",
+      status: "info",
+    });
+    // Should not throw
+    closeLoggers();
+    // After close, emitting again should create a new logger
+    emitEvent({
+      artifactsDir: tmpDir,
+      runId: "r1",
+      asset: "BTC",
+      iter: 2,
+      stage: "Y",
+      status: "info",
+    });
+    const lines = fs.readFileSync(path.join(tmpDir, "events.ndjson"), "utf8").trim().split("\n");
+    expect(lines).toHaveLength(2);
   });
 
   it("emits CHECKPOINT_RESTORED event with hash details", () => {

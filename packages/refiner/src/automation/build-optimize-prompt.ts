@@ -12,9 +12,10 @@ import fs from "node:fs";
 import { z } from "zod";
 import { isMainModule } from "@breaker/kit";
 
-import type { Metrics, TradeAnalysis, StrategyParam, SessionName } from "@breaker/backtest";
-import type { ResolvedCriteria, CoreParameterDef } from "../types/config.js";
-import type { ParameterHistory, ApproachRecord, TestedCombination } from "../types/parameter-history.js";
+import type { Metrics, TradeAnalysis, StrategyParam, SessionName, WalkForward } from "@breaker/backtest";
+import type { ResolvedCriteria, CoreParameterDef, ScoringWeights } from "../types/config.js";
+import type { ParameterHistory, ApproachRecord, TestedCombination, ParameterHistoryIteration } from "../types/parameter-history.js";
+import type { ScoreRaw } from "../loop/stages/scoring.js";
 import type { ModuleContext, ComponentCatalog, CatalogSlot } from "../lib/build-module-context.js";
 import { MODULE_CRITERIA } from "../lib/build-module-context.js";
 import { safeJsonParse } from "../lib/safe-json.js";
@@ -28,6 +29,7 @@ export interface RestructureFailure {
   trades: number;
   pf: number;
   score: number;
+  diagnosis?: string;
 }
 
 interface BuildPromptOptions {
@@ -47,6 +49,13 @@ interface BuildPromptOptions {
   artifactsDir: string;
   researchBriefPath?: string;
   failedRestructures?: RestructureFailure[];
+  lastRollbackReason?: string;
+  scoreBreakdown?: ScoreRaw;
+  scoringWeights?: ScoringWeights;
+  currentScore?: number;
+  bestScoreBreakdown?: ScoreRaw;
+  bestScore?: number;
+  walkForward?: WalkForward | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +67,8 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
     metrics, tradeAnalysis, strategySourcePath, strategyParams, paramOverrides,
     criteria, asset, moduleContext, phase, iter, maxIter, globalIter,
     paramHistoryPath, artifactsDir, researchBriefPath, failedRestructures,
+    lastRollbackReason, scoreBreakdown, scoringWeights, currentScore,
+    bestScoreBreakdown, bestScore,
   } = opts;
 
   // Use KB-aligned criteria for this module, fallback to config
@@ -74,7 +85,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const pnlStr = metrics.totalPnl !== null ? `${metrics.totalPnl.toFixed(2)} USD` : "N/A";
   const tradesStr = metrics.numTrades !== null ? String(metrics.numTrades) : "N/A";
   const pfStr = metrics.profitFactor !== null ? metrics.profitFactor.toFixed(2) : "N/A";
-  const ddStr = metrics.maxDrawdownPct !== null ? `${metrics.maxDrawdownPct.toFixed(1)}%` : "N/A";
+  const ddStr = metrics.maxDrawdownPct !== null ? `${Math.abs(metrics.maxDrawdownPct).toFixed(1)}%` : "N/A";
   const wrStr = metrics.winRate !== null ? `${metrics.winRate.toFixed(1)}%` : "N/A";
   const avgRStr = metrics.avgR !== null ? `${metrics.avgR.toFixed(3)}R` : "N/A";
 
@@ -117,11 +128,19 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   );
   const designChecklistSection = buildDesignChecklistSection(criteria.designChecklist, globalIter);
   const filterSimsSection = buildFilterSimsSection(tradeAnalysis);
+  const diagnosticGuide = buildDiagnosticGuide(metrics, tradeAnalysis);
   const overfitSection = buildOverfitSection(paramHistory, tradeAnalysis, mc.minPfRatio, metrics, moduleContext.moduleId);
 
   // Research brief — updated schema matching conduct-research.ts
   const researchSection = buildResearchSection(researchBriefPath);
   const failedRestructuresSection = buildFailedRestructuresSection(failedRestructures);
+  const rollbackSection = buildRollbackSection(lastRollbackReason);
+  const moduleCriteriaSection = buildModuleCriteriaSection(mc, moduleContext.moduleId);
+  const scoringSection = buildScoringSection(scoreBreakdown, scoringWeights, currentScore);
+  const scoreDeltaSection = buildScoreDeltaSection(scoreBreakdown, bestScoreBreakdown, scoringWeights, currentScore, bestScore);
+  const walkForwardSection = buildWalkForwardSection(opts.walkForward);
+  const lastIterationSection = buildLastIterationSection(paramHistory);
+  const exploredSpaceEnriched = buildExploredSpaceEnriched(paramHistory, globalIter, iter, maxIter);
 
   const metadataPath = `${artifactsDir}/iter${globalIter}-metadata.json`;
 
@@ -146,7 +165,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
 
   return `TypeScript strategy optimization loop — iteration ${iter}/${maxIter}.
 ${phaseHeader}
-
+${rollbackSection}${lastIterationSection}
 ## CONTEXT
 - Asset: ${asset} | Module: ${moduleContext.moduleName} (${moduleContext.moduleId})
 - Strategy profile: \`${moduleContext.profile}\`
@@ -155,20 +174,20 @@ ${phaseHeader}
 - Backtest engine: @breaker/backtest (in-process, ~2s per iteration)
 - Objective: optimize for Hyperliquid perps
 
-${moduleContextBlock}
+${moduleContextBlock}${moduleCriteriaSection}
 ## STOPPING CRITERIA (${moduleContext.moduleId})
 ${moduleContext.stoppingCriteria}
 
 ## UNMET CRITERIA
 ${unmetCriteria.length ? unmetCriteria.join("\n") : "All criteria met!"}
-
-## LAST BACKTEST METRICS
+${diagnosticGuide}## LAST BACKTEST METRICS
 PnL: ${pnlStr} | Trades: ${tradesStr} | PF: ${pfStr} | DD: ${ddStr} | WR: ${wrStr} | AvgR: ${avgRStr}
 Avg Win: ${metrics.avgWinR != null ? `${metrics.avgWinR.toFixed(2)}R` : "N/A"} | Avg Loss: ${metrics.avgLossR != null ? `${metrics.avgLossR.toFixed(2)}R` : "N/A"} | Max Loss: ${metrics.maxLossR != null ? `${metrics.maxLossR.toFixed(2)}R` : "N/A"} | Expectancy: ${metrics.expectancy != null ? `${metrics.expectancy.toFixed(3)}R/trade` : "N/A"}${metrics.avgWinR != null && metrics.avgLossR != null && Math.abs(metrics.avgLossR) > 0 ? `\nR:R ratio: ${(metrics.avgWinR / Math.abs(metrics.avgLossR)).toFixed(2)} (${metrics.avgWinR / Math.abs(metrics.avgLossR) < 1.2 ? "⚠️ near-symmetric — breakout/trend strategies need R:R > 1.5" : "OK"})` : ""}
 
+${scoringSection}${scoreDeltaSection}${walkForwardSection}
 ${designChecklistSection}${paramsSection}
 ${kbConstraintsBlock}${overfitSection}${tradeAnalysisSection}
-${filterSimsSection}${exploredSpaceSection}${coreParamsSection}${pendingHypothesesSection}${approachHistorySection}${researchSection}${failedRestructuresSection}
+${filterSimsSection}${exploredSpaceEnriched || exploredSpaceSection}${coreParamsSection}${pendingHypothesesSection}${approachHistorySection}${researchSection}${failedRestructuresSection}
 ${phaseTask}
 
 ## STRATEGY INTERFACE REFERENCE
@@ -221,6 +240,7 @@ interface Strategy {
 - **FORBIDDEN: violating fixed rules**. See MODULE FIXED RULES above — these are hard constraints.
 - **MANDATORY diagnostics**: every entry condition MUST use \`ctx.track(name, passed, value, threshold)\` and intermediate values MUST use \`ctx.indicator(name, value)\`. Track calls use "L:" or "S:" prefix per direction. Removal is FORBIDDEN — the guardrail will reject the iteration.
 - **MANDATORY computeLevels()**: strategy MUST implement \`computeLevels(ctx, direction)\` returning \`{ stopLoss, takeProfits }\`. Used by \`/quick-signal\` for manual signals. Removal is FORBIDDEN.
+- **pctOfPosition is a FRACTION (0-1), NOT a percentage**. Use \`0.50\` for 50%, \`1.0\` for 100%. The engine multiplies \`size * pctOfPosition\` directly — using \`50\` instead of \`0.50\` creates a 50x order and inflates commission 100x. This is a hard constraint enforced at runtime.
 - **MANDATORY shouldExit()**: strategy MUST implement \`shouldExit(ctx)\` with timeout check (\`barsInTrade >= timeoutBars\`) as first exit condition. Removal is FORBIDDEN.
 - **MANDATORY requiredTimeframes**: strategy MUST declare \`requiredTimeframes\` array. Without it, the runner won't load HTF candles and all signals return null.
 - **MANDATORY anti-repaint HTF**: HTF indicator lookups MUST use the completed-bar pattern: reverse loop checking \`.t + MS_1H <= currentCandle.t\` (or MS_4H/MS_1D). Using \`htfIndicator[last]\` directly repaints. Removal or simplification is FORBIDDEN.
@@ -277,6 +297,7 @@ function buildKBConstraintsBlock(mc: ModuleContext): string {
 
   // Universal constraints
   lines.push(`- Anti-lookahead: HTF indicators (${mc.regimeTF}) must use only the last fully closed candle.`);
+  lines.push(`- Walk-forward split: train 70% / test 30% (KB §10.1). pfRatio = testPF / trainPF >= 0.6.`);
   lines.push(`- Backtest fees: taker 0.045% all operations (intentionally pessimistic).`);
   lines.push(`- Slippage: 10 bps modeled. Daemon entry tolerance: 50 bps max.`);
   lines.push(`- Leverage: BTC 5x, SOL 3x. Liq distance >= 2x widest stop.`);
@@ -297,7 +318,7 @@ function buildUnmetCriteria(
     unmet.push(`- Trade count must be >= ${mc.minTrades} (current: ${tradesStr})`);
   if ((metrics.profitFactor ?? 0) < mc.minPF)
     unmet.push(`- Profit Factor must be >= ${mc.minPF} (current: ${pfStr})`);
-  if ((metrics.maxDrawdownPct ?? 100) > mc.maxDD)
+  if (Math.abs(metrics.maxDrawdownPct ?? 100) > mc.maxDD)
     unmet.push(`- Max Drawdown must be <= ${mc.maxDD}% (current: ${ddStr})`);
 
   // WR gate: only for modules that require it (M2)
@@ -309,6 +330,45 @@ function buildUnmetCriteria(
     unmet.push(`- Avg R/trade must be >= ${mc.minAvgR}R (current: ${avgRStr})`);
 
   return unmet;
+}
+
+function buildDiagnosticGuide(metrics: Metrics, tradeAnalysis: TradeAnalysis | null): string {
+  const hints: string[] = [];
+
+  const pf = metrics.profitFactor ?? 0;
+  const wr = metrics.winRate ?? 0;
+  const avgWinR = metrics.avgWinR ?? 0;
+  const avgLossR = Math.abs(metrics.avgLossR ?? 0);
+  const rr = avgLossR > 0 ? avgWinR / avgLossR : 0;
+
+  if (pf < 1.0) {
+    if (rr > 0 && rr < 1.2) hints.push("PF<1: R:R ratio near 1.0 → problem is exits (SL/TP placement). Widen TP or tighten SL.");
+    if (wr < 30) hints.push("PF<1: WR < 30% → problem is entry selectivity (too many fakeouts). Add filters or stricter conditions.");
+    if (tradeAnalysis) {
+      const signalExits = (tradeAnalysis.byExitType ?? []).filter((e) => e.signal === "signal" || e.signal === "timeout");
+      const totalExits = tradeAnalysis.totalExitRows ?? 1;
+      const signalPct = signalExits.reduce((s, e) => s + e.count, 0) / totalExits;
+      if (signalPct > 0.6) hints.push("PF<1: >60% exits via timeout/signal → TP/SL never hit. Increase timeout bars or adjust targets.");
+    }
+  }
+
+  if (tradeAnalysis) {
+    const worstPnl = tradeAnalysis.worst3TradesPnl ?? [];
+    const worstSum = Math.abs(worstPnl.reduce((s, v) => s + v, 0));
+    const totalPnl = Math.abs(metrics.totalPnl ?? 0);
+    if (totalPnl > 0 && worstSum > totalPnl * 0.5) hints.push("DD high: worst 3 trades account for >50% of total loss → outlier risk. Consider tighter SL.");
+
+    const dirs = tradeAnalysis.byDirection;
+    if (dirs) {
+      const longPf = dirs.long?.profitFactor ?? 0;
+      const shortPf = dirs.short?.profitFactor ?? 0;
+      if (longPf < 0.5 && shortPf > 0.8) hints.push("DD: long direction PF < 0.5 — consider disabling or filtering long entries.");
+      if (shortPf < 0.5 && longPf > 0.8) hints.push("DD: short direction PF < 0.5 — consider disabling or filtering short entries.");
+    }
+  }
+
+  if (hints.length === 0) return "";
+  return "\n## DIAGNOSTIC GUIDE (causal analysis)\n" + hints.map((h) => `- ${h}`).join("\n") + "\n\n";
 }
 
 function buildStrategyParamsSection(
@@ -552,6 +612,168 @@ export function formatCatalogForPrompt(
   return lines.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// P1.1: Scoring transparency — show weights and component breakdown
+// ---------------------------------------------------------------------------
+
+function buildScoringSection(
+  breakdown?: ScoreRaw,
+  weights?: ScoringWeights,
+  total?: number,
+): string {
+  if (!breakdown || !weights) return "";
+  const fmt = (raw: number, w: number) => `${(raw * w).toFixed(1)}/${w}`;
+  return `## SCORING FUNCTION (guides iteration acceptance)
+Weights: PF=${weights.pf}% | avgR=${weights.avgR}% | Sample=${weights.sampleConfidence}% | DD=${weights.dd}% | Complexity=${weights.complexity}% | WR=${weights.wr}%
+Current breakdown: PF=${fmt(breakdown.pf, weights.pf)} | avgR=${fmt(breakdown.avgR, weights.avgR)} | WR=${fmt(breakdown.wr, weights.wr)} | DD=${fmt(breakdown.dd, weights.dd)} | Complex=${fmt(breakdown.complexity, weights.complexity)} | Sample=${fmt(breakdown.sampleConfidence, weights.sampleConfidence)}
+Total: ${total?.toFixed(1) ?? "?"}/100
+→ Focus on the LOWEST-scoring component with the HIGHEST weight for maximum improvement.
+
+`;
+}
+
+// ---------------------------------------------------------------------------
+// P1.2: Score delta vs best — which component improved/degraded
+// ---------------------------------------------------------------------------
+
+function buildScoreDeltaSection(
+  current?: ScoreRaw,
+  best?: ScoreRaw,
+  weights?: ScoringWeights,
+  currentTotal?: number,
+  bestTotal?: number,
+): string {
+  if (!current || !best || !weights || currentTotal == null || bestTotal == null) return "";
+  if (currentTotal >= bestTotal) return ""; // Only show delta when behind
+
+  const keys: (keyof ScoreRaw)[] = ["pf", "avgR", "wr", "dd", "complexity", "sampleConfidence"];
+  const labels: Record<string, string> = { pf: "PF", avgR: "avgR", wr: "WR", dd: "DD", complexity: "Complex", sampleConfidence: "Sample" };
+
+  const deltas = keys.map((k) => {
+    const delta = (current[k] - best[k]) * weights[k];
+    const sign = delta >= 0 ? "+" : "";
+    return `${labels[k]} ${sign}${delta.toFixed(1)}`;
+  });
+
+  // Find largest negative contributor
+  let worstKey = keys[0];
+  let worstDelta = 0;
+  for (const k of keys) {
+    const d = (current[k] - best[k]) * weights[k];
+    if (d < worstDelta) { worstDelta = d; worstKey = k; }
+  }
+
+  const hint = worstDelta < -1
+    ? `\n→ ${labels[worstKey]} dropped the most (${worstDelta.toFixed(1)}). Fix this component first.`
+    : "";
+
+  return `## SCORE DELTA vs BEST (${currentTotal.toFixed(1)} vs ${bestTotal.toFixed(1)})
+${deltas.join(" | ")}${hint}
+
+`;
+}
+
+// ---------------------------------------------------------------------------
+// P2.1: Last iteration result — cause-effect for learning
+// ---------------------------------------------------------------------------
+
+function buildLastIterationSection(paramHistory: ParameterHistory | null): string {
+  if (!paramHistory?.iterations?.length) return "";
+  const last = paramHistory.iterations[paramHistory.iterations.length - 1];
+  if (!last) return "";
+
+  const afterStr = last.after
+    ? `PnL=$${last.after.pnl.toFixed(2)}, PF=${last.after.pf.toFixed(2)}, trades=${last.after.trades}`
+    : "no metrics";
+  const beforeStr = last.before
+    ? `PnL=$${last.before.pnl.toFixed(2)}, PF=${last.before.pf.toFixed(2)}, trades=${last.before.trades}`
+    : "no baseline";
+
+  const changeStr = last.change
+    ? `Changed: ${last.change.param} from ${last.change.from} to ${last.change.to}`
+    : `Structural change (restructure)`;
+
+  // Skip if pending (no result yet)
+  if (last.verdict === "pending") return "";
+
+  return `## LAST ITERATION RESULT
+${changeStr}
+Before: ${beforeStr}
+After: ${afterStr}
+Verdict: ${last.verdict}${last.note ? ` — ${last.note}` : ""}
+→ Use this cause-effect data to inform your next change. Do NOT repeat changes that degraded metrics.
+
+`;
+}
+
+// ---------------------------------------------------------------------------
+// P2.2: Explored ranges enriched with metrics per value
+// ---------------------------------------------------------------------------
+
+function buildExploredSpaceEnriched(
+  paramHistory: ParameterHistory | null,
+  globalIter: number, iter: number, maxIter: number,
+): string {
+  if (!paramHistory) return "";
+
+  // Build per-param metric map from iteration history
+  const paramMetrics = new Map<string, Array<{ value: unknown; pf: number; trades: number }>>();
+  for (const it of paramHistory.iterations) {
+    if (!it.change || !it.after) continue;
+    const key = it.change.param;
+    if (!paramMetrics.has(key)) paramMetrics.set(key, []);
+    paramMetrics.get(key)!.push({
+      value: it.change.to,
+      pf: it.after.pf,
+      trades: it.after.trades,
+    });
+  }
+
+  const lines = ["## EXPLORED SPACE"];
+  let hasContent = false;
+
+  const ranges = paramHistory.exploredRanges ?? {};
+  const rangeEntries = Object.entries(ranges).filter(([, vals]) => Array.isArray(vals) && vals.length > 0);
+  if (rangeEntries.length) {
+    for (const [param, values] of rangeEntries) {
+      const metricsForParam = paramMetrics.get(param);
+      if (metricsForParam && metricsForParam.length > 0) {
+        // Show values with metrics
+        const valueMetrics = (values as unknown[]).map((v) => {
+          const m = metricsForParam.find((pm) => String(pm.value) === String(v));
+          return m ? `${v} (PF=${m.pf.toFixed(2)})` : `${v}`;
+        });
+        // Find sweet spot
+        const bestEntry = metricsForParam.reduce((best, curr) =>
+          curr.pf > best.pf ? curr : best, metricsForParam[0]);
+        lines.push(`${param}: ${valueMetrics.join(" → ")}`);
+        if (bestEntry && metricsForParam.length >= 2) {
+          lines.push(`  Sweet spot: ~${bestEntry.value} (best PF=${bestEntry.pf.toFixed(2)})`);
+        }
+      } else {
+        lines.push(`${param}: tested [${(values as unknown[]).join(", ")}]`);
+      }
+      hasContent = true;
+    }
+  }
+
+  const neverWorked = paramHistory.neverWorked ?? [];
+  if (neverWorked.length) {
+    lines.push("\nNever worked:");
+    for (const item of neverWorked) {
+      const label = typeof item === "string"
+        ? item
+        : `${item.param}=${item.value} [${item.reason ?? "?"}]`;
+      lines.push(`- ${label}`);
+    }
+    hasContent = true;
+  }
+
+  lines.push(`\nGlobal iteration: ${globalIter} (loop iter ${iter}/${maxIter})`);
+  if (!hasContent) return "";
+  return lines.join("\n") + "\n\n";
+}
+
 function buildResearchSection(researchBriefPath?: string): string {
   if (!researchBriefPath) return "";
 
@@ -695,6 +917,43 @@ function buildStructuralDiagnostics(ta: TradeAnalysis): string {
   return "\n### Structural Diagnostics\n" + warnings.join("\n") + "\n";
 }
 
+function buildRollbackSection(reason?: string): string {
+  if (!reason) return "";
+  return `\n> ⚠ LAST ITERATION ROLLED BACK: ${reason}\n> Focus on avoiding the same mistake.\n\n`;
+}
+
+function buildWalkForwardSection(wf?: WalkForward | null): string {
+  if (!wf) return "";
+  const lines = ["\n## WALK-FORWARD VALIDATION (train 70% / test 30%)"];
+  lines.push(`trainPF=${wf.trainPF?.toFixed(2) ?? "?"} | testPF=${wf.testPF?.toFixed(2) ?? "?"} | pfRatio=${wf.pfRatio?.toFixed(2) ?? "?"} | overfitFlag=${wf.overfitFlag}`);
+  const ratio = wf.pfRatio ?? 0;
+  if (ratio >= 0.85) {
+    lines.push("→ pfRatio 0.85+ — excellent generalization. Strategy is robust.");
+  } else if (ratio >= 0.70) {
+    lines.push("→ pfRatio 0.70-0.84 — good. Minor complexity increases may still be safe.");
+  } else if (ratio >= 0.60) {
+    lines.push("→ pfRatio 0.60-0.69 — borderline. Any further complexity risks tipping into overfit.");
+  } else {
+    lines.push("→ pfRatio < 0.60 — currently overfitting. Reduce model complexity, simplify conditions, or widen parameter ranges.");
+    lines.push("  Prefer changes that improve TEST PF. Do NOT add new indicators or conditions.");
+  }
+  return lines.join("\n") + "\n";
+}
+
+function buildModuleCriteriaSection(
+  mc: { minTrades: number; minPF: number; maxDD: number; minWR: number | null; minAvgR: number | null; minPfRatio: number },
+  moduleId: string,
+): string {
+  const lines = [`## MODULE ACCEPTANCE CRITERIA (${moduleId})`];
+  lines.push(`- Trades >= ${mc.minTrades}`);
+  lines.push(`- PF >= ${mc.minPF}`);
+  lines.push(`- DD <= ${mc.maxDD}%`);
+  if (mc.minWR !== null) lines.push(`- WR >= ${mc.minWR}% [mandatory]`);
+  if (mc.minAvgR !== null) lines.push(`- avgR >= ${mc.minAvgR}R`);
+  lines.push(`- pfRatio >= ${mc.minPfRatio} (walk-forward)`);
+  return lines.join("\n") + "\n\n";
+}
+
 function buildFailedRestructuresSection(failures?: RestructureFailure[]): string {
   if (!failures || failures.length === 0) return "";
   const lines = [
@@ -702,7 +961,8 @@ function buildFailedRestructuresSection(failures?: RestructureFailure[]): string
     "The following restructure attempts were ROLLED BACK because they degraded performance:",
   ];
   for (const f of failures) {
-    lines.push(`  - globalIter ${f.globalIter}: ${f.trades} trades, PF=${f.pf.toFixed(2)}, Score=${f.score.toFixed(1)}`);
+    const diag = f.diagnosis ? ` | ${f.diagnosis}` : "";
+    lines.push(`  - globalIter ${f.globalIter}: ${f.trades} trades, PF=${f.pf.toFixed(2)}, Score=${f.score.toFixed(1)}${diag}`);
   }
   lines.push("");
   lines.push("DO NOT repeat the same structural approach. Each attempt above produced catastrophically few trades.");
@@ -812,9 +1072,9 @@ function buildOverfitSection(
       `Extremely high PF in crypto is suspicious — verify walk-forward pfRatio.`,
     );
   }
-  if (metrics.maxDrawdownPct !== null && metrics.maxDrawdownPct < 1) {
+  if (metrics.maxDrawdownPct !== null && Math.abs(metrics.maxDrawdownPct) < 1) {
     warnings.push(
-      `OVERFIT SIGNAL: DD=${metrics.maxDrawdownPct.toFixed(1)}% < 1%. ` +
+      `OVERFIT SIGNAL: DD=${Math.abs(metrics.maxDrawdownPct).toFixed(1)}% < 1%. ` +
       `Real crypto strategies have drawdowns — suspiciously low DD suggests curve fitting.`,
     );
   }
@@ -955,6 +1215,20 @@ function buildApproachHistorySection(paramHistory: ParameterHistory | null): str
   return lines.join("\n") + "\n\n";
 }
 
+/** Heuristic param→metric effect map based on common param names. */
+function inferParamEffect(name: string): string {
+  const n = name.toLowerCase();
+  if (n.includes("stop") || n.includes("atr") && n.includes("mult")) return "↑ wider stop, fewer SL hits, more DD | ↓ tighter stop, more SL | → DD, avgR";
+  if (n.includes("dc") && n.includes("slow") || n.includes("lookback") && !n.includes("fast")) return "↑ fewer/bigger breakouts | ↓ more/smaller trades | → trade frequency, DD";
+  if (n.includes("dc") && n.includes("fast") || n.includes("trail")) return "↑ slower trail exit | ↓ faster trail exit | → avgR, hold duration";
+  if (n.includes("adx") || n.includes("threshold") || n.includes("filter")) return "↑ stricter filter, fewer trades | ↓ more trades allowed | → entry quality, trade count";
+  if (n.includes("timeout") || n.includes("bars")) return "↑ longer hold time | ↓ quicker exit | → WR, avgR";
+  if (n.includes("rsi")) return "↑/↓ changes entry sensitivity | → entry timing, WR";
+  if (n.includes("kc") || n.includes("keltner") || n.includes("mult")) return "↑ wider channel, fewer entries | ↓ tighter channel, more entries | → trade count, WR";
+  if (n.includes("tp") || n.includes("target") || n.includes("profit")) return "↑ wider target, fewer wins but bigger | ↓ tighter target, more wins | → WR, avgR";
+  return "";
+}
+
 function buildCoreParamsSection(
   coreParams: CoreParameterDef[] | undefined,
   exploredRanges: Record<string, unknown[]> | undefined,
@@ -976,13 +1250,16 @@ function buildCoreParamsSection(
       ? "COMPLETE"
       : `${tested.length}/${expected.length} tested`;
 
+    const effect = inferParamEffect(cp.name);
+    const effectStr = effect ? ` | ${effect}` : "";
+
     if (remaining.length > 0 && !foundIncomplete) {
       foundIncomplete = true;
-      lines.push(`${cp.name}: ${status}, remaining: [${remaining.join(", ")}] → NEXT`);
+      lines.push(`${cp.name} [${cp.min}-${cp.max}, step ${cp.step}]: ${status}, remaining: [${remaining.join(", ")}] → NEXT${effectStr}`);
     } else if (remaining.length > 0) {
-      lines.push(`${cp.name}: ${status} [BLOCKED]`);
+      lines.push(`${cp.name} [${cp.min}-${cp.max}, step ${cp.step}]: ${status} [BLOCKED]${effectStr}`);
     } else {
-      lines.push(`${cp.name}: ${status}`);
+      lines.push(`${cp.name} [${cp.min}-${cp.max}, step ${cp.step}]: ${status}${effectStr}`);
     }
   }
 

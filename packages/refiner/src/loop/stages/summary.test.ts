@@ -150,4 +150,24 @@ describe("buildSessionSummary", () => {
     expect(msg).toContain("$150.00");
     expect(msg).toContain("Last iter:");
   });
+
+  it("displays DD without negative sign in evolution and last iter (P1: display fix)", () => {
+    const negDD: IterationMetric[] = [
+      { iter: 1, pnl: -442, pf: 0.33, dd: -44.3, wr: 38, trades: 157, verdict: "neutral" },
+    ];
+    const msg = buildSessionSummary({
+      asset: "BTC",
+      runId: "r4",
+      metrics: negDD,
+      durationMs: 10000,
+      success: false,
+      bestIter: 1,
+      bestPnl: -442,
+    });
+    expect(msg).toContain("DD=44.3%");
+    expect(msg).not.toContain("DD=-44.3%");
+    // Last iter section
+    expect(msg).toContain("DD: 44.3%");
+    expect(msg).not.toContain("DD: -44.3%");
+  });
 });

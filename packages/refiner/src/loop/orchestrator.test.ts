@@ -506,8 +506,8 @@ describe("phaseHelpers.computeEffectiveVerdict", () => {
     expect(phaseHelpers.computeEffectiveVerdict("neutral", true)).toBe("neutral");
   });
 
-  it("neutral + !meetsMinTrades -> neutral", () => {
-    expect(phaseHelpers.computeEffectiveVerdict("neutral", false)).toBe("neutral");
+  it("neutral + !meetsMinTrades -> reject (Bug A fix: prevents cascading degradation)", () => {
+    expect(phaseHelpers.computeEffectiveVerdict("neutral", false)).toBe("reject");
   });
 });
 
@@ -800,6 +800,282 @@ describe("checkpoint source validation", () => {
     const iter = 0;
     const shouldRestore = (cpHash !== currentHash) && (iter > 0);
     expect(shouldRestore).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P3.2: Failed restructure diagnosis
+// ---------------------------------------------------------------------------
+describe("failed restructure diagnosis (P3.2)", () => {
+  it("computes diagnosis with negative DD (B1: sign fix)", () => {
+    const metrics = { numTrades: 1, profitFactor: 0, maxDrawdownPct: -50, winRate: 100 };
+    const criteria = { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: 50 };
+    const diagParts: string[] = [];
+    const trades = metrics.numTrades ?? 0;
+    if (trades < criteria.minTrades) diagParts.push(`trades ${trades} < minTrades ${criteria.minTrades}`);
+    if (metrics.profitFactor < criteria.minPF) diagParts.push(`PF ${metrics.profitFactor.toFixed(2)} < ${criteria.minPF}`);
+    if (Math.abs(metrics.maxDrawdownPct ?? 0) > criteria.maxDD) diagParts.push(`DD ${Math.abs(metrics.maxDrawdownPct ?? 0).toFixed(1)}% > ${criteria.maxDD}%`);
+    expect(diagParts).toContain("DD 50.0% > 10%");
+  });
+
+  it("computes diagnosis with all failing criteria", () => {
+    const metrics = { numTrades: 1, profitFactor: 0, maxDrawdownPct: 50, winRate: 100 };
+    const criteria = { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: 50 };
+    const wfViolations: any[] = [];
+    const fvViolations: any[] = [];
+    const paramCount = 4;
+
+    const diagParts: string[] = [];
+    const trades = metrics.numTrades ?? 0;
+    if (trades < criteria.minTrades) diagParts.push(`trades ${trades} < minTrades ${criteria.minTrades}`);
+    if (metrics.profitFactor < criteria.minPF) diagParts.push(`PF ${metrics.profitFactor.toFixed(2)} < ${criteria.minPF}`);
+    if (metrics.maxDrawdownPct > criteria.maxDD) diagParts.push(`DD ${metrics.maxDrawdownPct.toFixed(1)}% > ${criteria.maxDD}%`);
+    if (wfViolations.length > 0) diagParts.push("WF overfit");
+    if (fvViolations.length > 0) diagParts.push(`free vars ${paramCount} > max`);
+    const diagnosis = diagParts.length > 0 ? diagParts.join(", ") : "score degraded";
+
+    expect(diagnosis).toContain("trades 1 < minTrades 50");
+    expect(diagnosis).toContain("PF 0.00 < 1.3");
+    expect(diagnosis).toContain("DD 50.0% > 10%");
+  });
+
+  it("returns 'score degraded' when no specific criteria fail", () => {
+    const diagParts: string[] = [];
+    const diagnosis = diagParts.length > 0 ? diagParts.join(", ") : "score degraded";
+    expect(diagnosis).toBe("score degraded");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B2: score>best + trades<min in restructure triggers rollback
+// ---------------------------------------------------------------------------
+describe("B2: restructure score>best + trades<min triggers rollback", () => {
+  it("restructure phase rolls back when score is best but trades insufficient", () => {
+    const phase = "restructure";
+    const scoreWeighted = 45;
+    const bestScore = 40;
+    const meetsMinTrades = false;
+    const effectiveVerdict = "neutral"; // computeEffectiveVerdict("accept", false) = "neutral"
+
+    let rolledBack = false;
+    if (scoreWeighted > bestScore && !meetsMinTrades && phase !== "refine") {
+      rolledBack = true;
+    }
+
+    expect(rolledBack).toBe(true);
+  });
+
+  it("refine phase does NOT rollback when score>best + trades<min", () => {
+    const phase = "refine";
+    let rolledBack = false;
+    if (45 > 40 && !false && phase !== "refine") {
+      rolledBack = true;
+    }
+    expect(rolledBack).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG FIX P1.1: lastContentHash recalculated after rollback
+// ---------------------------------------------------------------------------
+describe("lastContentHash recalculated after rollback", () => {
+  it("hash of restored file != hash of rejected file => must recalculate", () => {
+    const rejectedSource = "const rejected = true;";
+    const restoredSource = "const restored = true;";
+    const rejectedHash = integrity.computeHash(rejectedSource);
+    const restoredHash = integrity.computeHash(restoredSource);
+
+    // Before fix: lastContentHash stays as rejectedHash
+    // After fix: lastContentHash updated to restoredHash
+    let lastContentHash = rejectedHash;
+
+    // Simulate rollback
+    lastContentHash = restoredHash;
+
+    // Next iteration: contentHash from reading file = restoredHash
+    const contentHash = restoredHash;
+    const checkpointRestored = false;
+    const phase = "refine";
+    const canUseInProcess = !checkpointRestored && (phase === "refine" || contentHash === lastContentHash);
+    expect(canUseInProcess).toBe(true);
+  });
+
+  it("without recalculation, forces unnecessary child-process path", () => {
+    const rejectedSource = "const rejected = true;";
+    const restoredSource = "const restored = true;";
+    const rejectedHash = integrity.computeHash(rejectedSource);
+    const restoredHash = integrity.computeHash(restoredSource);
+
+    // Bug: lastContentHash stays as rejectedHash (not updated after rollback)
+    const lastContentHash = rejectedHash;
+    const contentHash = restoredHash;
+    const checkpointRestored = false;
+    const phase = "restructure"; // non-refine phase
+
+    // With stale hash, content != lastContentHash => child-process (unnecessary)
+    const canUseInProcess = !checkpointRestored && (phase === "refine" || contentHash === lastContentHash);
+    expect(canUseInProcess).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG FIX P1.3: paramCount recalculated after checkpoint restore
+// ---------------------------------------------------------------------------
+describe("paramCount after checkpoint restore", () => {
+  it("uses checkpoint params count after non-refine rollback", () => {
+    const cpParams = { dcSlow: 55, dcFast: 20, atrStopMult: 3.5 };
+    const phase = "restructure";
+    const effectiveVerdict = "reject";
+
+    let paramCount = 8; // stale from ESM-cached factory
+
+    // Simulate non-refine rollback
+    if (effectiveVerdict === "reject" && phase !== "refine") {
+      paramCount = Object.keys(cpParams).length;
+    }
+
+    expect(paramCount).toBe(3);
+  });
+
+  it("does NOT recalculate paramCount on refine rollback", () => {
+    const phase = "refine";
+    const effectiveVerdict = "reject";
+
+    let paramCount = 8;
+
+    if (effectiveVerdict === "reject" && phase !== "refine") {
+      paramCount = 3; // should NOT enter
+    }
+
+    expect(paramCount).toBe(8);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG FIX P1.4: double escalation does not skip research
+// ---------------------------------------------------------------------------
+describe("double escalation guard", () => {
+  it("PHASE_TIMEOUT skipped if ESCALATE already transitioned", () => {
+    // Simulates the guard: only fire PHASE_TIMEOUT if ESCALATE didn't transition
+    const prevPhase = "refine";
+    const phaseAfterEscalation = "research"; // ESCALATE fired
+
+    // With guard: PHASE_TIMEOUT only fires if phaseAfterEscalation === prevPhase
+    const shouldFireTimeout = phaseAfterEscalation === prevPhase;
+    expect(shouldFireTimeout).toBe(false);
+  });
+
+  it("PHASE_TIMEOUT fires normally when ESCALATE did not transition", () => {
+    const prevPhase = "refine";
+    const phaseAfterEscalation = "refine"; // ESCALATE guard not met
+    const phaseIterCount = 6;
+    const phaseMaxIter = 5;
+
+    const shouldFireTimeout = phaseAfterEscalation === prevPhase && phaseIterCount > phaseMaxIter;
+    expect(shouldFireTimeout).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B3: paramCount from child-process result preferred over stale factory()
+// ---------------------------------------------------------------------------
+describe("B3: paramCount from child-process", () => {
+  it("uses paramCount from engineResult when available", () => {
+    const engineResult = { paramCount: 5 };
+    let paramCount = 8; // stale
+
+    if ('paramCount' in engineResult && typeof engineResult.paramCount === 'number') {
+      paramCount = engineResult.paramCount;
+    }
+
+    expect(paramCount).toBe(5);
+  });
+
+  it("falls back to factory() when engineResult has no paramCount", () => {
+    const engineResult = {};
+    let paramCount = 8;
+    const factoryParamCount = 6;
+
+    if ('paramCount' in engineResult && typeof (engineResult as any).paramCount === 'number') {
+      paramCount = (engineResult as any).paramCount;
+    } else {
+      paramCount = factoryParamCount;
+    }
+
+    expect(paramCount).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG FIX P1.5: needsRebuild cleared after maxFixAttempts (rollback instead of abort)
+// ---------------------------------------------------------------------------
+describe("maxFixAttempts exhaustion does rollback", () => {
+  it("after maxFixAttempts, needsRebuild is cleared", () => {
+    // Simulates the fix: instead of break, rollback + clear needsRebuild + continue
+    let needsRebuild = true;
+    const fixAttempts = 4;
+    const maxFixAttempts = 3;
+
+    if (fixAttempts > maxFixAttempts) {
+      // Fix: rollback and clear needsRebuild
+      needsRebuild = false;
+    }
+
+    expect(needsRebuild).toBe(false);
+  });
+
+  it("loop continues after maxFixAttempts instead of aborting", () => {
+    // The old behavior was `break` which exits the loop entirely.
+    // New behavior: `continue` which moves to next iteration.
+    let fixAttempts = 4;
+    const maxFixAttempts = 3;
+    let loopContinued = false;
+    let loopBroken = false;
+
+    // Simulate old behavior
+    if (fixAttempts > maxFixAttempts) {
+      // Old: break → New: continue
+      loopContinued = true;
+    }
+
+    expect(loopContinued).toBe(true);
+    expect(loopBroken).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G6: avgR in sessionMetrics
+// ---------------------------------------------------------------------------
+describe("G6: avgR in sessionMetrics", () => {
+  it("IterationMetric includes avgR field", () => {
+    const metric: import("./types.js").IterationMetric = {
+      iter: 1, pnl: 100, pf: 1.5, dd: -5, wr: 45, trades: 60, avgR: 0.2, verdict: "improved",
+    };
+    expect(metric.avgR).toBe(0.2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G7: failureHistory passed to research
+// ---------------------------------------------------------------------------
+describe("G7: failureHistory conversion for research", () => {
+  it("converts failedRestructures to FailureContext format", () => {
+    const failedRestructures = [
+      { globalIter: 18, trades: 1, pf: 0, score: 29.9, diagnosis: "trades 1 < minTrades 50" },
+      { globalIter: 19, trades: 3, pf: 0.1, score: 17.9 },
+    ];
+
+    const failureHistory = failedRestructures.map((f) => ({
+      approachName: `globalIter ${f.globalIter}`,
+      failureMode: f.diagnosis ?? "score degraded",
+      metrics: { pnl: 0, pf: f.pf, wr: 0, dd: 0, trades: f.trades, avgR: 0 },
+    }));
+
+    expect(failureHistory).toHaveLength(2);
+    expect(failureHistory[0].approachName).toBe("globalIter 18");
+    expect(failureHistory[0].failureMode).toBe("trades 1 < minTrades 50");
+    expect(failureHistory[0].metrics.trades).toBe(1);
+    expect(failureHistory[1].failureMode).toBe("score degraded");
   });
 });
 

@@ -42,6 +42,7 @@ export interface IterationState {
   fixAttempts: number;
   transientFailures: number;
   noChangeCount: number;
+  wfRejectStreak?: number;
   previousPnl: number;
   sessionMetrics: IterationMetric[];
   currentPhase: LoopPhase;
@@ -58,6 +59,7 @@ export interface IterationMetric {
   dd: number;
   wr: number;
   trades: number;
+  avgR: number;
   verdict: string;
 }
 
@@ -65,6 +67,8 @@ export interface CheckpointData {
   strategyContent: string;
   metrics: Metrics;
   params?: Record<string, number>;
+  paramCount?: number;
+  strategyParams?: Record<string, import("@breaker/backtest").StrategyParam>;
   iter: number;
   timestamp: string;
 }

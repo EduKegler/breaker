@@ -1,15 +1,17 @@
 import type { Metrics } from "@breaker/backtest";
 import type { ScoringWeights } from "../../types/config.js";
 
+export interface ScoreRaw {
+  pf: number;
+  avgR: number;
+  wr: number;
+  dd: number;
+  complexity: number;
+  sampleConfidence: number;
+}
+
 interface MultiObjectiveScore {
-  raw: {
-    pf: number;
-    avgR: number;
-    wr: number;
-    dd: number;
-    complexity: number;
-    sampleConfidence: number;
-  };
+  raw: ScoreRaw;
   weighted: number; // 0-100
   breakdown: string;
 }
@@ -64,13 +66,19 @@ export function computeScore(
     sampleConfidence: sampleScore,
   };
 
+  // Below sampleFloor trades, apply a multiplicative penalty to the entire score.
+  // This prevents statistically meaningless results (e.g. 2 perfect trades) from
+  // getting inflated scores that mislead the optimizer.
+  const sampleFloor = 20;
+  const sampleMultiplier = tradeCount >= sampleFloor ? 1.0 : tradeCount / sampleFloor;
+
   const weighted =
-    pfScore * w.pf +
+    (pfScore * w.pf +
     avgRScore * w.avgR +
     wrScore * w.wr +
     ddScore * w.dd +
     complexityScore * w.complexity +
-    sampleScore * w.sampleConfidence;
+    sampleScore * w.sampleConfidence) * sampleMultiplier;
 
   const breakdown = [
     `PF: ${(pfScore * w.pf).toFixed(1)}/${w.pf}`,

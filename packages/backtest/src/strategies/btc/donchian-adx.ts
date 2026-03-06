@@ -10,7 +10,7 @@ const MS_1H = 3_600_000;
 const MS_4H = 14_400_000;
 
 const TP_R_MULT = 2;  // partial TP at 2R (baked)
-const TP_PCT = 50;     // close 50% at TP
+const TP_PCT = 0.50;   // close 50% at TP (fraction 0-1)
 
 export interface DonchianAdxParams {
   dcSlow: StrategyParam;

@@ -41,7 +41,7 @@ export function buildSessionSummary(opts: {
       const arrow = m.verdict === "improved" ? "\u{2B06}\u{FE0F}" :
                     m.verdict === "degraded" ? "\u{2B07}\u{FE0F}" : "\u{27A1}\u{FE0F}";
       lines.push(
-        `  ${arrow} iter${m.iter}: PnL=$${m.pnl.toFixed(2)} PF=${m.pf.toFixed(2)} WR=${m.wr.toFixed(1)}% DD=${m.dd.toFixed(1)}% T=${m.trades}`,
+        `  ${arrow} iter${m.iter}: PnL=$${m.pnl.toFixed(2)} PF=${m.pf.toFixed(2)} WR=${m.wr.toFixed(1)}% DD=${Math.abs(m.dd).toFixed(1)}% T=${m.trades}`,
       );
     }
     lines.push("");
@@ -53,7 +53,7 @@ export function buildSessionSummary(opts: {
     lines.push("*Last iter:*");
     lines.push(`  PnL: $${last.pnl.toFixed(2)}`);
     lines.push(`  PF: ${last.pf.toFixed(2)}`);
-    lines.push(`  DD: ${last.dd.toFixed(1)}%`);
+    lines.push(`  DD: ${Math.abs(last.dd).toFixed(1)}%`);
     lines.push(`  WR: ${last.wr.toFixed(1)}%`);
     lines.push(`  Trades: ${last.trades}`);
   }

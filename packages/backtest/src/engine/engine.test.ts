@@ -646,6 +646,29 @@ describe("take-profit and partial close", () => {
     expect(tpExits[0].pnl).toBeGreaterThan(0);
     expect(tpExits[1].pnl).toBeGreaterThan(0);
   });
+
+  it("rejects pctOfPosition > 1 (percentage instead of fraction)", () => {
+    const badTpStrategy: Strategy = {
+      name: "bad-tp",
+      params: {},
+      onCandle(ctx: StrategyContext): Signal | null {
+        if (ctx.index === 5) {
+          return {
+            direction: "long",
+            entryPrice: null,
+            stopLoss: 50,
+            takeProfits: [{ price: 120, pctOfPosition: 50 }], // BUG: should be 0.50
+            comment: "bad TP",
+          };
+        }
+        return null;
+      },
+    };
+    const candles = makeTpCandles();
+    expect(() => runBacktest(candles, badTpStrategy, noLimitsNoFees)).toThrow(
+      "pctOfPosition must be a fraction (0-1)",
+    );
+  });
 });
 
 describe("duplicate entry orders", () => {

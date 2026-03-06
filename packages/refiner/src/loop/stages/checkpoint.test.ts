@@ -78,6 +78,16 @@ describe("checkpoint.save / checkpoint.load", () => {
 
 });
 
+describe("checkpoint.save error handling (P3.5)", () => {
+  it("throws with descriptive message if write fails", () => {
+    // Writing to a read-only path should fail
+    const badDir = "/dev/null/impossible-path";
+    expect(() => {
+      checkpoint.save(badDir, "// code", sampleMetrics, 1);
+    }).toThrow("Checkpoint save failed");
+  });
+});
+
 describe("checkpoint.save edge cases", () => {
   it("save with empty trades produces checkpoint without trades CSV", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
@@ -86,6 +96,51 @@ describe("checkpoint.save edge cases", () => {
     expect(loaded).not.toBeNull();
     expect(loaded!.iter).toBe(1);
     expect(fs.existsSync(path.join(tmpDir, "best-trades.csv"))).toBe(false);
+  });
+});
+
+describe("checkpoint.save/load with paramCount (P4.1)", () => {
+  it("saves and loads paramCount", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
+    checkpoint.save(tmpDir, "// code", sampleMetrics, 5, { dcSlow: 55 }, [], 4);
+
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.paramCount).toBe(4);
+  });
+
+  it("paramCount is undefined for saves without it", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
+    checkpoint.save(tmpDir, "// code", sampleMetrics, 3, { dcSlow: 55 });
+
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded!.paramCount).toBeUndefined();
+  });
+});
+
+describe("checkpoint.save/load with strategyParams (B4)", () => {
+  it("saves and loads strategyParams", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
+    const sp = {
+      dcSlow: { value: 55, min: 20, max: 100, step: 5, optimizable: true, description: "Slow DC" },
+      dcFast: { value: 20, min: 5, max: 50, step: 5, optimizable: true },
+    };
+    checkpoint.save(tmpDir, "// code", sampleMetrics, 5, { dcSlow: 55 }, [], 2, sp);
+
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.strategyParams).toBeDefined();
+    expect(loaded!.strategyParams!.dcSlow.min).toBe(20);
+    expect(loaded!.strategyParams!.dcSlow.description).toBe("Slow DC");
+    expect(loaded!.strategyParams!.dcFast.optimizable).toBe(true);
+  });
+
+  it("strategyParams is undefined for saves without it", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
+    checkpoint.save(tmpDir, "// code", sampleMetrics, 3, { dcSlow: 55 });
+
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded!.strategyParams).toBeUndefined();
   });
 });
 

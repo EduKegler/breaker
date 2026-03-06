@@ -313,6 +313,63 @@ describe("paramWriter.updateHistory", () => {
   });
 });
 
+describe("paramWriter zero PnL edge case (P3.1)", () => {
+  it("pnlChange does not produce NaN when old PnL is 0 and new PnL is positive", () => {
+    const history = paramWriter.loadHistory(historyPath);
+    history.iterations = [{
+      iter: 1, date: "2026-01-01",
+      change: { param: "dcSlow", from: 40, to: 45 },
+      before: { pnl: 0, trades: 0, pf: 0 },
+      after: null, verdict: "pending",
+    }];
+    fs.writeFileSync(historyPath, JSON.stringify(history));
+
+    const result = paramWriter.backfillLastIteration({
+      historyPath,
+      currentMetrics: { pnl: 100, trades: 50, pf: 1.5 },
+    });
+
+    expect(result.iterations[0].verdict).toBe("improved");
+    expect(result.iterations[0].after).toEqual({ pnl: 100, trades: 50, pf: 1.5 });
+  });
+
+  it("pnlChange does not produce NaN when old PnL is 0 and new PnL is negative", () => {
+    const history = paramWriter.loadHistory(historyPath);
+    history.iterations = [{
+      iter: 1, date: "2026-01-01",
+      change: { param: "dcSlow", from: 40, to: 45 },
+      before: { pnl: 0, trades: 0, pf: 0 },
+      after: null, verdict: "pending",
+    }];
+    fs.writeFileSync(historyPath, JSON.stringify(history));
+
+    const result = paramWriter.backfillLastIteration({
+      historyPath,
+      currentMetrics: { pnl: -50, trades: 30, pf: 0.5 },
+    });
+
+    expect(result.iterations[0].verdict).toBe("degraded");
+  });
+
+  it("pnlChange is 0 when both old and new PnL are 0", () => {
+    const history = paramWriter.loadHistory(historyPath);
+    history.iterations = [{
+      iter: 1, date: "2026-01-01",
+      change: { param: "dcSlow", from: 40, to: 45 },
+      before: { pnl: 0, trades: 0, pf: 0 },
+      after: null, verdict: "pending",
+    }];
+    fs.writeFileSync(historyPath, JSON.stringify(history));
+
+    const result = paramWriter.backfillLastIteration({
+      historyPath,
+      currentMetrics: { pnl: 0, trades: 0, pf: 0 },
+    });
+
+    expect(result.iterations[0].verdict).toBe("neutral");
+  });
+});
+
 describe("paramWriter.backfillLastIteration", () => {
   it("fills after/verdict on the last pending iteration", () => {
     // Seed: iter 1 proposed atrStopMult 2.0->2.5, after=null
