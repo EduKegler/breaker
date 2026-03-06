@@ -1,6 +1,8 @@
 import type { WalkForward } from "@breaker/backtest";
 import type { LoopConfig } from "./types.js";
 
+type MetricsInput = { totalPnl: number | null; numTrades: number | null; profitFactor: number | null; maxDrawdownPct: number | null; winRate: number | null; avgR: number | null };
+
 /**
  * Check if backtest metrics meet all configured criteria.
  *
@@ -9,7 +11,7 @@ import type { LoopConfig } from "./types.js";
  * overfitFlag is equivalent to enforcing the pfRatio floor.
  */
 export function checkCriteria(
-  metrics: { totalPnl: number | null; numTrades: number | null; profitFactor: number | null; maxDrawdownPct: number | null; winRate: number | null; avgR: number | null },
+  metrics: MetricsInput,
   criteria: LoopConfig["criteria"],
   walkForward?: WalkForward | null,
 ): boolean {
@@ -36,5 +38,39 @@ export function checkCriteria(
     Math.abs(dd) <= maxDD &&
     wr >= minWR &&
     avgR >= minAvgR
+  );
+}
+
+/**
+ * Check if backtest metrics meet stretch criteria (degradation-adjusted).
+ * Same as checkCriteria but uses stretchPF/stretchAvgR instead of config minimums.
+ */
+export function checkStretchCriteria(
+  metrics: MetricsInput,
+  criteria: LoopConfig["criteria"],
+  stretchPF: number,
+  stretchAvgR: number | null,
+  walkForward?: WalkForward | null,
+): boolean {
+  if (walkForward?.overfitFlag) return false;
+
+  const pnl = metrics.totalPnl ?? 0;
+  const trades = metrics.numTrades ?? 0;
+  const pf = metrics.profitFactor ?? 0;
+  const dd = metrics.maxDrawdownPct ?? 100;
+  const wr = metrics.winRate ?? 0;
+  const avgR = metrics.avgR ?? 0;
+
+  const minTrades = criteria.minTrades ?? 150;
+  const maxDD = criteria.maxDD ?? 12;
+  const minWR = criteria.minWR ?? 0;
+
+  return (
+    pnl > 0 &&
+    trades >= minTrades &&
+    pf >= stretchPF &&
+    Math.abs(dd) <= maxDD &&
+    wr >= minWR &&
+    (stretchAvgR === null || avgR >= stretchAvgR)
   );
 }

@@ -26,9 +26,9 @@ export function computeWalkForward(trades: CompletedTrade[]): WalkForward | null
     ? testPF / trainPF
     : null;
 
-  // Overfit flag: test PF < 60% of train PF, or test PF < 1.0 (KB §10.1)
+  // Overfit flag: test PF < 60% of train PF, test PF < 1.0, or train PF < 1.0 (KB §10.1)
   const overfitFlag = pfRatio !== null
-    ? pfRatio < 0.6 || (testPF !== null && testPF < 1.0)
+    ? pfRatio < 0.6 || (testPF !== null && testPF < 1.0) || (trainPF !== null && trainPF < 1.0)
     : false;
 
   const hourConsistency = computeHourConsistency(trainTrades, testTrades);

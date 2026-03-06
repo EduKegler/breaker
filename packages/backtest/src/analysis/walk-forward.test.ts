@@ -73,6 +73,35 @@ describe("computeWalkForward", () => {
     expect(result.overfitFlag).toBe(true);
   });
 
+  it("flags overfit when trainPF < 1.0", () => {
+    const baseTime = new Date("2024-01-01").getTime();
+    const trades = [
+      // Train set (7 trades): 5 small wins, 2 larger losses → trainPF < 1.0
+      ...Array.from({ length: 5 }, (_, i) => makeTrade(2, baseTime + i * 86400000)),
+      ...Array.from({ length: 2 }, (_, i) => makeTrade(-8, baseTime + (i + 5) * 86400000)),
+      // Test set (3 trades): all winners → testPF high
+      ...Array.from({ length: 3 }, (_, i) => makeTrade(20, baseTime + (i + 7) * 86400000)),
+    ];
+    const result = computeWalkForward(trades)!;
+    expect(result.trainPF).toBeLessThan(1.0);
+    expect(result.overfitFlag).toBe(true);
+  });
+
+  it("does not flag overfit when trainPF >= 1.0", () => {
+    const baseTime = new Date("2024-01-01").getTime();
+    const trades = [
+      // Train set (7 trades): healthy PF
+      ...Array.from({ length: 5 }, (_, i) => makeTrade(10, baseTime + i * 86400000)),
+      ...Array.from({ length: 2 }, (_, i) => makeTrade(-5, baseTime + (i + 5) * 86400000)),
+      // Test set (3 trades): also healthy
+      ...Array.from({ length: 2 }, (_, i) => makeTrade(8, baseTime + (i + 7) * 86400000)),
+      makeTrade(-4, baseTime + 9 * 86400000),
+    ];
+    const result = computeWalkForward(trades)!;
+    expect(result.trainPF).toBeGreaterThanOrEqual(1.0);
+    expect(result.overfitFlag).toBe(false);
+  });
+
   it("does not flag overfit when test performs well", () => {
     const baseTime = new Date("2024-01-01").getTime();
     const trades = Array.from({ length: 20 }, (_, i) =>

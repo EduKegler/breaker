@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkCriteria } from "./check-criteria.js";
+import { checkCriteria, checkStretchCriteria } from "./check-criteria.js";
 import type { WalkForward } from "@breaker/backtest";
 
 const goodMetrics = {
@@ -105,5 +105,37 @@ describe("checkCriteria", () => {
       avgR: null,
     };
     expect(checkCriteria(nullMetrics, baseCriteria)).toBe(false);
+  });
+});
+
+describe("checkStretchCriteria", () => {
+  it("returns true when PF meets stretch target", () => {
+    const stretchMetrics = { ...goodMetrics, profitFactor: 1.90, avgR: 0.25 };
+    expect(checkStretchCriteria(stretchMetrics, baseCriteria, 1.86, 0.21)).toBe(true);
+  });
+
+  it("returns false when PF below stretch target", () => {
+    expect(checkStretchCriteria(goodMetrics, baseCriteria, 1.86, 0.21)).toBe(false);
+  });
+
+  it("returns false when avgR below stretch target", () => {
+    const stretchMetrics = { ...goodMetrics, profitFactor: 2.0, avgR: 0.15 };
+    expect(checkStretchCriteria(stretchMetrics, baseCriteria, 1.86, 0.21)).toBe(false);
+  });
+
+  it("ignores avgR when stretchAvgR is null", () => {
+    const stretchMetrics = { ...goodMetrics, profitFactor: 2.0, avgR: 0.01 };
+    expect(checkStretchCriteria(stretchMetrics, baseCriteria, 1.86, null)).toBe(true);
+  });
+
+  it("returns false when walkForward has overfitFlag", () => {
+    const stretchMetrics = { ...goodMetrics, profitFactor: 2.0, avgR: 0.3 };
+    const wf = mkWalkForward({ overfitFlag: true });
+    expect(checkStretchCriteria(stretchMetrics, baseCriteria, 1.86, 0.21, wf)).toBe(false);
+  });
+
+  it("still checks other criteria (trades, DD, WR)", () => {
+    const lowTrades = { ...goodMetrics, profitFactor: 2.0, numTrades: 10, avgR: 0.3 };
+    expect(checkStretchCriteria(lowTrades, baseCriteria, 1.86, 0.21)).toBe(false);
   });
 });

@@ -73,15 +73,35 @@ export const MODULE_CRITERIA: Record<string, {
   minTrades: number;
   minPF: number;
   maxDD: number;
-  minWR: number | null;    // null = no WR gate for this module
-  minAvgR: number | null;  // null = no avgR gate
+  minWR: number | null;        // null = no WR gate for this module
+  minAvgR: number | null;      // null = no avgR gate
   minPfRatio: number;
+  wrWarnMax: number | null;    // soft warning threshold (archetype drift)
+  wrRejectMax: number | null;  // hard reject threshold (archetype drift)
+  expectedDegradation: number; // 0.3 = 30% backtest→live degradation
 }> = {
-  M1: { minTrades: 50,  minPF: 1.3, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6 },
-  M2: { minTrades: 80,  minPF: 1.3, maxDD: 8,  minWR: 50,   minAvgR: null, minPfRatio: 0.6 },
-  M3: { minTrades: 50,  minPF: 1.4, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6 },
-  M4: { minTrades: 30,  minPF: 1.4, maxDD: 12, minWR: null, minAvgR: 0.20, minPfRatio: 0.6 },
+  M1: { minTrades: 50,  minPF: 1.3, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6, wrWarnMax: 50,  wrRejectMax: 65,  expectedDegradation: 0.3 },
+  M2: { minTrades: 80,  minPF: 1.3, maxDD: 8,  minWR: 50,   minAvgR: null, minPfRatio: 0.6, wrWarnMax: 75,  wrRejectMax: 80,  expectedDegradation: 0.3 },
+  M3: { minTrades: 50,  minPF: 1.4, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6, wrWarnMax: 60,  wrRejectMax: 70,  expectedDegradation: 0.3 },
+  M4: { minTrades: 30,  minPF: 1.4, maxDD: 12, minWR: null, minAvgR: 0.20, minPfRatio: 0.6, wrWarnMax: 55,  wrRejectMax: 65,  expectedDegradation: 0.3 },
 };
+
+/**
+ * Compute stretch criteria for a module, accounting for expected
+ * backtest→live degradation. E.g. with 30% degradation and minPF=1.3,
+ * stretch PF = 1.3 / 0.7 ≈ 1.86 — the target that survives live.
+ */
+export function computeStretchCriteria(
+  moduleId: string,
+): { stretchPF: number; stretchAvgR: number | null } {
+  const mc = MODULE_CRITERIA[moduleId];
+  if (!mc) return { stretchPF: 1.3, stretchAvgR: null };
+  const factor = 1 / (1 - mc.expectedDegradation);
+  return {
+    stretchPF: Math.round(mc.minPF * factor * 100) / 100,
+    stretchAvgR: mc.minAvgR !== null ? Math.round(mc.minAvgR * factor * 100) / 100 : null,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Static module mapping

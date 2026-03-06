@@ -17,7 +17,7 @@ import type { ResolvedCriteria, CoreParameterDef, ScoringWeights } from "../type
 import type { ParameterHistory, ApproachRecord, TestedCombination, ParameterHistoryIteration } from "../types/parameter-history.js";
 import type { ScoreRaw } from "../loop/stages/scoring.js";
 import type { ModuleContext, ComponentCatalog, CatalogSlot } from "../lib/build-module-context.js";
-import { MODULE_CRITERIA } from "../lib/build-module-context.js";
+import { MODULE_CRITERIA, computeStretchCriteria } from "../lib/build-module-context.js";
 import { safeJsonParse } from "../lib/safe-json.js";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +79,9 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
     minWR: criteria.minWR ?? null,
     minAvgR: criteria.minAvgR ?? 0.15,
     minPfRatio: 0.6,
+    wrWarnMax: null,
+    wrRejectMax: null,
+    expectedDegradation: 0.3,
   };
 
   // Format metrics
@@ -136,9 +139,10 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const failedRestructuresSection = buildFailedRestructuresSection(failedRestructures);
   const rollbackSection = buildRollbackSection(lastRollbackReason);
   const moduleCriteriaSection = buildModuleCriteriaSection(mc, moduleContext.moduleId);
+  const stretchSection = buildStretchSection(moduleContext.moduleId);
   const scoringSection = buildScoringSection(scoreBreakdown, scoringWeights, currentScore);
   const scoreDeltaSection = buildScoreDeltaSection(scoreBreakdown, bestScoreBreakdown, scoringWeights, currentScore, bestScore);
-  const walkForwardSection = buildWalkForwardSection(opts.walkForward);
+  const walkForwardSection = buildWalkForwardSection(opts.walkForward, mc);
   const lastIterationSection = buildLastIterationSection(paramHistory);
   const exploredSpaceEnriched = buildExploredSpaceEnriched(paramHistory, globalIter, iter, maxIter);
 
@@ -174,7 +178,7 @@ ${rollbackSection}${lastIterationSection}
 - Backtest engine: @breaker/backtest (in-process, ~2s per iteration)
 - Objective: optimize for Hyperliquid perps
 
-${moduleContextBlock}${moduleCriteriaSection}
+${moduleContextBlock}${moduleCriteriaSection}${stretchSection}
 ## STOPPING CRITERIA (${moduleContext.moduleId})
 ${moduleContext.stoppingCriteria}
 
@@ -984,26 +988,33 @@ function buildRollbackSection(reason?: string): string {
   return `\n> ⚠ LAST ITERATION ROLLED BACK: ${reason}\n> Focus on avoiding the same mistake.\n\n`;
 }
 
-function buildWalkForwardSection(wf?: WalkForward | null): string {
+function buildWalkForwardSection(
+  wf?: WalkForward | null,
+  mc?: { wrWarnMax: number | null; wrRejectMax: number | null } | null,
+): string {
   if (!wf) return "";
   const lines = ["\n## WALK-FORWARD VALIDATION (train 70% / test 30%)"];
   lines.push(`trainPF=${wf.trainPF?.toFixed(2) ?? "?"} | testPF=${wf.testPF?.toFixed(2) ?? "?"} | pfRatio=${wf.pfRatio?.toFixed(2) ?? "?"} | overfitFlag=${wf.overfitFlag}`);
   const ratio = wf.pfRatio ?? 0;
   if (ratio >= 0.85) {
-    lines.push("→ pfRatio 0.85+ — excellent generalization. Strategy is robust.");
+    lines.push("-> pfRatio 0.85+ — excellent generalization. Strategy is robust.");
   } else if (ratio >= 0.70) {
-    lines.push("→ pfRatio 0.70-0.84 — good. Minor complexity increases may still be safe.");
+    lines.push("-> pfRatio 0.70-0.84 — good. Minor complexity increases may still be safe.");
   } else if (ratio >= 0.60) {
-    lines.push("→ pfRatio 0.60-0.69 — borderline. Any further complexity risks tipping into overfit.");
+    lines.push("-> pfRatio 0.60-0.69 — borderline. Any further complexity risks tipping into overfit.");
   } else {
-    lines.push("→ pfRatio < 0.60 — currently overfitting. Reduce model complexity, simplify conditions, or widen parameter ranges.");
+    lines.push("-> pfRatio < 0.60 — currently overfitting. Reduce model complexity, simplify conditions, or widen parameter ranges.");
     lines.push("  Prefer changes that improve TEST PF. Do NOT add new indicators or conditions.");
+  }
+  // trainPF < 1.0 warning
+  if (wf.trainPF !== null && wf.trainPF !== undefined && wf.trainPF < 1.0) {
+    lines.push(`-> trainPF < 1.00 — strategy barely profitable on 70% of data. All profit comes from the test window.`);
   }
   return lines.join("\n") + "\n";
 }
 
 function buildModuleCriteriaSection(
-  mc: { minTrades: number; minPF: number; maxDD: number; minWR: number | null; minAvgR: number | null; minPfRatio: number },
+  mc: { minTrades: number; minPF: number; maxDD: number; minWR: number | null; minAvgR: number | null; minPfRatio: number; wrWarnMax?: number | null; wrRejectMax?: number | null },
   moduleId: string,
 ): string {
   const lines = [`## MODULE ACCEPTANCE CRITERIA (${moduleId})`];
@@ -1013,6 +1024,25 @@ function buildModuleCriteriaSection(
   if (mc.minWR !== null) lines.push(`- WR >= ${mc.minWR}% [mandatory]`);
   if (mc.minAvgR !== null) lines.push(`- avgR >= ${mc.minAvgR}R`);
   lines.push(`- pfRatio >= ${mc.minPfRatio} (walk-forward)`);
+  if (mc.wrWarnMax !== null && mc.wrWarnMax !== undefined) {
+    lines.push(`- Expected WR range: WR > ${mc.wrWarnMax}% triggers warning, > ${mc.wrRejectMax}% triggers rejection`);
+  }
+  return lines.join("\n") + "\n\n";
+}
+
+function buildStretchSection(moduleId: string): string {
+  const mc = MODULE_CRITERIA[moduleId];
+  if (!mc) return "";
+  const stretch = computeStretchCriteria(moduleId);
+  const degradPct = (mc.expectedDegradation * 100).toFixed(0);
+  const lines = [`## DEPLOYMENT TARGET (estimated live profitability)`];
+  lines.push(`KB Floor: PF >= ${mc.minPF} (minimum to not be rejected)`);
+  lines.push(`Stretch:  PF >= ${stretch.stretchPF} (to survive ~${degradPct}% backtest-to-live degradation)`);
+  if (stretch.stretchAvgR !== null) {
+    lines.push(`Stretch:  avgR >= ${stretch.stretchAvgR}R`);
+  }
+  lines.push(`-> The loop continues until stretch targets are met or max iterations reached.`);
+  lines.push(`-> A strategy at PF=${mc.minPF} is expected to LOSE money live. Aim for PF >= ${stretch.stretchPF}.`);
   return lines.join("\n") + "\n\n";
 }
 
@@ -1144,6 +1174,22 @@ function buildOverfitSection(
     warnings.push(
       `OVERFIT SIGNAL: WR=${metrics.winRate!.toFixed(1)}% > 80%. ` +
       `Investigate look-ahead bias or excessive curve fitting.`,
+    );
+  }
+
+  // Archetype WR drift: WR exceeds expected range for this module
+  const mcForWr = MODULE_CRITERIA[moduleId];
+  if (mcForWr?.wrWarnMax !== null && mcForWr?.wrWarnMax !== undefined && (metrics.winRate ?? 0) > mcForWr.wrWarnMax) {
+    const wr = metrics.winRate!;
+    const pf = metrics.profitFactor ?? 0;
+    const moduleName = moduleId === "M1" ? "breakout" : moduleId === "M2" ? "mean-reversion" : moduleId === "M3" ? "pullback" : "trend-following";
+    const pfDiag = pf < 1.5
+      ? ` Combined with PF=${pf.toFixed(2)}, this confirms TPs are too tight — high WR but poor R:R.`
+      : "";
+    warnings.push(
+      `ARCHETYPE DRIFT WARNING: WR=${wr.toFixed(1)}% exceeds expected range for ${moduleName} (warn>${mcForWr.wrWarnMax}%, reject>${mcForWr.wrRejectMax}%).${pfDiag} ` +
+      `Widen TPs to let winners run (improves R:R even if WR drops). ` +
+      `If WR stays high despite wider TPs, entry logic may be capturing mean-reversion setups instead of breakouts.`,
     );
   }
 

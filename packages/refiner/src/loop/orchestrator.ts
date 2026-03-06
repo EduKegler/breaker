@@ -27,11 +27,11 @@ import { lock } from "../lib/lock.js";
 import { classifyError } from "./classify-error.js";
 import { parseArgs } from "./parse-args.js";
 import { buildLoopConfig } from "./build-loop-config.js";
-import { checkCriteria } from "./check-criteria.js";
+import { checkCriteria, checkStretchCriteria } from "./check-criteria.js";
 import { phaseHelpers } from "./phase-helpers.js";
 import { emitEvent, closeLoggers } from "./stages/events.js";
 import { checkpoint } from "./stages/checkpoint.js";
-import { validateParamGuardrails, validateWalkForward, validateFreeVariableCount, validateStrategyStructure } from "./stages/guardrails.js";
+import { validateParamGuardrails, validateWalkForward, validateArchetypeWR, validateFreeVariableCount, validateStrategyStructure } from "./stages/guardrails.js";
 import { buildSessionSummary, buildConsoleSummary } from "./stages/summary.js";
 import { runEngineInProcess } from "./stages/run-engine-in-process.js";
 import { runEngineChild } from "./stages/spawn-engine-child.js";
@@ -44,7 +44,7 @@ import { compareScores } from "./stages/compare-scores.js";
 import { buildOptimizePrompt, normalizeToCatalog } from "../automation/build-optimize-prompt.js";
 import type { RestructureFailure } from "../automation/build-optimize-prompt.js";
 import { buildFixPrompt } from "../automation/build-fix-prompt.js";
-import { buildModuleContext, MODULE_CRITERIA } from "../lib/build-module-context.js";
+import { buildModuleContext, MODULE_CRITERIA, computeStretchCriteria } from "../lib/build-module-context.js";
 import { paramWriter } from "./stages/param-writer.js";
 import { conductResearch } from "./stages/research.js";
 import { safeJsonParse } from "../lib/safe-json.js";
@@ -175,6 +175,11 @@ export async function orchestrate(): Promise<void> {
       cfg.criteria.minAvgR = kbFloor.minAvgR;
     }
   }
+
+  // Compute stretch targets (degradation-adjusted)
+  const stretchTargets = computeStretchCriteria(moduleContext.moduleId);
+  const degradationPct = (MODULE_CRITERIA[moduleContext.moduleId]?.expectedDegradation ?? 0.3) * 100;
+  logDim(`Stretch targets: PF>=${stretchTargets.stretchPF}${stretchTargets.stretchAvgR ? ` avgR>=${stretchTargets.stretchAvgR}` : ""} (${degradationPct}% expected degradation)`);
 
   // Resolve strategy source file
   cfg.strategyFile = getStrategySourcePath(cfg.repoRoot, cfg.strategyFactory);
@@ -885,6 +890,7 @@ export async function orchestrate(): Promise<void> {
     logDim(`📊  best   │ PnL $${preOptimizeMetrics.pnl.toFixed(2).padStart(8)} │ PF ${preOptimizeMetrics.pf.toFixed(2).padStart(5)} │ WR ${preOptimizeMetrics.wr.toFixed(1).padStart(5)}% │ DD ${Math.abs(preOptimizeMetrics.dd).toFixed(1).padStart(5)}% │ T ${String(preOptimizeMetrics.trades).padStart(3)} │ avgR ${preOptimizeMetrics.avgR.toFixed(2).padStart(5)}`);
     log(`📊  ${c.b}now${c.r}    │ PnL $${iterPnl.toFixed(2).padStart(8)} │ PF ${pfC}${pf.toFixed(2).padStart(5)}${c.r} │ WR ${wrC}${wr.toFixed(1).padStart(5)}%${c.r} │ DD ${ddC}${dd.toFixed(1).padStart(5)}%${c.r} │ T ${trC}${String(tr).padStart(3)}${c.r} │ avgR ${arC}${ar.toFixed(2).padStart(5)}${c.r}`);
     logDim(`📊  target │ PnL          │ PF ${(cr.minPF ?? 0).toFixed(2).padStart(5)} │ WR ${(cr.minWR ?? 0).toFixed(1).padStart(5)}% │ DD ${(cr.maxDD ?? 0).toFixed(1).padStart(5)}% │ T ${String(cr.minTrades ?? 0).padStart(3)} │ avgR ${(cr.minAvgR ?? 0).toFixed(2).padStart(5)}`);
+    logDim(`📊  ${c.ylw}stretch${c.r}${c.d} │ PnL          │ PF ${stretchTargets.stretchPF.toFixed(2).padStart(5)} │${stretchTargets.stretchAvgR !== null ? ` avgR ${stretchTargets.stretchAvgR.toFixed(2).padStart(5)} │` : ""} ~${degradationPct}% live degradation`);
     log(`📊 Score: ${c.b}${scoreResult.weighted.toFixed(1)}${c.r}/100`);
 
     const wf = analysis.walkForward;
@@ -947,6 +953,21 @@ export async function orchestrate(): Promise<void> {
       effectiveVerdict = "reject";
     }
 
+    // Archetype WR drift gate: reject if WR exceeds module's hard max
+    const wrViolations = validateArchetypeWR(
+      metrics.winRate ?? 0,
+      kbFloor?.wrRejectMax ?? null,
+    );
+    if (wrViolations.length > 0 && effectiveVerdict === "accept") {
+      logWarn(`⛔ Archetype WR drift: ${wrViolations[0].reason} — forcing reject`);
+      emitEvent({
+        artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+        stage: "GUARDRAIL_VIOLATION", status: "warn",
+        message: wrViolations[0].reason,
+      });
+      effectiveVerdict = "reject";
+    }
+
     let verdict: string;
     if (effectiveVerdict === "accept") {
       verdict = "improved";
@@ -973,32 +994,59 @@ export async function orchestrate(): Promise<void> {
     // ---- Step 7: Criteria check (includes WF overfitFlag per KB §10.1) ----
     // If baseline already passed criteria, don't stop early — run all iterations
     // to maximize score. Only stop early when going FROM failing TO passing.
+    // With stretch targets: even when criteria pass, continue until stretch met.
     if (checkCriteria(metrics, cfg.criteria, analysis.walkForward)) {
       success = true;
+      const meetsStretch = checkStretchCriteria(metrics, cfg.criteria, stretchTargets.stretchPF, stretchTargets.stretchAvgR, analysis.walkForward);
       if (!baselinePassesCriteria) {
-        log(`${c.b}${c.grn}🏆 ALL CRITERIA PASSED at iter ${iter}!${c.r}`);
-        emitEvent({
-          artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
-          stage: "CRITERIA_PASSED", status: "success",
-          pnl: iterPnl, message: "All criteria passed",
-        });
-        actor.send({ type: "CHECKPOINT_SAVED", bestScore: scoreResult.weighted, bestPnl: iterPnl, bestIter: iter });
-        actor.send({ type: "CRITERIA_MET" });
-        state.bestScore = scoreResult.weighted;
-        state.bestPnl = iterPnl;
-        state.bestIter = iter;
-        bestScoreBreakdown = scoreResult.raw;
-        checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, engineTrades, paramCount, lastStrategyParams, analysis ?? undefined);
-        // Enrich last metric before break (normally done at loop bottom)
-        const lastMetric = state.sessionMetrics[state.sessionMetrics.length - 1];
-        if (lastMetric) {
-          lastMetric.durationMs = Date.now() - iterStartMs;
-          if (optSummary) lastMetric.summary = optSummary;
+        if (meetsStretch) {
+          log(`${c.b}${c.grn}🏆 ALL CRITERIA + STRETCH TARGETS PASSED at iter ${iter}!${c.r}`);
+          emitEvent({
+            artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+            stage: "CRITERIA_PASSED", status: "success",
+            pnl: iterPnl, message: "All criteria + stretch targets passed",
+          });
+          actor.send({ type: "CHECKPOINT_SAVED", bestScore: scoreResult.weighted, bestPnl: iterPnl, bestIter: iter });
+          actor.send({ type: "CRITERIA_MET" });
+          state.bestScore = scoreResult.weighted;
+          state.bestPnl = iterPnl;
+          state.bestIter = iter;
+          bestScoreBreakdown = scoreResult.raw;
+          checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, engineTrades, paramCount, lastStrategyParams, analysis ?? undefined);
+          // Enrich last metric before break (normally done at loop bottom)
+          const lastMetric = state.sessionMetrics[state.sessionMetrics.length - 1];
+          if (lastMetric) {
+            lastMetric.durationMs = Date.now() - iterStartMs;
+            if (optSummary) lastMetric.summary = optSummary;
+          }
+          break;
         }
-        break;
+        logOk(`✓ KB criteria met — continuing to reach stretch PF>=${stretchTargets.stretchPF} (current=${(metrics.profitFactor ?? 0).toFixed(2)})`);
+      } else {
+        // Baseline already passed — check stretch for early stop
+        if (meetsStretch) {
+          log(`${c.b}${c.grn}🏆 STRETCH TARGETS REACHED at iter ${iter}!${c.r}`);
+          emitEvent({
+            artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+            stage: "CRITERIA_PASSED", status: "success",
+            pnl: iterPnl, message: "Stretch targets reached",
+          });
+          actor.send({ type: "CHECKPOINT_SAVED", bestScore: scoreResult.weighted, bestPnl: iterPnl, bestIter: iter });
+          actor.send({ type: "CRITERIA_MET" });
+          state.bestScore = scoreResult.weighted;
+          state.bestPnl = iterPnl;
+          state.bestIter = iter;
+          bestScoreBreakdown = scoreResult.raw;
+          checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, engineTrades, paramCount, lastStrategyParams, analysis ?? undefined);
+          const lastMetric = state.sessionMetrics[state.sessionMetrics.length - 1];
+          if (lastMetric) {
+            lastMetric.durationMs = Date.now() - iterStartMs;
+            if (optSummary) lastMetric.summary = optSummary;
+          }
+          break;
+        }
+        logOk(`✓ Criteria passing, stretch PF>=${stretchTargets.stretchPF} not yet reached (current=${(metrics.profitFactor ?? 0).toFixed(2)})`);
       }
-      // Baseline already passed — log but continue to maximize score
-      logOk(`✓ Criteria still passing (score=${scoreResult.weighted.toFixed(1)})`);
     }
 
     // ---- Step 8: Checkpoint / Rollback (score-based) ----

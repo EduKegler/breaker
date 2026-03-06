@@ -80,10 +80,27 @@ export function validateWalkForward(
 
   const pfRatioStr = walkForward.pfRatio !== null ? walkForward.pfRatio.toFixed(2) : "N/A";
   const testPFStr = walkForward.testPF !== null ? walkForward.testPF.toFixed(2) : "N/A";
+  const trainPFStr = walkForward.trainPF !== null ? walkForward.trainPF.toFixed(2) : "N/A";
 
   return [{
     field: "overfitFlag",
-    reason: `Walk-forward overfit: pfRatio=${pfRatioStr}, testPF=${testPFStr}`,
+    reason: `Walk-forward overfit: trainPF=${trainPFStr}, testPF=${testPFStr}, pfRatio=${pfRatioStr}`,
+  }];
+}
+
+/**
+ * Validate win rate against archetype-specific max threshold.
+ * Detects archetype drift (e.g., breakout strategy with 70% WR ≈ scalping).
+ */
+export function validateArchetypeWR(
+  winRate: number,
+  wrRejectMax: number | null,
+): GuardrailViolation[] {
+  if (wrRejectMax === null) return [];
+  if (winRate <= wrRejectMax) return [];
+  return [{
+    field: "archetypeWR",
+    reason: `Archetype drift: WR ${winRate.toFixed(1)}% exceeds max ${wrRejectMax}% for this module`,
   }];
 }
 

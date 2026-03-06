@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateGuardrails, validateParamGuardrails, validateWalkForward, validateFreeVariableCount, validateDiagnosticTracking, validateStrategyStructure } from "./guardrails.js";
+import { validateGuardrails, validateParamGuardrails, validateWalkForward, validateArchetypeWR, validateFreeVariableCount, validateDiagnosticTracking, validateStrategyStructure } from "./guardrails.js";
 import type { Guardrails } from "../../types/config.js";
 import type { StrategyParam, WalkForward } from "@breaker/backtest";
 
@@ -142,11 +142,40 @@ describe("validateWalkForward", () => {
     expect(v[0].reason).toContain("testPF=0.90");
   });
 
+  it("includes trainPF in reason message", () => {
+    const wf = mkWalkForward({ overfitFlag: true, trainPF: 0.95, pfRatio: 0.4, testPF: 0.8 });
+    const v = validateWalkForward(wf);
+    expect(v).toHaveLength(1);
+    expect(v[0].reason).toContain("trainPF=0.95");
+  });
+
   it("includes pfRatio N/A when null", () => {
     const wf = mkWalkForward({ overfitFlag: true, pfRatio: null, testPF: 0.5 });
     const v = validateWalkForward(wf);
     expect(v).toHaveLength(1);
     expect(v[0].reason).toContain("pfRatio=N/A");
+  });
+});
+
+describe("validateArchetypeWR", () => {
+  it("returns no violations when WR within range", () => {
+    expect(validateArchetypeWR(35, 55)).toEqual([]);
+  });
+
+  it("returns no violations when WR exactly at wrRejectMax", () => {
+    expect(validateArchetypeWR(55, 55)).toEqual([]);
+  });
+
+  it("returns violation when WR above wrRejectMax", () => {
+    const v = validateArchetypeWR(68.7, 55);
+    expect(v).toHaveLength(1);
+    expect(v[0].field).toBe("archetypeWR");
+    expect(v[0].reason).toContain("68.7%");
+    expect(v[0].reason).toContain("55%");
+  });
+
+  it("skips check when wrRejectMax is null", () => {
+    expect(validateArchetypeWR(99, null)).toEqual([]);
   });
 });
 
