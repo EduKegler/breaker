@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { formatCatalogForPrompt, buildOptimizePrompt } from "./build-optimize-prompt.js";
+import { formatCatalogForPrompt, normalizeToCatalog, buildOptimizePrompt } from "./build-optimize-prompt.js";
 import type { RestructureFailure } from "./build-optimize-prompt.js";
 import type { ComponentCatalog, CatalogSlot, ModuleContext } from "../lib/build-module-context.js";
 import type { TestedCombination } from "../types/parameter-history.js";
@@ -78,6 +78,117 @@ describe("formatCatalogForPrompt", () => {
 });
 
 // ---------------------------------------------------------------------------
+// normalizeToCatalog
+// ---------------------------------------------------------------------------
+
+describe("normalizeToCatalog", () => {
+  const catalog: ComponentCatalog = {
+    slots: [
+      {
+        slotName: "Entry Signal",
+        candidates: [
+          { name: "Donchian Channel", description: "Breakout" },
+          { name: "BB squeeze", description: "BB inside KC" },
+        ],
+      },
+      {
+        slotName: "Regime Filter",
+        candidates: [
+          { name: "EMA direction", description: "Trend aligned" },
+          { name: "ADX threshold", description: "Consolidation" },
+        ],
+      },
+    ],
+  };
+
+  it("keeps exact matches unchanged", () => {
+    const result = normalizeToCatalog(
+      { "Entry Signal": "Donchian Channel", "Regime Filter": "EMA direction" },
+      catalog,
+    );
+    expect(result["Entry Signal"]).toBe("Donchian Channel");
+    expect(result["Regime Filter"]).toBe("EMA direction");
+  });
+
+  it("normalizes verbose Claude names to canonical catalog names", () => {
+    const result = normalizeToCatalog(
+      { "Entry Signal": "Donchian Channel Breakout (dcSlow period)" },
+      catalog,
+    );
+    expect(result["Entry Signal"]).toBe("Donchian Channel");
+  });
+
+  it("normalizes case-insensitive matches", () => {
+    const result = normalizeToCatalog(
+      { "Entry Signal": "bb squeeze release with KC expansion" },
+      catalog,
+    );
+    expect(result["Entry Signal"]).toBe("BB squeeze");
+  });
+
+  it("passes through names for unknown slots", () => {
+    const result = normalizeToCatalog(
+      { "Unknown Slot": "Custom Component" },
+      catalog,
+    );
+    expect(result["Unknown Slot"]).toBe("Custom Component");
+  });
+
+  it("passes through when no catalog candidate matches", () => {
+    const result = normalizeToCatalog(
+      { "Entry Signal": "Completely Novel Approach" },
+      catalog,
+    );
+    expect(result["Entry Signal"]).toBe("Completely Novel Approach");
+  });
+
+  it("picks longest matching candidate when multiple match", () => {
+    const catalogWithOverlap: ComponentCatalog = {
+      slots: [{
+        slotName: "Exit",
+        candidates: [
+          { name: "ATR trail", description: "Simple ATR" },
+          { name: "ATR trail + partial TP", description: "ATR with targets" },
+        ],
+      }],
+    };
+    const result = normalizeToCatalog(
+      { "Exit": "ATR trail + partial TP at 2R with Chandelier" },
+      catalogWithOverlap,
+    );
+    expect(result["Exit"]).toBe("ATR trail + partial TP");
+  });
+});
+
+describe("formatCatalogForPrompt: fuzzy TESTED matching", () => {
+  const catalog: ComponentCatalog = {
+    slots: [{
+      slotName: "Entry Signal",
+      candidates: [
+        { name: "Donchian Channel", description: "Breakout" },
+        { name: "BB squeeze", description: "BB inside KC" },
+      ],
+    }],
+  };
+
+  it("marks candidate as TESTED when testedCombination uses verbose name", () => {
+    const tested: TestedCombination[] = [
+      { iter: 5, components: { "Entry Signal": "Donchian Channel Breakout (close > dcSlow)" }, bestMetrics: null },
+    ];
+    const result = formatCatalogForPrompt(catalog, tested);
+    expect(result).toContain("Donchian Channel [TESTED]");
+  });
+
+  it("marks candidate as TESTED with case-insensitive match", () => {
+    const tested: TestedCombination[] = [
+      { iter: 5, components: { "Entry Signal": "donchian channel" }, bestMetrics: null },
+    ];
+    const result = formatCatalogForPrompt(catalog, tested);
+    expect(result).toContain("Donchian Channel [TESTED]");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Module-specific session sanity checks (KB §13.2)
 // ---------------------------------------------------------------------------
 
@@ -116,7 +227,7 @@ describe("buildOptimizePrompt session sanity (KB §13.2)", () => {
   function makeAnalysis(sessions: Record<string, { count: number; pnl: number; winRate: number; profitFactor: number }>, overrides?: Partial<TradeAnalysis>): TradeAnalysis {
     return {
       totalExitRows: 60,
-      byDirection: { long: { count: 30, pnl: 300, winRate: 50, profitFactor: 1.5, avgTrade: 10 }, short: { count: 30, pnl: 200, winRate: 40, profitFactor: 1.3, avgTrade: 6.67 } },
+      byDirection: { Long: { count: 30, pnl: 300, winRate: 50, profitFactor: 1.5, avgTrade: 10 }, Short: { count: 30, pnl: 200, winRate: 40, profitFactor: 1.3, avgTrade: 6.67 } },
       bySession: sessions as any,
       byExitType: [],
       byDayOfWeek: {},
@@ -262,7 +373,7 @@ describe("buildOptimizePrompt structural diagnostics", () => {
     const total = exitTypes.reduce((s, e) => s + e.count, 0);
     return {
       totalExitRows: total,
-      byDirection: { long: { count: 24, pnl: -15, winRate: 45, profitFactor: 0.8, avgTrade: -0.6 }, short: { count: 53, pnl: -56, winRate: 39, profitFactor: 0.67, avgTrade: -1.06 } },
+      byDirection: { Long: { count: 24, pnl: -15, winRate: 45, profitFactor: 0.8, avgTrade: -0.6 }, Short: { count: 53, pnl: -56, winRate: 39, profitFactor: 0.67, avgTrade: -1.06 } },
       bySession: { Asia: { count: 18, pnl: -21, winRate: 33, profitFactor: 0.59 }, London: { count: 9, pnl: -21, winRate: 33, profitFactor: 0.41 }, NY: { count: 47, pnl: -18, winRate: 46, profitFactor: 0.87 }, "Off-peak": { count: 3, pnl: -10, winRate: 33, profitFactor: 0.24 } },
       byExitType: exitTypes,
       byDayOfWeek: { Mon: { count: 16, pnl: -3 }, Sun: { count: 10, pnl: -50 }, Wed: { count: 8, pnl: 20 } },
@@ -887,7 +998,7 @@ describe("P1: diagnostic guide", () => {
   it("flags weak direction when one direction PF < 0.5", () => {
     const analysis: TradeAnalysis = {
       totalExitRows: 60,
-      byDirection: { long: { count: 30, pnl: -200, winRate: 20, profitFactor: 0.3, avgTrade: -6.7 }, short: { count: 30, pnl: 200, winRate: 55, profitFactor: 1.8, avgTrade: 6.7 } },
+      byDirection: { Long: { count: 30, pnl: -200, winRate: 20, profitFactor: 0.3, avgTrade: -6.7 }, Short: { count: 30, pnl: 200, winRate: 55, profitFactor: 1.8, avgTrade: 6.7 } },
       bySession: {
         Asia: { count: 15, pnl: 0, winRate: 50, profitFactor: 1.0 },
         London: { count: 15, pnl: 0, winRate: 50, profitFactor: 1.0 },

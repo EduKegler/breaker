@@ -6,6 +6,7 @@ import { execaSync } from "execa";
 import writeFileAtomic from "write-file-atomic";
 import { cac } from "cac";
 import { isMainModule } from "@breaker/kit";
+import { bakeParamDefaults } from "../strategies/bake-param-defaults.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -29,17 +30,45 @@ interface PromoteOptions {
   strategiesDir?: string;
   fromCheckpoint?: string;
   asset?: string;
+  /** Path to best-params.json to bake into defaults (auto-discovered if not set) */
+  paramsFile?: string;
 }
 
 interface PromoteResult {
   success: boolean;
   error?: string;
   hash?: string;
+  bakedParams?: string[];
+  staleParams?: string[];
+}
+
+/**
+ * Try to auto-discover best-params.json from the refiner assets directory.
+ * Convention: packages/refiner/assets/{asset}/{strategy}/checkpoints/best-params.json
+ */
+function discoverParamsFile(strategiesDir: string, asset: string, name: string): string | null {
+  // strategiesDir is typically packages/backtest/src/strategies
+  // refiner assets is at packages/refiner/assets/{asset}/{strategy}/checkpoints/
+  const backtest = join(strategiesDir, "../..");
+  const refinerAssets = join(backtest, "../../refiner/assets", asset);
+
+  // Map strategy file name to strategy category (e.g., donchian-adx → breakout)
+  const categoryMap: Record<string, string> = {
+    "donchian-adx": "breakout",
+    "keltner-rsi2": "mean-reversion",
+    "ema-pullback": "pullback",
+  };
+
+  const category = categoryMap[name];
+  if (!category) return null;
+
+  const paramsPath = join(refinerAssets, category, "checkpoints", "best-params.json");
+  return existsSync(paramsPath) ? paramsPath : null;
 }
 
 /**
  * Promote a strategy to the deployed/ directory.
- * Reads source from `strategies/{asset}/{name}.ts` → rewrites imports → writes to `strategies/{asset}/deployed/{name}.ts`.
+ * Reads source from `strategies/{asset}/{name}.ts` → bakes checkpoint params → rewrites imports → writes to `strategies/{asset}/deployed/{name}.ts`.
  */
 export function promoteStrategy(
   name: string,
@@ -62,7 +91,22 @@ export function promoteStrategy(
     return { success: false, error: `Source file not found: ${sourcePath}` };
   }
 
-  const sourceContent = readFileSync(sourcePath, "utf-8");
+  let sourceContent = readFileSync(sourcePath, "utf-8");
+
+  // Bake checkpoint params into DEFAULT_PARAMS
+  let bakedParams: string[] | undefined;
+  let staleParams: string[] | undefined;
+  const paramsFile = options.paramsFile ?? discoverParamsFile(strategiesDir, asset, name);
+  if (paramsFile) {
+    try {
+      const params = JSON.parse(readFileSync(paramsFile, "utf-8")) as Record<string, number>;
+      const result = bakeParamDefaults(sourceContent, params);
+      sourceContent = result.source;
+      if (result.applied.length > 0) bakedParams = result.applied;
+      if (result.stale.length > 0) staleParams = result.stale;
+    } catch { /* ignore corrupt params file */ }
+  }
+
   const rewritten = rewriteImports(sourceContent);
   const destPath = join(deployedDir, `${name}.ts`);
 
@@ -70,7 +114,7 @@ export function promoteStrategy(
 
   const hash = createHash("sha256").update(rewritten).digest("hex").slice(0, 12);
 
-  return { success: true, hash };
+  return { success: true, hash, bakedParams, staleParams };
 }
 
 function main() {
@@ -109,6 +153,12 @@ function main() {
           console.error(`  FAILED: ${result.error}`);
         } else {
           console.log(`  OK (hash: ${result.hash})`);
+          if (result.bakedParams?.length) {
+            console.log(`  Baked params: ${result.bakedParams.join(", ")}`);
+          }
+          if (result.staleParams?.length) {
+            console.log(`  Stale params (ignored): ${result.staleParams.join(", ")}`);
+          }
         }
       }
 

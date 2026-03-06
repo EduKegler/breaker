@@ -6,12 +6,17 @@ describe("compareScores", () => {
     expect(compareScores(55, 50)).toBe("accept");
   });
 
-  it("rejects when new < old * 0.92", () => {
-    expect(compareScores(45, 50)).toBe("reject");
+  it("rejects when new < old * 0.97", () => {
+    expect(compareScores(48, 50)).toBe("reject");
   });
 
   it("neutral when in between", () => {
-    expect(compareScores(50, 50)).toBe("neutral");
+    expect(compareScores(49, 50)).toBe("neutral");
+  });
+
+  it("rejects 4% degradation (was neutral with old 8% band)", () => {
+    // 50 * 0.97 = 48.5 — score of 48 is below, so reject
+    expect(compareScores(48, 50)).toBe("reject");
   });
 
   it("accepts when old is 0 and new is positive", () => {

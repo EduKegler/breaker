@@ -387,6 +387,77 @@ describe("state-machine: CHECKPOINT_SAVED", () => {
 });
 
 // ---------------------------------------------------------------------------
+// CHECKPOINT_SAVED in restructure -> refine (exploit new architecture)
+// ---------------------------------------------------------------------------
+describe("state-machine: CHECKPOINT_SAVED restructure -> refine", () => {
+  it("transitions from restructure to refine on CHECKPOINT_SAVED", () => {
+    const actor = startActor({ initialPhase: "restructure" });
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 60, bestPnl: 33, bestIter: 4 });
+    expect(actor.getSnapshot().value).toBe("refine");
+  });
+
+  it("resets phase counters and clears researchBriefPath", () => {
+    const actor = startActor({
+      initialPhase: "restructure",
+      phaseIterCount: 5,
+      neutralStreak: 2,
+      noChangeCount: 1,
+      wfRejectStreak: 1,
+      researchBriefPath: "/some/brief.json",
+    });
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 60, bestPnl: 33, bestIter: 4 });
+    const ctx = actor.getSnapshot().context;
+    expect(ctx.phaseIterCount).toBe(0);
+    expect(ctx.neutralStreak).toBe(0);
+    expect(ctx.noChangeCount).toBe(0);
+    expect(ctx.wfRejectStreak).toBe(0);
+    expect(ctx.researchBriefPath).toBeUndefined();
+  });
+
+  it("updates bestScore, bestPnl, bestIter", () => {
+    const actor = startActor({ initialPhase: "restructure", bestScore: 30, bestPnl: 10, bestIter: 1 });
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 60, bestPnl: 33, bestIter: 4 });
+    const ctx = actor.getSnapshot().context;
+    expect(ctx.bestScore).toBe(60);
+    expect(ctx.bestPnl).toBe(33);
+    expect(ctx.bestIter).toBe(4);
+  });
+
+  it("does NOT increment phaseCycles (productive transition, not exhaustion)", () => {
+    const actor = startActor({ initialPhase: "restructure", phaseCycles: 0, maxCycles: 2 });
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 60, bestPnl: 33, bestIter: 4 });
+    expect(actor.getSnapshot().context.phaseCycles).toBe(0);
+  });
+
+  it("CHECKPOINT_SAVED in refine stays in refine (no transition)", () => {
+    const actor = startActor({ initialPhase: "refine" });
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 60, bestPnl: 33, bestIter: 4 });
+    expect(actor.getSnapshot().value).toBe("refine");
+  });
+
+  it("CHECKPOINT_SAVED in research stays in research (no transition)", () => {
+    const actor = startActor({ initialPhase: "research" });
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 60, bestPnl: 33, bestIter: 4 });
+    expect(actor.getSnapshot().value).toBe("research");
+  });
+
+  it("integration: restructure checkpoint → refine → refine escalates when stuck", () => {
+    const actor = startActor({ initialPhase: "restructure", maxCycles: 2 });
+
+    // Restructure finds a better checkpoint → goes to refine
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 60, bestPnl: 33, bestIter: 4 });
+    expect(actor.getSnapshot().value).toBe("refine");
+    expect(actor.getSnapshot().context.phaseCycles).toBe(0);
+
+    // Refine gets stuck (no change) → escalates to research
+    actor.send({ type: "NO_CHANGE" });
+    actor.send({ type: "NO_CHANGE" });
+    actor.send({ type: "ESCALATE" });
+    expect(actor.getSnapshot().value).toBe("research");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // CRITERIA_MET event -> done
 // ---------------------------------------------------------------------------
 describe("state-machine: CRITERIA_MET", () => {
@@ -659,6 +730,32 @@ describe("state-machine: full cycle integration", () => {
     expect(actor.getSnapshot().value).toBe("restructure");
     actor.send({ type: "PHASE_TIMEOUT" });
     expect(actor.getSnapshot().value).toBe("done");
+  });
+
+  it("restructure checkpoint → refine → research → restructure → refine checkpoint cycle", () => {
+    const actor = startActor({ initialPhase: "restructure", maxCycles: 3 });
+
+    // Restructure finds checkpoint → goes to refine (no phaseCycles increment)
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 60, bestPnl: 33, bestIter: 4 });
+    expect(actor.getSnapshot().value).toBe("refine");
+    expect(actor.getSnapshot().context.phaseCycles).toBe(0);
+
+    // Refine plateaus → escalates to research
+    actor.send({ type: "VERDICT", verdict: "neutral" });
+    actor.send({ type: "VERDICT", verdict: "neutral" });
+    actor.send({ type: "VERDICT", verdict: "neutral" });
+    actor.send({ type: "ESCALATE" });
+    expect(actor.getSnapshot().value).toBe("research");
+
+    // Research → restructure via timeout
+    actor.send({ type: "PHASE_TIMEOUT" });
+    expect(actor.getSnapshot().value).toBe("restructure");
+
+    // Restructure finds another checkpoint → refine again (still no phaseCycles increment)
+    actor.send({ type: "CHECKPOINT_SAVED", bestScore: 75, bestPnl: 100, bestIter: 8 });
+    expect(actor.getSnapshot().value).toBe("refine");
+    expect(actor.getSnapshot().context.phaseCycles).toBe(0);
+    expect(actor.getSnapshot().context.bestScore).toBe(75);
   });
 
   it("criteria met short-circuits regardless of phase", () => {

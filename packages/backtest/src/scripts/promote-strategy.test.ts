@@ -134,6 +134,87 @@ export function createDonchianAdx() { return {}; }
   });
 });
 
+describe("promoteStrategy with params baking", () => {
+  let tmpDir: string;
+  let strategiesDir: string;
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `promote-bake-${Date.now()}`);
+    strategiesDir = join(tmpDir, "src/strategies");
+    mkdirSync(join(strategiesDir, "btc", "deployed"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("bakes params from explicit paramsFile into deployed source", () => {
+    const sourceContent = `import { ema } from "../../indicators/ema.js";
+const DEFAULT_PARAMS = {
+  volMult: { value: 1.5, min: 1, max: 3, step: 0.5, optimizable: true },
+  tpRR: { value: 2, min: 1.5, max: 3, step: 0.5, optimizable: true },
+};
+export function createTestStrat() { return {}; }
+`;
+    writeFileSync(join(strategiesDir, "btc", "test-strat.ts"), sourceContent);
+
+    const paramsFile = join(tmpDir, "best-params.json");
+    writeFileSync(paramsFile, JSON.stringify({ volMult: 2, tpRR: 1.5 }));
+
+    const result = promoteStrategy("test-strat", {
+      strategiesDir,
+      asset: "btc",
+      paramsFile,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.bakedParams).toEqual(["volMult", "tpRR"]);
+
+    const deployed = readFileSync(join(strategiesDir, "btc", "deployed", "test-strat.ts"), "utf-8");
+    expect(deployed).toContain("volMult: { value: 2,");
+    expect(deployed).toContain("tpRR: { value: 1.5,");
+  });
+
+  it("reports stale params that don't exist in source", () => {
+    const sourceContent = `const DEFAULT_PARAMS = {
+  volMult: { value: 1.5, min: 1, max: 3, step: 0.5, optimizable: true },
+};
+export function createTestStrat() { return {}; }
+`;
+    writeFileSync(join(strategiesDir, "btc", "test-strat.ts"), sourceContent);
+
+    const paramsFile = join(tmpDir, "best-params.json");
+    writeFileSync(paramsFile, JSON.stringify({ volMult: 2, dcSlow: 55 }));
+
+    const result = promoteStrategy("test-strat", {
+      strategiesDir,
+      asset: "btc",
+      paramsFile,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.bakedParams).toEqual(["volMult"]);
+    expect(result.staleParams).toEqual(["dcSlow"]);
+  });
+
+  it("ignores corrupt params file gracefully", () => {
+    const sourceContent = `export function createTestStrat() { return {}; }`;
+    writeFileSync(join(strategiesDir, "btc", "test-strat.ts"), sourceContent);
+
+    const paramsFile = join(tmpDir, "bad-params.json");
+    writeFileSync(paramsFile, "not json{{{");
+
+    const result = promoteStrategy("test-strat", {
+      strategiesDir,
+      asset: "btc",
+      paramsFile,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.bakedParams).toBeUndefined();
+  });
+});
+
 describe("KNOWN_STRATEGIES", () => {
   it("lists the 3 known strategies with assets", () => {
     expect(KNOWN_STRATEGIES).toEqual([

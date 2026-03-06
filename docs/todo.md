@@ -1,3 +1,2 @@
-1 - verificar se faz sentido instalar claude-code SDK pra refiner, restructure, research
-
-
+1 - onde entra research? quando entra research?
+2 - verificar se é necessario implementar indicadores primeiro - comparar com indicators.js

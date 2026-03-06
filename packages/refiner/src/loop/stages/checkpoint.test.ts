@@ -42,10 +42,17 @@ describe("checkpoint.save / checkpoint.load", () => {
   it("saves and loads params when provided", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
     const params = { dcSlow: 55, dcFast: 20 };
-    checkpoint.save(tmpDir, "// code", sampleMetrics, 3, params);
+    const source = `const DEFAULT_PARAMS = {
+  dcSlow: { value: 40, min: 20, max: 60, step: 5, optimizable: true },
+  dcFast: { value: 15, min: 10, max: 25, step: 5, optimizable: true },
+};`;
+    checkpoint.save(tmpDir, source, sampleMetrics, 3, params);
 
     const loaded = checkpoint.load(tmpDir);
     expect(loaded!.params).toEqual(params);
+    // Values should be baked into source
+    expect(loaded!.strategyContent).toContain("dcSlow: { value: 55,");
+    expect(loaded!.strategyContent).toContain("dcFast: { value: 20,");
   });
 
   it("returns null when no checkpoint exists", () => {
@@ -144,6 +151,43 @@ describe("checkpoint.save/load with strategyParams (B4)", () => {
   });
 });
 
+describe("checkpoint.save/load with analysis (B2)", () => {
+  it("saves and loads analysis", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
+    const analysis = {
+      totalExitRows: 100,
+      byDirection: {},
+      byExitType: [],
+      avgBarsWinners: 5,
+      avgBarsLosers: 3,
+      byDayOfWeek: {},
+      bestHoursUTC: [],
+      worstHoursUTC: [],
+      best3TradesPnl: [10, 8, 6],
+      worst3TradesPnl: [-5, -4, -3],
+      filterSimulations: { sessionFilter: null, hourFilter: null, dowFilter: null },
+      walkForward: { trainPF: 1.5, testPF: 1.2, pfRatio: 0.8, overfitFlag: false },
+      bySession: null,
+    };
+    checkpoint.save(tmpDir, "// code", sampleMetrics, 5, { dcSlow: 55 }, [], 2, undefined, analysis);
+
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.analysis).toBeDefined();
+    expect(loaded!.analysis!.totalExitRows).toBe(100);
+    expect(loaded!.analysis!.walkForward?.trainPF).toBe(1.5);
+  });
+
+  it("load without best-analysis.json returns undefined analysis (backward-compat)", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
+    checkpoint.save(tmpDir, "// code", sampleMetrics, 3, { dcSlow: 55 });
+
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.analysis).toBeUndefined();
+  });
+});
+
 describe("checkpoint.rollback", () => {
   it("restores strategy file from checkpoint", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-"));
@@ -168,6 +212,44 @@ describe("checkpoint.rollback", () => {
   it("returns false when checkpoint dir does not exist", () => {
     const result = checkpoint.rollback("/tmp/nonexistent-dir-" + Date.now(), "/tmp/target.ts");
     expect(result).toBe(false);
+  });
+});
+
+describe("checkpoint.save bakes param defaults into source", () => {
+  it("rewrites value: fields in strategy source to match overrides", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-bake-"));
+    const source = `const DEFAULT_PARAMS = {
+  volMult: { value: 1.5, min: 1, max: 3, step: 0.5, optimizable: true },
+  tpRR: { value: 2, min: 1.5, max: 3, step: 0.5, optimizable: true },
+};`;
+
+    checkpoint.save(tmpDir, source, sampleMetrics, 5, { volMult: 2, tpRR: 1.5 });
+
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded!.strategyContent).toContain("volMult: { value: 2,");
+    expect(loaded!.strategyContent).toContain("tpRR: { value: 1.5,");
+  });
+
+  it("removes stale params from best-params.json", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-stale-"));
+    const source = `const DEFAULT_PARAMS = {
+  volMult: { value: 1.5, min: 1, max: 3, step: 0.5, optimizable: true },
+};`;
+
+    checkpoint.save(tmpDir, source, sampleMetrics, 5, { volMult: 2, dcSlow: 55 });
+
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded!.strategyContent).toContain("volMult: { value: 2,");
+    expect(loaded!.params).toEqual({ volMult: 2 });
+  });
+
+  it("saves unchanged source when no params provided", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-nop-"));
+    const source = "// unchanged code";
+    checkpoint.save(tmpDir, source, sampleMetrics, 1);
+
+    const loaded = checkpoint.load(tmpDir);
+    expect(loaded!.strategyContent).toBe(source);
   });
 });
 

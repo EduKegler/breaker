@@ -67,8 +67,8 @@ describe("optimizeStrategy", () => {
     readSpy.mockRestore();
   });
 
-  it("refine: returns changed=false when no paramOverrides in output", async () => {
-    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "no changes needed", stderr: "", timedOut: false } as any);
+  it("refine: returns changed=false with summary when no paramOverrides in output", async () => {
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "Analysis complete.\nNo single parameter change would improve the strategy.", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// same")
       .mockReturnValueOnce("// same");
@@ -77,6 +77,7 @@ describe("optimizeStrategy", () => {
 
     expect(result.success).toBe(true);
     expect(result.data?.changed).toBe(false);
+    expect(result.data?.summary).toContain("No single parameter change");
     readSpy.mockRestore();
   });
 
@@ -129,8 +130,8 @@ describe("optimizeStrategy", () => {
     readSpy.mockRestore();
   });
 
-  it("returns changed=false when restructure produces no file change", async () => {
-    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "done", stderr: "", timedOut: false } as any);
+  it("returns changed=false with summary when restructure produces no file change", async () => {
+    vi.mocked(execa).mockResolvedValue({ exitCode: 0, stdout: "I reviewed the strategy but could not find a better structure.", stderr: "", timedOut: false } as any);
     const readSpy = vi.spyOn(fs, "readFileSync")
       .mockReturnValueOnce("// same")
       .mockReturnValueOnce("// same");
@@ -139,6 +140,7 @@ describe("optimizeStrategy", () => {
 
     expect(result.success).toBe(true);
     expect(result.data?.changed).toBe(false);
+    expect(result.data?.summary).toContain("could not find a better structure");
     readSpy.mockRestore();
   });
 
@@ -221,6 +223,217 @@ describe("optimizeStrategy", () => {
       expect.arrayContaining(["--max-turns", "25"]),
       expect.any(Object),
     );
+    readSpy.mockRestore();
+  });
+
+  // --- Fix 6: MODULE_CONSTRAINTS aligned with donchian-adx.ts params ---
+
+  it("refine: bbKcPeriod clamped to constraint range", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "bbKcPeriod": 5 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    // bbKcPeriod min is 14, so 5 should be clamped to 14
+    expect(result.data?.paramOverrides).toEqual({ bbKcPeriod: 14 });
+    expect(result.data?.validationWarnings).toBeDefined();
+    readSpy.mockRestore();
+  });
+
+  it("refine: atrStopMult hard floor at 3.0", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "atrStopMult": 2.0 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ atrStopMult: 3.0 });
+    expect(result.data?.validationWarnings?.some((w) => w.includes("hard floor"))).toBe(true);
+    readSpy.mockRestore();
+  });
+
+  it("refine: donchianPeriod flagged as unknown param", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "donchianPeriod": 30 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    // donchianPeriod is NOT a valid M1 param (strategy uses bbKcPeriod), so it should be flagged as unknown
+    expect(result.data?.validationWarnings?.some((w) => w.includes("Unknown param") && w.includes("donchianPeriod"))).toBe(true);
+    readSpy.mockRestore();
+  });
+
+  // --- Fix 1: extractParamOverrides SUMMARY fallback ---
+
+  it("refine: extracts paramOverride from SUMMARY line with unicode arrow", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: "Analysis complete.\nSUMMARY: tpRR 2→1.5\nDone.",
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ tpRR: 1.5 });
+    readSpy.mockRestore();
+  });
+
+  it("refine: extracts paramOverride from SUMMARY line with ASCII arrow", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: "SUMMARY: volMult 1.5 -> 2.0",
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ volMult: 2.0 });
+    readSpy.mockRestore();
+  });
+
+  it("refine: SUMMARY multi-param keeps only first (KB §13.1)", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: "SUMMARY: tpRR 2→1.5, volMult 1.5→2.0",
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(true);
+    const keys = Object.keys(result.data?.paramOverrides ?? {});
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toBe("tpRR");
+    readSpy.mockRestore();
+  });
+
+  it("refine: extracts paramOverride from SUMMARY line with equals sign", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: "SUMMARY: bbKcPeriod=20→14 para exaurir eixo",
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ bbKcPeriod: 14 });
+    readSpy.mockRestore();
+  });
+
+  it("refine: JSON paramOverrides takes precedence over SUMMARY text", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "tpRR": 3.0 } }\nSUMMARY: tpRR 2→1.5',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ tpRR: 3.0 });
+    readSpy.mockRestore();
+  });
+
+  // --- Fix 2: max-turns revert in restructure ---
+
+  it("restructure: reverts file when max-turns is hit", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: "max turns reached",
+      stderr: "warning: max turns (25) reached",
+      timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// before content")
+      .mockReturnValueOnce("// after changed by partial edit");
+
+    const result = await optimizeStrategy({ ...baseOpts, phase: "restructure" });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(false);
+    expect(vi.mocked(writeFileAtomic.sync)).toHaveBeenCalledWith(baseOpts.strategyFile, "// before content", "utf8");
+    readSpy.mockRestore();
+  });
+
+  it("restructure: does NOT revert when file is unchanged and max-turns is hit", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: "max turns reached",
+      stderr: "warning: max turns reached",
+      timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same content")
+      .mockReturnValueOnce("// same content");
+
+    const result = await optimizeStrategy({ ...baseOpts, phase: "restructure" });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.changed).toBe(false);
+    // No revert needed since file didn't change
+    expect(vi.mocked(writeFileAtomic.sync)).not.toHaveBeenCalled();
+    readSpy.mockRestore();
+  });
+
+  it("refine: ignores max-turns (param-only phase)", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "tpRR": 2.5 } }\nmax turns reached',
+      stderr: "warning: max turns reached",
+      timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy(baseOpts);
+
+    expect(result.success).toBe(true);
+    // Refine should still process paramOverrides even if max-turns hit
+    expect(result.data?.changed).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ tpRR: 2.5 });
     readSpy.mockRestore();
   });
 });

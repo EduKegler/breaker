@@ -463,6 +463,47 @@ describe("paramWriter.backfillLastIteration", () => {
   });
 });
 
+describe("paramWriter.backfillLastIteration with verdictOverride (B3)", () => {
+  it("uses verdictOverride verdict and note when provided", () => {
+    const history = paramWriter.loadHistory(historyPath);
+    history.iterations = [{
+      iter: 1, date: "2026-01-01",
+      change: { param: "dcSlow", from: 40, to: 45 },
+      before: { pnl: 100, trades: 30, pf: 1.2 },
+      after: null, verdict: "pending",
+    }];
+    fs.writeFileSync(historyPath, JSON.stringify(history));
+
+    const result = paramWriter.backfillLastIteration({
+      historyPath,
+      currentMetrics: { pnl: 120, trades: 35, pf: 1.4 },
+      verdictOverride: { verdict: "neutral", note: "Score improved but trades=35 < minTrades=50" },
+    });
+
+    expect(result.iterations[0].verdict).toBe("neutral");
+    expect(result.iterations[0].note).toBe("Score improved but trades=35 < minTrades=50");
+  });
+
+  it("uses calculated verdict when no verdictOverride", () => {
+    const history = paramWriter.loadHistory(historyPath);
+    history.iterations = [{
+      iter: 1, date: "2026-01-01",
+      change: { param: "dcSlow", from: 40, to: 45 },
+      before: { pnl: 100, trades: 130, pf: 1.2 },
+      after: null, verdict: "pending",
+    }];
+    fs.writeFileSync(historyPath, JSON.stringify(history));
+
+    const result = paramWriter.backfillLastIteration({
+      historyPath,
+      currentMetrics: { pnl: 120, trades: 135, pf: 1.4 },
+    });
+
+    expect(result.iterations[0].verdict).toBe("improved");
+    expect(result.iterations[0].note).toBeUndefined();
+  });
+});
+
 describe("paramWriter.transitionApproach", () => {
   it("marks active approach as exhausted and adds new one", () => {
     // Seed with active approach

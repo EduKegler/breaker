@@ -281,6 +281,12 @@ export const breakerMachine = setup({
     restructure: {
       on: {
         ...commonPhaseEvents,
+        // Override: successful checkpoint in restructure → go back to refine
+        // to tune the new architecture's parameters (exploit after explore).
+        CHECKPOINT_SAVED: {
+          target: "refine",
+          actions: ["updateBest", "resetWfReject", "resetPhaseCounters", "clearResearchBriefPath"],
+        },
         ESCALATE: [
           {
             target: "refine",

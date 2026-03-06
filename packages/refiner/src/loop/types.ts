@@ -1,5 +1,5 @@
 import type { ResolvedCriteria, ModelRouting, Guardrails, PhasesConfig, ScoringConfig, ResearchConfig } from "../types/config.js";
-import type { Metrics, CandleInterval, DataSource } from "@breaker/backtest";
+import type { Metrics, CandleInterval, DataSource, TradeAnalysis } from "@breaker/backtest";
 
 export type LoopPhase = "refine" | "research" | "restructure";
 
@@ -61,6 +61,10 @@ export interface IterationMetric {
   trades: number;
   avgR: number;
   verdict: string;
+  /** Total wall-clock time for this iteration (ms) */
+  durationMs?: number;
+  /** One-line summary of what the optimizer did */
+  summary?: string;
 }
 
 export interface CheckpointData {
@@ -69,6 +73,7 @@ export interface CheckpointData {
   params?: Record<string, number>;
   paramCount?: number;
   strategyParams?: Record<string, import("@breaker/backtest").StrategyParam>;
+  analysis?: TradeAnalysis;
   iter: number;
   timestamp: string;
 }

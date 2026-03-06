@@ -15,7 +15,8 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 ## Optimization loop
 - CLI: `node dist/loop/orchestrator.js --asset=BTC --strategy=breakout --max-iter=20`
 - Lock is asset-level (`breaker-BTC.lock`) — prevents concurrent optimization of the same asset.
-- **The loop STOPS when all criteria in `breaker-config.json` are met.**
+- **Optimize-first loop**: each iteration runs Optimize → Apply → Backtest → Score → Checkpoint/Rollback (change evaluated in same iteration)
+- **The loop STOPS when all criteria met**, unless baseline already passes — then runs all iterations to maximize score.
 - Two execution modes:
   - **refine**: param changes only → in-process `runBacktest()` (~2s/iteration)
   - **restructure**: Claude edits strategy `.ts` → typecheck → rebuild → child process (~5s/iteration)
@@ -26,6 +27,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - During an optimization loop, keep the backtest window fixed; only change in a new round.
 - Walk-forward overfit gate (KB §10.1): `validateWalkForward()` in `guardrails.ts` rejects iterations where `overfitFlag=true` (testPF < 50% of trainPF or testPF < 1.0), even if score improved. Prevents promotion of memorized strategies.
 - Checkpoint save decision uses `effectiveVerdict` (not raw score comparison alone). Guardrail-rejected iterations (WF overfit, free variable count) never save checkpoints, and trigger rollback to last good state.
+- Checkpoint save bakes optimized params into strategy source via `bakeParamDefaults()` — strategy files become self-contained. Stale params (from previous strategy versions) are auto-cleaned from `best-params.json`.
 
 ## Naming (breaker-specific)
 - Strategy `name` field: `{ASSET} {TF} {Category} — {Strategy Name}` (e.g. `BTC 15m Breakout — Donchian ADX`).
@@ -61,5 +63,5 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 
 ## Build and test (breaker-specific)
 - Coverage: `pnpm vitest run --coverage`
-- Tests: `pnpm test` (571 tests across 30 files)
+- Tests: `pnpm test` (637 tests across 30 files)
 - After strategy code changes in restructure phase: `pnpm --filter @breaker/backtest typecheck` then `pnpm --filter @breaker/backtest build`

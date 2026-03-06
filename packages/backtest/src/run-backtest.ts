@@ -106,8 +106,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const strategy = factory();
+  // Calculate warmup bars: candles before the evaluation window
+  const warmupBars = candles.findIndex(c => c.t >= startTime);
+  const effectiveWarmup = warmupBars === -1 ? candles.length : warmupBars;
+
   const config = {
     ...DEFAULT_BACKTEST_CONFIG,
+    warmupBars: effectiveWarmup,
     ...(useCash ? { sizingMode: "cash" as const, cashPerTrade: 100 } : {}),
     ...(noLimits ? {
       cooldownBars: 0,
@@ -118,12 +123,10 @@ async function main(): Promise<void> {
   };
   const flags = [useCash ? "cash" : null, noLimits ? "no-limits" : null].filter(Boolean);
   console.log(`Running backtest: ${strategy.name}${flags.length ? ` (${flags.join(", ")})` : ""}`);
+  console.log(`  Warmup bars: ${effectiveWarmup} (indicators only, no trading)`);
 
   const result = runBacktest(candles, strategy, config, interval);
-
-  // Filter trades to user-specified window (exclude warmup-period trades)
-  const trades = result.trades.filter(t => t.entryTimestamp >= startTime);
-  console.log(`  All engine trades: ${result.trades.length}, after filtering to window: ${trades.length}`);
+  const trades = result.trades;
 
   // Compute metrics on filtered trades
   const metrics = computeMetrics(trades, result.maxDrawdownPct);

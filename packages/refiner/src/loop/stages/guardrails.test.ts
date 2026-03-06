@@ -343,6 +343,19 @@ describe("validateStrategyStructure", () => {
     expect(v).toHaveLength(5);
   });
 
+  it("accepts mapHtfToSource helper as valid anti-repaint", () => {
+    // Replace inline .t + MS_1H with a helper-based pattern
+    const source = VALID_STRATEGY_SOURCE
+      .replace(/\.t \+ MS_1H/g, "/* no inline check */")
+      .replace("let atrCache = null;", "let atrCache = null;\n  function mapHtfToSource(htf, src) { return htf; }");
+    expect(validateStrategyStructure(source).some((v) => v.field === "antiRepaint")).toBe(false);
+  });
+
+  it("rejects when neither inline nor mapHtfToSource exists", () => {
+    const source = VALID_STRATEGY_SOURCE.replace(/\.t \+ MS_1H/g, "/* no repaint check */");
+    expect(validateStrategyStructure(source).some((v) => v.field === "antiRepaint")).toBe(true);
+  });
+
   it("accepts MS_4H and MS_1D as valid anti-repaint constants", () => {
     const with4h = VALID_STRATEGY_SOURCE.replace(/MS_1H/g, "MS_4H");
     expect(validateStrategyStructure(with4h).some((v) => v.field === "antiRepaint")).toBe(false);

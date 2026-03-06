@@ -223,7 +223,8 @@ export function validateStrategyStructure(
   }
 
   // Anti-repaint: strategies must check HTF bar completion via .t + MS_1H/4H/1D
-  if (!/\.t\s*\+\s*MS_/.test(clean)) {
+  // Accept inline pattern OR mapHtfToSource helper (which guarantees anti-repaint internally)
+  if (!/\.t\s*\+\s*MS_/.test(clean) && !/mapHtfToSource/.test(clean)) {
     violations.push({
       field: "antiRepaint",
       reason: "Strategy missing HTF anti-repaint check (.t + MS_* <= currentCandle.t) — may use incomplete bars",
@@ -257,10 +258,6 @@ function stripComments(code: string): string {
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("//"))
     .join("\n");
-}
-
-function countDayOfWeekUsage(code: string): number {
-  return (code.match(/\bdayofweek\b/gi) || []).length;
 }
 
 function extractStrategyCategory(code: string): string | null {

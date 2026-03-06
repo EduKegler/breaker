@@ -18,6 +18,8 @@ interface OptimizeResult {
   changeScale?: "parametric" | "structural";
   paramOverrides?: Record<string, number>;
   validationWarnings?: string[];
+  /** Claude's SUMMARY line — always extracted when available */
+  summary?: string;
 }
 
 /**
@@ -40,11 +42,15 @@ interface ParamConstraint {
 const MODULE_CONSTRAINTS: Record<string, Record<string, ParamConstraint>> = {
   M1: {
     // Breakout — 8 var cap, ATR 1H stop, KB §1.6 min mult 3.0
-    donchianPeriod:    { min: 10, max: 55 },
-    volMultiplier:     { min: 1.0, max: 3.0 },
-    stopAtrMult:       { min: 3.0, hardFloor: 3.0, max: 5.0 },
-    timeoutBars:       { min: 24, max: 96 },
+    // Aligned with donchian-adx.ts DEFAULT_PARAMS
+    bbKcPeriod:        { min: 14, max: 30 },
+    kcMult:            { min: 1.0, max: 2.5 },
+    bbStdDev:          { min: 1.5, max: 2.5 },
+    atrStopMult:       { min: 3.0, hardFloor: 3.0, max: 5.0 },
+    volMult:           { min: 1.0, max: 3.0 },
     tpRR:              { min: 1.0, max: 4.0 },
+    trailMult:         { min: 2.0, max: 5.0 },
+    timeoutBars:       { min: 24, max: 96 },
   },
   M2: {
     // Mean Reversion — 6 var cap, ATR 1H wide/catastrophic stop, KB §1.6 min mult 3.0
@@ -80,13 +86,38 @@ const MODULE_CONSTRAINTS: Record<string, Record<string, ParamConstraint>> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function ts(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+}
+
 function log(msg: string): void {
-  console.log(`[${new Date().toISOString()}] ${msg}`);
+  console.log(`\x1b[2m${ts()}\x1b[0m ${msg}`);
 }
 
 const paramOverridesSchema = z.object({
   paramOverrides: z.record(z.string(), z.number()),
 });
+
+/**
+ * Extract the SUMMARY line from Claude's output.
+ * Looks for `SUMMARY: <text>` marker (case-insensitive).
+ * Falls back to last substantive lines if marker not found.
+ */
+function extractSummary(text: string, maxLen = 200): string {
+  // Look for SUMMARY: marker (last occurrence wins, in case Claude outputs multiple)
+  const matches = text.match(/^SUMMARY:\s*(.+)$/gim);
+  if (matches && matches.length > 0) {
+    const last = matches[matches.length - 1];
+    const content = last.replace(/^SUMMARY:\s*/i, "").trim();
+    return content.length > maxLen ? content.slice(0, maxLen) : content;
+  }
+  // Fallback: last substantive lines
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  if (lines.length === 0) return "(empty output)";
+  const tail = lines.slice(-3).join(" ");
+  return tail.length > maxLen ? tail.slice(-maxLen) : tail;
+}
 
 /**
  * Extract paramOverrides JSON from Claude's text output.
@@ -108,6 +139,21 @@ function extractParamOverrides(text: string): Record<string, number> | null {
       const parsed = safeJsonParse(inlineMatch[0], { repair: true, schema: paramOverridesSchema });
       return parsed.paramOverrides;
     } catch { /* ignore */ }
+  }
+
+  // Fallback: extract "paramName oldValue→newValue" from SUMMARY line
+  const summaryMatch = text.match(/^SUMMARY:\s*(.+)$/im);
+  if (summaryMatch) {
+    const summaryLine = summaryMatch[1];
+    // Match patterns like "tpRR 2→1.5", "volMult 1.5 -> 2.0", or "bbKcPeriod=20→14"
+    const paramChanges = [...summaryLine.matchAll(/(\w+)[=\s]+[\d.]+\s*(?:→|->)\s*([\d.]+)/g)];
+    if (paramChanges.length > 0) {
+      const result: Record<string, number> = {};
+      for (const m of paramChanges) {
+        result[m[1]] = parseFloat(m[2]);
+      }
+      return result;
+    }
   }
 
   return null;
@@ -234,6 +280,21 @@ export async function optimizeStrategy(opts: {
     const afterContent = fs.readFileSync(strategyFile, "utf8");
     const fileChanged = beforeContent !== afterContent;
 
+    // Detect max-turns hit during restructure: file may be partially modified.
+    // Revert to prevent accepting incomplete edits.
+    const maxTurnsHit = /max.turns.*reached|max turns/i.test(result.stdout + (result.stderr ?? ""));
+    if (maxTurnsHit && fileChanged && phase !== "refine") {
+      log(`  [optimize] max-turns reached during ${phase} — reverting partial file changes`);
+      writeFileAtomic.sync(strategyFile, beforeContent, "utf8");
+      return {
+        success: true,
+        data: {
+          changed: false,
+          summary: extractSummary(result.stdout),
+        },
+      };
+    }
+
     // -----------------------------------------------------------------
     // Refine phase: extract and VALIDATE paramOverrides
     // -----------------------------------------------------------------
@@ -247,7 +308,13 @@ export async function optimizeStrategy(opts: {
 
       const paramOverrides = extractParamOverrides(result.stdout);
       if (!paramOverrides || Object.keys(paramOverrides).length === 0) {
-        return { success: true, data: { changed: false } };
+        return {
+          success: true,
+          data: {
+            changed: false,
+            summary: extractSummary(result.stdout),
+          },
+        };
       }
 
       // KB §13.1: refine must change at most 1 param per iteration
@@ -292,6 +359,7 @@ export async function optimizeStrategy(opts: {
           changeScale: "parametric",
           paramOverrides: valid,
           validationWarnings: warnings.length > 0 ? warnings : undefined,
+          summary: extractSummary(result.stdout),
         },
       };
     }
@@ -301,7 +369,13 @@ export async function optimizeStrategy(opts: {
     // -----------------------------------------------------------------
 
     if (!fileChanged) {
-      return { success: true, data: { changed: false } };
+      return {
+        success: true,
+        data: {
+          changed: false,
+          summary: extractSummary(result.stdout),
+        },
+      };
     }
 
     // Typecheck the modified strategy
@@ -354,7 +428,7 @@ export async function optimizeStrategy(opts: {
 
     return {
       success: true,
-      data: { changed: true, diff, changeScale: changeScale ?? "structural" },
+      data: { changed: true, diff, changeScale: changeScale ?? "structural", summary: extractSummary(result.stdout) },
     };
   } catch (err) {
     return {

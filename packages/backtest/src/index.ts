@@ -76,3 +76,6 @@ export { CandleCache } from "./data/candle-cache.js";
 export { createDonchianAdx } from "./strategies/btc/donchian-adx.js";
 export { createKeltnerRsi2 } from "./strategies/btc/keltner-rsi2.js";
 export { createEmaPullback } from "./strategies/sol/ema-pullback.js";
+
+// Strategy utilities
+export { bakeParamDefaults } from "./strategies/bake-param-defaults.js";

@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildSessionSummary } from "./summary.js";
+import { buildSessionSummary, buildConsoleSummary } from "./summary.js";
 import type { IterationMetric } from "../types.js";
 
 const sampleMetrics: IterationMetric[] = [
-  { iter: 1, pnl: 200, pf: 1.4, dd: 5.5, wr: 22, trades: 180, verdict: "neutral" },
-  { iter: 2, pnl: 230, pf: 1.5, dd: 5.0, wr: 24, trades: 175, verdict: "improved" },
-  { iter: 3, pnl: 180, pf: 1.3, dd: 7.0, wr: 20, trades: 190, verdict: "degraded" },
+  { iter: 1, pnl: 200, pf: 1.4, dd: 5.5, wr: 22, trades: 180, verdict: "neutral", durationMs: 45000, summary: "tpRR 2→1.5" },
+  { iter: 2, pnl: 230, pf: 1.5, dd: 5.0, wr: 24, trades: 175, verdict: "improved", durationMs: 120000, summary: "volMult 1.5→2.0" },
+  { iter: 3, pnl: 180, pf: 1.3, dd: 7.0, wr: 20, trades: 190, verdict: "degraded", durationMs: 62000 },
 ];
 
 describe("buildSessionSummary", () => {
@@ -151,6 +151,26 @@ describe("buildSessionSummary", () => {
     expect(msg).toContain("Last iter:");
   });
 
+  it("shows iteration duration and summary in evolution", () => {
+    const msg = buildSessionSummary({
+      asset: "BTC",
+      runId: "r1",
+      metrics: sampleMetrics,
+      durationMs: 60000,
+      success: false,
+      bestIter: 2,
+      bestPnl: 230,
+    });
+    // iter 1: 45s, has summary
+    expect(msg).toContain("45s");
+    expect(msg).toContain("tpRR 2→1.5");
+    // iter 2: 2m 0s, has summary
+    expect(msg).toContain("2m");
+    expect(msg).toContain("volMult 1.5→2.0");
+    // iter 3: 1m 2s, no summary
+    expect(msg).toContain("1m 2s");
+  });
+
   it("displays DD without negative sign in evolution and last iter (P1: display fix)", () => {
     const negDD: IterationMetric[] = [
       { iter: 1, pnl: -442, pf: 0.33, dd: -44.3, wr: 38, trades: 157, verdict: "neutral" },
@@ -169,5 +189,70 @@ describe("buildSessionSummary", () => {
     // Last iter section
     expect(msg).toContain("DD: 44.3%");
     expect(msg).not.toContain("DD: -44.3%");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildConsoleSummary
+// ---------------------------------------------------------------------------
+
+const consoleBaseOpts = {
+  asset: "BTC",
+  strategy: "breakout",
+  runId: "20260306_181252",
+  metrics: sampleMetrics,
+  durationMs: 125000,
+  success: false,
+  bestIter: 2,
+  bestPnl: 230,
+  bestScore: 64.5,
+};
+
+describe("buildConsoleSummary", () => {
+  it("includes header with asset and status", () => {
+    const msg = buildConsoleSummary(consoleBaseOpts);
+    expect(msg).toContain("B.R.E.A.K.E.R.");
+    expect(msg).toContain("BTC/breakout");
+    expect(msg).toContain("MAX ITER REACHED");
+  });
+
+  it("highlights best iteration in green and worst in red", () => {
+    const msg = buildConsoleSummary(consoleBaseOpts);
+    // iter 2 (best PnL=230) should have green ANSI
+    expect(msg).toContain("\x1b[32m");
+    // iter 3 (worst PnL=180) should have red ANSI
+    expect(msg).toContain("\x1b[31m");
+  });
+
+  it("shows all iterations with metrics", () => {
+    const msg = buildConsoleSummary(consoleBaseOpts);
+    expect(msg).toContain("200.00");
+    expect(msg).toContain("230.00");
+    expect(msg).toContain("180.00");
+    expect(msg).toContain("PF");
+    expect(msg).toContain("WR");
+  });
+
+  it("shows summary on separate line", () => {
+    const msg = buildConsoleSummary(consoleBaseOpts);
+    expect(msg).toContain("tpRR 2→1.5");
+    expect(msg).toContain("volMult 1.5→2.0");
+  });
+
+  it("handles empty metrics", () => {
+    const msg = buildConsoleSummary({ ...consoleBaseOpts, metrics: [] });
+    expect(msg).toContain("B.R.E.A.K.E.R.");
+    expect(msg).not.toContain("iter 1");
+  });
+
+  it("shows best score in header", () => {
+    const msg = buildConsoleSummary(consoleBaseOpts);
+    expect(msg).toContain("64.5");
+  });
+
+  it("shows verdict arrows", () => {
+    const msg = buildConsoleSummary(consoleBaseOpts);
+    expect(msg).toContain("▲"); // improved
+    expect(msg).toContain("▼"); // degraded
   });
 });

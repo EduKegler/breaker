@@ -41,8 +41,13 @@ export interface SuggestedApproach {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function ts(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+}
+
 function log(msg: string): void {
-  console.log(`[${new Date().toISOString()}] ${msg}`);
+  console.log(`\x1b[2m${ts()}\x1b[0m ${msg}`);
 }
 
 // ---------------------------------------------------------------------------

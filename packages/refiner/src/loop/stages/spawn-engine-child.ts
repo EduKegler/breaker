@@ -30,8 +30,9 @@ export function runEngineChild(opts: {
   interval: CandleInterval;
   startTime: number;
   endTime: number;
+  warmupBars?: number;
 }): EngineResult {
-  const { repoRoot, factoryName, paramOverrides, dbPath, coin, source, interval, startTime, endTime } = opts;
+  const { repoRoot, factoryName, paramOverrides, dbPath, coin, source, interval, startTime, endTime, warmupBars = 0 } = opts;
 
   const childScript = path.join(repoRoot, "dist/loop/stages/run-engine-child.js");
 
@@ -44,6 +45,7 @@ export function runEngineChild(opts: {
     interval,
     startTime,
     endTime,
+    warmupBars,
   });
 
   const { stdout } = execaSync("node", [childScript], {

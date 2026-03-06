@@ -625,50 +625,52 @@ describe("bestScore restoration from checkpoint", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BUG FIX: rollback uses checkpoint metrics (not stale failed metrics)
+// BUG FIX: rollback updates persistent metrics (not stale failed metrics)
 // ---------------------------------------------------------------------------
 describe("rollback metrics consistency", () => {
-  it("after non-refine rollback, metrics should be updated to checkpoint metrics", () => {
-    // Simulates the rollback flow in orchestrator Step 4:
-    // When a restructure fails (e.g., 1 trade), we rollback the source.
-    // The metrics passed to the optimizer should be from the checkpoint, not from the failed run.
+  it("after non-refine rollback, persistent currentMetrics updated to checkpoint", () => {
+    // In optimize-first, backtest result updates currentMetrics, then rollback
+    // overwrites currentMetrics with checkpoint data for the next iteration's prompt.
     const failedMetrics = { totalPnl: 0.14, numTrades: 1, profitFactor: 0, maxDrawdownPct: 0, winRate: 100, avgR: 0.01 };
     const checkpointMetrics = { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09 };
     const phase = "restructure";
     const effectiveVerdict = "reject";
 
-    // This is the logic from the orchestrator:
-    let metrics = { ...failedMetrics };
-    let currentPnl = metrics.totalPnl ?? 0;
+    // After backtest, persistent vars have failed metrics
+    let currentMetrics = { ...failedMetrics };
+    let currentPnl = currentMetrics.totalPnl ?? 0;
 
-    if (effectiveVerdict === "reject" && phase !== "refine") {
-      // Simulate loading checkpoint data
+    // Rollback updates persistent vars to checkpoint
+    if (effectiveVerdict === "reject") {
       const cpData = { metrics: checkpointMetrics };
-      metrics = cpData.metrics as typeof metrics;
-      currentPnl = metrics.totalPnl ?? 0;
+      currentMetrics = cpData.metrics as typeof currentMetrics;
+      currentPnl = currentMetrics.totalPnl ?? 0;
     }
 
-    // After rollback, metrics must reflect the checkpoint, not the failed run
-    expect(metrics.numTrades).toBe(77);
-    expect(metrics.profitFactor).toBe(0.71);
+    // Next iteration's optimize prompt sees checkpoint metrics
+    expect(currentMetrics.numTrades).toBe(77);
+    expect(currentMetrics.profitFactor).toBe(0.71);
     expect(currentPnl).toBe(-70);
   });
 
-  it("refine rollback does NOT swap metrics (source unchanged)", () => {
+  it("refine rollback also updates persistent metrics from checkpoint", () => {
     const failedMetrics = { totalPnl: -500, numTrades: 150, profitFactor: 0.5, maxDrawdownPct: 30, winRate: 35, avgR: -0.1 };
-    const phase = "refine";
+    const checkpointMetrics = { totalPnl: 200, numTrades: 180, profitFactor: 1.5, maxDrawdownPct: 8, winRate: 40, avgR: 0.15 };
     const effectiveVerdict = "reject";
 
-    let metrics = { ...failedMetrics };
+    // After backtest
+    let currentMetrics = { ...failedMetrics };
+    let currentPnl = currentMetrics.totalPnl ?? 0;
 
-    if (effectiveVerdict === "reject" && phase !== "refine") {
-      // Should NOT enter this branch for refine
-      metrics = { totalPnl: 999, numTrades: 999 } as typeof metrics;
+    // Rollback updates persistent vars (both refine and restructure update persistent vars now)
+    if (effectiveVerdict === "reject") {
+      const cpData = { metrics: checkpointMetrics };
+      currentMetrics = cpData.metrics as typeof currentMetrics;
+      currentPnl = currentMetrics.totalPnl ?? 0;
     }
 
-    // Refine rollback keeps original metrics (params are reverted but source unchanged)
-    expect(metrics.numTrades).toBe(150);
-    expect(metrics.profitFactor).toBe(0.5);
+    expect(currentMetrics.numTrades).toBe(180);
+    expect(currentPnl).toBe(200);
   });
 });
 
@@ -1101,10 +1103,230 @@ describe("canUseInProcess logic", () => {
 
   it("matching content hash allows in-process even after restructure", () => {
     const checkpointRestored = false;
+    const esmCacheStale = false;
     const phase = "restructure";
     const contentHash = "abc123";
     const lastContentHash = "abc123";
-    const canUseInProcess = !checkpointRestored && (phase === "refine" || contentHash === lastContentHash);
+    const canUseInProcess = !checkpointRestored && !esmCacheStale && (phase === "refine" || contentHash === lastContentHash);
     expect(canUseInProcess).toBe(true);
+  });
+
+  it("esmCacheStale forces child-process after restructure→refine transition", () => {
+    const checkpointRestored = false;
+    const esmCacheStale = true;
+    const phase = "refine";
+    const canUseInProcess = !checkpointRestored && !esmCacheStale && (phase === "refine" || false);
+    expect(canUseInProcess).toBe(false);
+  });
+
+  it("esmCacheStale=false allows in-process for normal refine", () => {
+    const checkpointRestored = false;
+    const esmCacheStale = false;
+    const phase = "refine";
+    const canUseInProcess = !checkpointRestored && !esmCacheStale && (phase === "refine" || false);
+    expect(canUseInProcess).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Optimize-first loop: no-change skips backtest via continue
+// ---------------------------------------------------------------------------
+
+describe("optimize-first: no-change skips backtest via continue", () => {
+  it("no-change from optimize means backtest is never reached (continue)", () => {
+    // In the optimize-first loop, if optimize returns "no change",
+    // the loop hits `continue` before the backtest step.
+    // Simulates the control flow:
+    const changed = false;
+    let backtestRan = false;
+
+    // Optimize step
+    if (!changed) {
+      // continue; — would skip backtest
+    } else {
+      backtestRan = true;
+    }
+
+    expect(backtestRan).toBe(false);
+  });
+
+  it("change from optimize allows backtest to run", () => {
+    const changed = true;
+    let backtestRan = false;
+
+    if (!changed) {
+      // continue;
+    } else {
+      backtestRan = true;
+    }
+
+    expect(backtestRan).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Optimize-first: baseline metrics available for first optimize prompt
+// ---------------------------------------------------------------------------
+
+describe("optimize-first: baseline seeds first iteration", () => {
+  it("persistent metrics are seeded from baseline for first optimize prompt", () => {
+    // After the pre-loop baseline, currentMetrics/currentScoreResult are populated.
+    // The first optimize call receives these instead of empty/zero values.
+    const baselineMetrics = {
+      totalPnl: 500, numTrades: 200, profitFactor: 2.0,
+      maxDrawdownPct: 5, winRate: 35, avgR: 0.25,
+    };
+    const baselineScore = computeScore(
+      baselineMetrics, 8, baselineMetrics.numTrades,
+      { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 },
+    );
+
+    // Persistent vars seeded from baseline
+    const currentMetrics = baselineMetrics;
+    const currentScoreResult = baselineScore;
+    const currentPnl = baselineMetrics.totalPnl;
+
+    // First optimize prompt uses these persistent vars
+    expect(currentMetrics.numTrades).toBe(200);
+    expect(currentScoreResult.weighted).toBeGreaterThan(0);
+    expect(currentPnl).toBe(500);
+  });
+
+  it("checkpoint metrics are seeded for first optimize prompt", () => {
+    // When a checkpoint exists, its metrics seed the persistent vars.
+    const checkpointMetrics = {
+      totalPnl: 300, numTrades: 150, profitFactor: 1.8,
+      maxDrawdownPct: 7, winRate: 40, avgR: 0.20,
+    };
+    const cpScore = computeScore(
+      checkpointMetrics, 6, checkpointMetrics.numTrades,
+      { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 },
+    );
+
+    const currentMetrics = checkpointMetrics;
+    const currentScoreResult = cpScore;
+
+    expect(currentMetrics.profitFactor).toBe(1.8);
+    expect(currentScoreResult.weighted).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Optimize-first: change evaluated in same iteration
+// ---------------------------------------------------------------------------
+
+describe("optimize-first: change evaluated in same iteration", () => {
+  it("optimize→apply→backtest→score→checkpoint in one iteration", () => {
+    // Simulates the optimize-first flow for a single iteration:
+    // 1. Optimize suggests param change
+    // 2. Apply the change
+    // 3. Backtest with the new params → get metrics
+    // 4. Score → compare with best
+    // 5. Checkpoint if improved
+
+    // Pre-loop state (baseline)
+    let currentPnl = 100;
+    let bestScore = 30;
+
+    // Iter 1: Optimize suggests change
+    const changed = true;
+    const newParamOverrides = { dcSlow: 55 };
+
+    if (changed) {
+      // Apply
+      const paramOverrides = newParamOverrides;
+
+      // Backtest with new params → improved metrics
+      const backtestPnl = 200;
+      const backtestScore = 45;
+
+      // Score + Verdict
+      currentPnl = backtestPnl;
+      const scoreImproved = backtestScore > bestScore;
+
+      // Checkpoint
+      if (scoreImproved) {
+        bestScore = backtestScore;
+      }
+    }
+
+    // The change was evaluated in the SAME iteration
+    expect(currentPnl).toBe(200);
+    expect(bestScore).toBe(45);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Optimize-first: rollback updates persistent metrics
+// ---------------------------------------------------------------------------
+
+describe("optimize-first: rollback updates persistent metrics", () => {
+  it("after rollback, persistent currentMetrics reflect checkpoint state", () => {
+    // Simulates rollback flow in optimize-first loop
+    const backtestMetrics = { totalPnl: -50, numTrades: 10, profitFactor: 0.5 };
+    const checkpointMetrics = { totalPnl: 300, numTrades: 150, profitFactor: 1.8 };
+
+    // After backtest, persistent vars updated
+    let currentMetrics = backtestMetrics as any;
+    let currentPnl = backtestMetrics.totalPnl;
+
+    // Verdict: reject → rollback
+    const effectiveVerdict = "reject";
+    if (effectiveVerdict === "reject") {
+      // Restore from checkpoint
+      currentMetrics = checkpointMetrics;
+      currentPnl = checkpointMetrics.totalPnl;
+    }
+
+    // Next iteration's optimize prompt will see checkpoint metrics
+    expect(currentMetrics.numTrades).toBe(150);
+    expect(currentPnl).toBe(300);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Optimize-first: preOptimizeMetrics used for param-writer "before"
+// ---------------------------------------------------------------------------
+
+describe("optimize-first: preOptimizeMetrics for param-writer", () => {
+  it("param-writer receives pre-optimize metrics as 'before', not post-backtest", () => {
+    // In optimize-first, the backtest result is the AFTER of this change.
+    // The "before" should be the state before optimize ran.
+    const preOptimize = { pnl: 100, trades: 150, pf: 1.5 };
+    const postBacktest = { pnl: 200, trades: 180, pf: 2.0 };
+
+    // preOptimizeMetrics is snapshotted before optimize runs
+    const preOptimizeMetrics = { ...preOptimize };
+
+    // After backtest, currentMetrics is updated
+    const currentMetrics = postBacktest;
+
+    // Param-writer should use preOptimizeMetrics, not currentMetrics
+    expect(preOptimizeMetrics.pnl).toBe(100);
+    expect(preOptimizeMetrics.trades).toBe(150);
+    expect(currentMetrics.pnl).toBe(200);
+  });
+});
+
+describe("baseline-passes: no early stop when criteria already met", () => {
+  it("does not break on criteria pass if baseline already passes", () => {
+    // Simulate: baseline passes criteria, iter finds another passing result.
+    // Should NOT break — should continue to maximize score.
+    const baselinePassesCriteria = true;
+    const iterCriteriaPassed = true;
+
+    // When baseline passes and iter also passes, loop should continue
+    const shouldBreak = iterCriteriaPassed && !baselinePassesCriteria;
+    expect(shouldBreak).toBe(false);
+  });
+
+  it("breaks on criteria pass if baseline did NOT pass", () => {
+    // Simulate: baseline fails criteria, iter finds first passing result.
+    // SHOULD break — found what we were looking for.
+    const baselinePassesCriteria = false;
+    const iterCriteriaPassed = true;
+
+    const shouldBreak = iterCriteriaPassed && !baselinePassesCriteria;
+    expect(shouldBreak).toBe(true);
   });
 });

@@ -31,6 +31,7 @@ interface ChildInput {
   interval: CandleInterval;
   startTime: number;
   endTime: number;
+  warmupBars?: number;
 }
 
 const FACTORIES: Record<string, (overrides?: Partial<Record<string, number>>) => Strategy> = {
@@ -66,7 +67,8 @@ async function main(): Promise<void> {
       throw new Error(`No candles in cache for ${input.coin}/${input.interval}`);
     }
 
-    const result = runBacktest(candles, strategy, DEFAULT_BACKTEST_CONFIG, input.interval);
+    const config = { ...DEFAULT_BACKTEST_CONFIG, warmupBars: input.warmupBars ?? 0 };
+    const result = runBacktest(candles, strategy, config, input.interval);
     const metrics = computeMetrics(result.trades, result.maxDrawdownPct);
     const analysis = analyzeTradeList(result.trades);
 

@@ -360,8 +360,8 @@ function buildDiagnosticGuide(metrics: Metrics, tradeAnalysis: TradeAnalysis | n
 
     const dirs = tradeAnalysis.byDirection;
     if (dirs) {
-      const longPf = dirs.long?.profitFactor ?? 0;
-      const shortPf = dirs.short?.profitFactor ?? 0;
+      const longPf = dirs.Long?.profitFactor ?? 0;
+      const shortPf = dirs.Short?.profitFactor ?? 0;
       if (longPf < 0.5 && shortPf > 0.8) hints.push("DD: long direction PF < 0.5 — consider disabling or filtering long entries.");
       if (shortPf < 0.5 && longPf > 0.8) hints.push("DD: short direction PF < 0.5 — consider disabling or filtering short entries.");
     }
@@ -450,7 +450,9 @@ function buildPhaseTask(
   "ruleCompliance": "All fixed rules satisfied"
 }
 \`\`\`
-   Do NOT edit \`${paramHistoryPath}\`.`;
+   Do NOT edit \`${paramHistoryPath}\`.
+7. **Output summary** as the LAST line of your response:
+   \`SUMMARY: <one-line description of what you did and why, max 150 chars>\``;
   }
 
   if (phase === "research") {
@@ -481,7 +483,9 @@ ${catalogFallback}`}
 3. **Write metadata** to \`${metadataPath}\` with scale: "structural"
    Do NOT edit \`${paramHistoryPath}\`.
 
-CRITICAL: Do NOT run WebSearch. Focus on clean implementation.`;
+CRITICAL: Do NOT run WebSearch. Focus on clean implementation.
+4. **Output summary** as the LAST line of your response:
+   \`SUMMARY: <one-line description of what you did and why, max 150 chars>\``;
   }
 
   // restructure — catalog-driven
@@ -509,14 +513,16 @@ ${catalogSection}
 \`\`\`json
 {
   "scale": "structural",
-  "selectedComponents": { "Slot Name": "Chosen Candidate Name" },
+  "selectedComponents": { "Slot Name": "EXACT catalog candidate name (copy verbatim)" },
   "totalVars": <number>,
   "restructureLockChanged": "<which lock changed, or null>",
   "ruleCompliance": "<check each fixed rule>",
   "rationale": "<why this combination>"
 }
 \`\`\`
-   Do NOT edit \`${paramHistoryPath}\`.`;
+   Do NOT edit \`${paramHistoryPath}\`.
+5. **Output summary** as the LAST line of your response:
+   \`SUMMARY: <one-line description of what you did and why, max 150 chars>\``;
 }
 
 /**
@@ -551,6 +557,63 @@ function findLock(slotName: string, locks: Map<string, string>): string | undefi
 /**
  * Format the component catalog and tested combinations into a prompt section.
  */
+/**
+ * Normalize free-text component names from Claude's metadata to canonical
+ * catalog candidate names. Uses case-insensitive containment matching,
+ * preferring the longest matching candidate to avoid false positives.
+ */
+export function normalizeToCatalog(
+  components: Record<string, string>,
+  catalog: ComponentCatalog,
+): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  for (const [slotName, rawName] of Object.entries(components)) {
+    const slot = catalog.slots.find((s) => s.slotName === slotName);
+    if (!slot) {
+      normalized[slotName] = rawName;
+      continue;
+    }
+    // Exact match first
+    const exact = slot.candidates.find((c) => c.name === rawName);
+    if (exact) {
+      normalized[slotName] = exact.name;
+      continue;
+    }
+    // Case-insensitive containment: Claude's text contains the catalog name
+    const lower = rawName.toLowerCase();
+    const matches = slot.candidates.filter((c) =>
+      lower.includes(c.name.toLowerCase()),
+    );
+    // Pick longest match to avoid "ATR trail" matching when "ATR trail + partial TP" also matches
+    if (matches.length > 0) {
+      matches.sort((a, b) => b.name.length - a.name.length);
+      normalized[slotName] = matches[0].name;
+    } else {
+      normalized[slotName] = rawName;
+    }
+  }
+  return normalized;
+}
+
+/**
+ * Check if a candidate name matches any tested combination's component for a slot.
+ * Uses case-insensitive containment to handle Claude's verbose naming.
+ */
+function isCandidateTested(
+  candidateName: string,
+  slotName: string,
+  testedCombinations: TestedCombination[],
+): boolean {
+  const lower = candidateName.toLowerCase();
+  return testedCombinations.some((tc) => {
+    const tcName = tc.components[slotName];
+    if (!tcName) return false;
+    if (tcName === candidateName) return true;
+    const tcLower = tcName.toLowerCase();
+    return tcLower.includes(lower) || lower.includes(tcLower);
+  });
+}
+
 export function formatCatalogForPrompt(
   catalog: ComponentCatalog,
   testedCombinations: TestedCombination[],
@@ -565,6 +628,7 @@ export function formatCatalogForPrompt(
   const lines: string[] = ["### Component Catalog (from Knowledge Base)"];
   lines.push("");
   lines.push("Select ONE component per slot. You CANNOT invent new components outside this list.");
+  lines.push("Use the EXACT candidate name as written below in your metadata `selectedComponents`.");
   lines.push("");
 
   for (const slot of catalog.slots) {
@@ -574,9 +638,7 @@ export function formatCatalogForPrompt(
 
     for (let i = 0; i < slot.candidates.length; i++) {
       const c = slot.candidates[i];
-      const tested = testedCombinations.some(
-        (tc) => tc.components[slot.slotName] === c.name,
-      );
+      const tested = isCandidateTested(c.name, slot.slotName, testedCombinations);
       const isLocked = lockedName && c.name.toLowerCase().includes(lockedName.toLowerCase());
       const markers: string[] = [];
       if (isLocked) markers.push("LOCKED");

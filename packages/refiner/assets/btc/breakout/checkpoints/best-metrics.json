@@ -1,0 +1,89 @@
+{
+  "totalPnl": 47.27856543912711,
+  "numTrades": 83,
+  "profitFactor": 1.3033219633188646,
+  "maxDrawdownPct": -3.967755945559652,
+  "winRate": 68.67469879518072,
+  "avgR": 0.4774406852492746,
+  "avgWinR": 0.9586757415240698,
+  "avgLossR": -0.5775746304300842,
+  "maxLossR": -1.1857511854610403,
+  "expectancy": 0.4774406852492745,
+  "iter": 4,
+  "timestamp": "2026-03-06T19:06:32.820Z",
+  "paramCount": 8,
+  "strategyParams": {
+    "bbKcPeriod": {
+      "value": 20,
+      "min": 14,
+      "max": 30,
+      "step": 2,
+      "optimizable": true,
+      "description": "Shared period for BB and KC (squeeze detection)"
+    },
+    "kcMult": {
+      "value": 1.5,
+      "min": 1,
+      "max": 2.5,
+      "step": 0.25,
+      "optimizable": true,
+      "description": "Keltner Channel ATR multiplier"
+    },
+    "bbStdDev": {
+      "value": 2,
+      "min": 1.5,
+      "max": 2.5,
+      "step": 0.25,
+      "optimizable": true,
+      "description": "Bollinger Bands standard deviation multiplier"
+    },
+    "atrStopMult": {
+      "value": 3,
+      "min": 3,
+      "max": 5,
+      "step": 0.5,
+      "optimizable": true,
+      "description": "ATR multiplier for safety stop (KB §1.6: min 3.0 for breakout)"
+    },
+    "volMult": {
+      "value": 2,
+      "min": 1,
+      "max": 3,
+      "step": 0.5,
+      "optimizable": true,
+      "description": "Volume spike multiplier vs SMA(vol, 20) — KB §3.1 rule 3"
+    },
+    "tpRR": {
+      "value": 2,
+      "min": 1.5,
+      "max": 3,
+      "step": 0.5,
+      "optimizable": true,
+      "description": "TP risk-reward ratio"
+    },
+    "trailMult": {
+      "value": 3,
+      "min": 2,
+      "max": 5,
+      "step": 0.5,
+      "optimizable": true,
+      "description": "ATR multiplier for trailing stop (tracks best price since entry)"
+    },
+    "timeoutBars": {
+      "value": 48,
+      "min": 24,
+      "max": 96,
+      "step": 8,
+      "optimizable": true,
+      "description": "Bars before timeout exit (KB range: 24–96)"
+    },
+    "maxTradesDay": {
+      "value": 3,
+      "min": 2,
+      "max": 5,
+      "step": 1,
+      "optimizable": false,
+      "description": "Max trades per day"
+    }
+  }
+}

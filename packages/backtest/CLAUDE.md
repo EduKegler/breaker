@@ -44,10 +44,12 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - Daemon imports from `@breaker/backtest/deployed` (sub-path export), NOT from root
 - `pnpm promote <name>` or `pnpm promote --all` copies `{asset}/{name}.ts` → `{asset}/deployed/{name}.ts` with import rewriting (`../../` → `../../../`)
 - `pnpm promote <name> --from-checkpoint <path>` promotes from a refiner checkpoint
+- Promote auto-discovers `best-params.json` from refiner assets and bakes param values into DEFAULT_PARAMS via `bakeParamDefaults()`
 - After promote, run `pnpm build` to compile and restart daemon
 - The refiner can freely modify `src/strategies/{asset}/*.ts` without affecting the running daemon
 - Strategy files in `src/strategies/` (excluding `deployed/`) are **AI-generated** by the refiner — do NOT create hand-maintained tests for them. Fixes go in the refiner prompt or engine runtime validation, not in the strategy file directly.
 - `pctOfPosition` in `takeProfits` is a **fraction (0-1)**, not a percentage. Engine throws if `> 1`. Use `0.50` for 50%.
+- `bakeParamDefaults(source, overrides)` rewrites `value: X` in strategy DEFAULT_PARAMS to match optimized overrides. Reports `applied` and `stale` params. Used by checkpoint save and promote to make strategy files self-contained.
 
 ## Build and test
 - `pnpm build` — compile TypeScript

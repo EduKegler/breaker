@@ -18,7 +18,7 @@ export const phaseHelpers = {
       return state.neutralStreak >= 3 || state.noChangeCount >= 2 || (state.wfRejectStreak ?? 0) >= 2;
     }
     if (state.currentPhase === "research" || state.currentPhase === "restructure") {
-      return state.noChangeCount >= 2;
+      return state.noChangeCount >= 2 || (state.wfRejectStreak ?? 0) >= 2;
     }
     return false;
   },

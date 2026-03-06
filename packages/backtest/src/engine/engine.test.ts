@@ -808,6 +808,64 @@ describe("equity floor", () => {
   });
 });
 
+describe("warmupBars", () => {
+  it("skips entries during warmup bars", () => {
+    const candles = generateCandles(50, 10000, Date.now());
+    const config: BacktestConfig = {
+      ...DEFAULT_BACKTEST_CONFIG,
+      warmupBars: 20,
+      cooldownBars: 0,
+      maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+      maxDailyLossR: Number.MAX_SAFE_INTEGER,
+      maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
+    };
+    const result = runBacktest(candles, alwaysLongStrategy, config);
+    // All trades should have entry at bar index >= warmupBars
+    for (const trade of result.trades) {
+      expect(trade.entryBarIndex).toBeGreaterThanOrEqual(20);
+    }
+  });
+
+  it("produces zero trades when warmupBars covers all candles", () => {
+    const candles = generateCandles(50, 10000, Date.now());
+    const config: BacktestConfig = {
+      ...DEFAULT_BACKTEST_CONFIG,
+      warmupBars: 50,
+    };
+    const result = runBacktest(candles, alwaysLongStrategy, config);
+    expect(result.trades).toHaveLength(0);
+  });
+
+  it("preserves equity during warmup (no trades to lose money)", () => {
+    const candles = generateCandles(100, 10000, Date.now());
+    const config: BacktestConfig = {
+      ...DEFAULT_BACKTEST_CONFIG,
+      warmupBars: 40,
+      initialCapital: 1000,
+      cooldownBars: 0,
+      maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+      maxDailyLossR: Number.MAX_SAFE_INTEGER,
+      maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
+    };
+    const result = runBacktest(candles, alwaysLongStrategy, config);
+    // All equity points during warmup should be at initial capital
+    const warmupEquity = result.equityPoints.filter((ep) => ep.barIndex < 40);
+    for (const ep of warmupEquity) {
+      expect(ep.equity).toBe(1000);
+    }
+  });
+
+  it("defaults warmupBars to 0 (backward-compatible)", () => {
+    const candles = generateCandles(50, 10000, Date.now());
+    const withWarmup = runBacktest(candles, alwaysLongStrategy, {
+      ...DEFAULT_BACKTEST_CONFIG,
+      warmupBars: 0,
+    });
+    const without = runBacktest(candles, alwaysLongStrategy, DEFAULT_BACKTEST_CONFIG);
+    expect(withWarmup.trades.length).toBe(without.trades.length);
+  });
+});
+
 describe("aggregateCandles", () => {
   it("returns same candles when target equals source", () => {
     const candles = [

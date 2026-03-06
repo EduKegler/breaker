@@ -93,8 +93,9 @@ export const paramWriter = {
   backfillLastIteration(opts: {
     historyPath: string;
     currentMetrics: { pnl: number; trades: number; pf: number };
+    verdictOverride?: { verdict: string; note: string };
   }): ParameterHistory {
-    const { historyPath, currentMetrics } = opts;
+    const { historyPath, currentMetrics, verdictOverride } = opts;
     const history = paramWriter.loadHistory(historyPath);
 
     if (history.iterations.length === 0) return history;
@@ -104,7 +105,10 @@ export const paramWriter = {
 
     // Fill after + verdict
     last.after = { pnl: currentMetrics.pnl, trades: currentMetrics.trades, pf: currentMetrics.pf };
-    if (last.before) {
+    if (verdictOverride) {
+      last.verdict = verdictOverride.verdict as ParameterHistoryIteration["verdict"];
+      last.note = verdictOverride.note;
+    } else if (last.before) {
       const oldPnl = last.before.pnl;
       const changePct = oldPnl !== 0
         ? (currentMetrics.pnl - oldPnl) / Math.abs(oldPnl)

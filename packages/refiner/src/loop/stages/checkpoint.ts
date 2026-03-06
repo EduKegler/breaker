@@ -3,7 +3,8 @@ import path from "node:path";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
 import type { CheckpointData } from "../types.js";
-import type { Metrics, CompletedTrade, StrategyParam } from "@breaker/backtest";
+import type { Metrics, CompletedTrade, StrategyParam, TradeAnalysis } from "@breaker/backtest";
+import { bakeParamDefaults } from "@breaker/backtest";
 import { safeJsonParse } from "../../lib/safe-json.js";
 
 /**
@@ -23,6 +24,7 @@ export const checkpoint = {
     trades?: CompletedTrade[],
     paramCount?: number,
     strategyParams?: Record<string, StrategyParam>,
+    analysis?: TradeAnalysis,
   ): void {
     const strategyPath = path.join(checkpointDir, "best-strategy.ts.bak");
     const metricsPath = path.join(checkpointDir, "best-metrics.json");
@@ -34,7 +36,23 @@ export const checkpoint = {
       if (!fs.existsSync(checkpointDir)) {
         fs.mkdirSync(checkpointDir, { recursive: true });
       }
-      writeFileAtomic.sync(strategyPath, strategyContent, "utf8");
+
+      // Bake param overrides into the strategy source's DEFAULT_PARAMS so the
+      // file is self-contained (running without external overrides produces the
+      // same results). Also cleans stale params that no longer exist in source.
+      let bakedContent = strategyContent;
+      let cleanedParams = params;
+      if (params && Object.keys(params).length > 0) {
+        const { source, stale } = bakeParamDefaults(strategyContent, params);
+        bakedContent = source;
+        if (stale.length > 0) {
+          cleanedParams = Object.fromEntries(
+            Object.entries(params).filter(([k]) => !stale.includes(k)),
+          );
+        }
+      }
+
+      writeFileAtomic.sync(strategyPath, bakedContent, "utf8");
       writeFileAtomic.sync(
         metricsPath,
         JSON.stringify({
@@ -47,8 +65,13 @@ export const checkpoint = {
         "utf8",
       );
 
-      if (params) {
-        writeFileAtomic.sync(paramsPath, JSON.stringify(params, null, 2), "utf8");
+      if (cleanedParams) {
+        writeFileAtomic.sync(paramsPath, JSON.stringify(cleanedParams, null, 2), "utf8");
+      }
+
+      if (analysis) {
+        const analysisPath = path.join(checkpointDir, "best-analysis.json");
+        writeFileAtomic.sync(analysisPath, JSON.stringify(analysis, null, 2), "utf8");
       }
 
       if (trades && trades.length > 0) {
@@ -124,6 +147,16 @@ export const checkpoint = {
         } catch { /* ignore corrupt params */ }
       }
 
+      let analysis: TradeAnalysis | undefined;
+      const analysisPath = path.join(checkpointDir, "best-analysis.json");
+      if (fs.existsSync(analysisPath)) {
+        try {
+          analysis = safeJsonParse(fs.readFileSync(analysisPath, "utf8"), {
+            schema: z.object({}).passthrough(),
+          }) as unknown as TradeAnalysis;
+        } catch { /* ignore corrupt analysis — backward-compat */ }
+      }
+
       return {
         strategyContent,
         metrics: {
@@ -141,6 +174,7 @@ export const checkpoint = {
         params,
         paramCount: raw.paramCount,
         strategyParams: raw.strategyParams as Record<string, StrategyParam> | undefined,
+        analysis,
         iter: raw.iter ?? 0,
         timestamp: raw.timestamp ?? "",
       };

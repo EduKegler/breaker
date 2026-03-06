@@ -6,9 +6,9 @@ describe("strategyRegistry.get", () => {
     const factory = strategyRegistry.get("createDonchianAdx");
     expect(typeof factory).toBe("function");
     const strategy = factory();
-    expect(strategy.name).toBe("BTC 15m Breakout — Donchian ADX");
+    expect(strategy.name).toBe("BTC 15m Breakout — BB Squeeze Short + Dual TP");
     expect(strategy.params).toBeDefined();
-    expect(strategy.params.dcSlow).toBeDefined();
+    expect(strategy.params.bbKcPeriod).toBeDefined();
   });
 
   it("returns createKeltnerRsi2 factory", () => {
@@ -35,8 +35,8 @@ describe("strategyRegistry.get", () => {
 
   it("passes param overrides to factory", () => {
     const factory = strategyRegistry.get("createDonchianAdx");
-    const strategy = factory({ dcSlow: 40 });
-    expect(strategy.params.dcSlow.value).toBe(40);
+    const strategy = factory({ bbKcPeriod: 24 });
+    expect(strategy.params.bbKcPeriod.value).toBe(24);
   });
 });
 

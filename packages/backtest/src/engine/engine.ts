@@ -27,6 +27,7 @@ export interface BacktestConfig {
   maxGlobalTradesDay: number;
   cooldownBars: number;
   equityFloorPct: number;
+  warmupBars: number;
 }
 
 export const DEFAULT_BACKTEST_CONFIG: BacktestConfig = {
@@ -40,6 +41,7 @@ export const DEFAULT_BACKTEST_CONFIG: BacktestConfig = {
   maxGlobalTradesDay: 5,
   cooldownBars: 4,
   equityFloorPct: 0.2,
+  warmupBars: 0,
 };
 
 export interface BacktestResult {
@@ -193,9 +195,12 @@ export function runBacktest(
       }
     }
 
-    // Step 4: Entry signal (only if flat and solvent)
+    // Step 4: Entry signal (only if flat, past warmup, and solvent)
     if (positionTracker.isFlat()) {
       barsSinceExit++;
+
+      // Warmup: skip entries while indicators stabilize
+      if (i < config.warmupBars) continue;
 
       // Equity floor: stop trading when account is effectively dead
       if (equityCurve.getEquity() <= config.initialCapital * config.equityFloorPct) continue;

@@ -29,12 +29,14 @@ export function runEngineInProcess(opts: {
   strategy: Strategy;
   config?: Partial<BacktestConfig>;
   sourceInterval?: CandleInterval;
+  warmupBars?: number;
 }): EngineResult {
-  const { candles, strategy, config, sourceInterval = "15m" } = opts;
+  const { candles, strategy, config, sourceInterval = "15m", warmupBars = 0 } = opts;
 
   const backtestConfig: BacktestConfig = {
     ...DEFAULT_BACKTEST_CONFIG,
     ...config,
+    warmupBars,
   };
 
   const result = runBacktest(candles, strategy, backtestConfig, sourceInterval);
