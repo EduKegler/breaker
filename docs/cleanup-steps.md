@@ -1,232 +1,193 @@
-# BREAKER - Periodic Code Review Checklist
+# BREAKER — Periodic Cleanup Checklist
 
-> **Monorepo:** pnpm workspaces. Run tools per-package, not from root.
-> Run this checklist every 1-2 weeks or after major feature additions.
-> Copy this into a new issue/doc and check off items as you go.
+> **Quando:** a cada 1-2 semanas ou após mudanças grandes.
+> **Como:** itere seção por seção, gere tarefas para cada item que aplicar.
+> **Monorepo:** pnpm workspaces — rode tools por package, não do root.
+
+## Regras de execução (OBRIGATÓRIO)
+
+1. **Nunca editar strategy files** em `packages/backtest/src/strategies/` — são gerados pelo refiner e serão sobrescritos. Correções vão nos prompts ou no engine.
+2. **Uma mudança por commit** — não misturar refactor + fix + feature no mesmo commit.
+3. **Sempre terminar com `pnpm build && pnpm test`** — não considerar tarefa completa sem testes passando.
+4. **Não remover código que PARECE morto sem confirmar** — factories são auto-discovered via `Object.keys(mod).find(k => k.startsWith("create"))`, exports podem ser usados dinamicamente. Na dúvida, grep antes de deletar.
+5. **Não adicionar dependências pesadas** — `@breaker/kit` deve ser minimal. Backtest engine é hot path (~2s/run); libs que adicionam overhead lá são proibidas.
+6. **Respeitar CLAUDE.md** — ler o CLAUDE.md do package antes de mexer nele. As regras lá são intencionais.
 
 ---
 
-## 1. Architecture & Code Organization
+## 1. AI-Generated Code (Strategy Files)
 
-- [ ] **Extract shared utilities to `@breaker/kit`**
-  - Scan for pure functions duplicated across modules (formatters, validators, math helpers)
-  - Look for generic type utilities that aren't domain-specific
-  - Check for shared constants (timeframes, session times, thresholds) that live in random files
-  - Identify reusable hooks or composable logic (retry, polling, debounce patterns)
-  - _Prompt:_ "List all exported functions in `src/`. Which ones are pure, stateless, and used by 2+ modules? Those are candidates for `@breaker/kit`."
+- [ ] **Prompt rules atualizadas?**
+  - Bugs recorrentes no output do Claude viram hard rules em `build-optimize-prompt.ts`
+  - Verificar se regras existentes ainda são necessárias (regras obsoletas poluem o prompt)
+  - Conferir que `CANDIDATE_SLUGS` cobre todos os candidatos do KB: test "CANDIDATE_SLUGS covers all KB candidates" em `build-module-context.test.ts`
 
-- [ ] **Module boundaries are clean (pnpm monorepo)**
-  - No circular dependencies between packages (check per-package, not root)
-  - Each module has a clear single responsibility
-  - Imports flow in one direction (kit -> domain -> application)
-  - _Tool:_ `pnpm -r exec npx madge --circular --extensions ts src/`
+- [ ] **Strategy files são válidos?**
+  - Typecheck: `pnpm --filter @breaker/backtest typecheck`
+  - Nenhum strategy file tem imports quebrados ou tipos inexistentes
+  - Factory exports seguem o padrão `create{PascalCase}` auto-discovered por `run-engine-child.ts`
+
+- [ ] **Refiner output review**
+  - Ler 1-2 strategy files gerados recentemente e verificar:
+    - Error handling incompleto ou genérico (catch vazio, `catch { }`)
+    - Lógica duplicada entre estratégias (copiar padrões sem adaptar)
+    - Parâmetros hardcoded que deveriam ser configuráveis (ou vice-versa)
+    - Guards ausentes: NaN em indicadores, divisão por zero, arrays vazios
+  - Se encontrar problemas recorrentes: adicionar regra em `build-optimize-prompt.ts`, não corrigir o strategy file
+
+---
+
+## 2. Testes
+
+- [ ] **Cobertura de código crítico**
+  - `pnpm --filter @breaker/exchange vitest run --coverage` — foco em files < 60%
+  - Prioridade: qualquer arquivo que toca ordens, posições, ou dinheiro
+  - `packages/exchange/src/application/` e `packages/exchange/src/domain/` são as áreas mais críticas
+
+- [ ] **Qualidade dos testes**
+  - Testes afirmam comportamento, não detalhes de implementação
+  - Edge cases cobertos: valores zero, negativos, arrays vazios, boundary conditions
+  - Trading-specific: partial fills, slippage, session boundaries, ordens simultâneas
+  - Sem testes flaky (dependentes de tempo, ordem, ou estado externo)
+
+- [ ] **Categorias de teste que podem faltar**
+  - Unit tests para funções puras de cálculo (indicadores, scoring)
+  - Integration tests para pipelines (signal → filter → entry → exit)
+  - Error path tests: o que acontece quando API retorna garbage? Quando WS desconecta?
+  - Strategy files NÃO devem ter testes manuais (são artefatos efêmeros)
+
+- [ ] **Testes do refiner refletem o código?**
+  - Após mudanças em stages, conferir que `orchestrator.test.ts` cobre o novo fluxo
+  - Conferir `variant-manager.test.ts` — slugs e componentes estão consistentes?
+  - Rodar: `pnpm --filter @breaker/refiner test` (736+ tests devem passar)
+
+---
+
+## 3. Documentação (.md files)
+
+### CLAUDE.md (mais importante)
+
+- [ ] **Root `CLAUDE.md` está atualizado?**
+  - Monorepo structure reflete packages existentes
+  - Naming conventions estão sendo seguidas (kebab-case, one export per file)
+  - Build/test commands funcionam (`pnpm build && pnpm test`)
+  - Cross-package pitfalls ainda são válidos
+
+- [ ] **Package-level `CLAUDE.md` refletem o código?**
+  - Ler cada `packages/*/CLAUDE.md` e comparar com o código atual
+  - Corrigir informações desatualizadas (nomes de funções renomeadas, fluxos que mudaram, pitfalls resolvidos)
+  - Packages prioritários: refiner (muda mais), exchange (mais crítico), backtest
+
+- [ ] **Auto-memory (`~/.claude/projects/.../memory/MEMORY.md`) está limpo?**
+  - Sem entradas duplicadas ou contraditórias
+  - Sem informação session-specific (deveria ser apenas padrões estáveis)
+  - Sem informação que contradiz CLAUDE.md files
+
+### Knowledge Base
+
+- [ ] **KB drift check**
+  - Rodar: `/kb-drift` (skill existente)
+  - Verificar se candidatos de componentes no KB match os `CANDIDATE_SLUGS`
+  - Verificar se MODULE_CRITERIA (minPF, maxDD, etc.) match as tabelas do KB
+
+### README files
+
+- [ ] **README.md do root e packages** — instruções de setup/run ainda funcionam?
+
+---
+
+## 4. Arquitetura & Código
 
 - [ ] **Dead code removal**
-  - Unused exports, variables, types
-  - Commented-out code blocks older than 2 weeks
-  - Unreachable branches or impossible conditions
-  - _Tool:_ `npx ts-prune` or `npx knip`
+  - Exports não usados, tipos órfãos, variáveis mortas
+  - Blocos de código comentado — remover (git tem o histórico)
+  - Branches inalcançáveis ou condições impossíveis
+  - Usar grep para confirmar que exports "mortos" não são usados dinamicamente antes de remover
 
-- [ ] **Zod schemas stay in sync**
-  - Config files validated at startup with Zod schemas (fail-fast on bad config)
-  - API response schemas match current Hyperliquid SDK types
-  - New config fields added to both the config file AND the Zod schema
+- [ ] **Extrair utilitários duplicados para `@breaker/kit`**
+  - Funções puras duplicadas entre packages (formatters, validators, math)
+  - Constantes compartilhadas que vivem em arquivos aleatórios
+  - `backoffDelay` é exemplo de extração bem-sucedida para kit
 
----
+- [ ] **Dependências circulares**
+  - Verificar imports entre packages — não deve haver ciclos
+  - Build order esperada: kit ← backtest ← refiner; kit ← exchange; kit ← alerts; kit ← router
 
-## 2. Test Coverage & Quality
+- [ ] **Libs que substituem código custom**
+  - Procurar funções utilitárias implementadas manualmente que poderiam ser substituídas por libs leves e bem mantidas (>1k stars, mantido ativamente, tree-shakeable)
+  - Áreas comuns: date/time helpers, string case conversion (kebab↔camel↔pascal), retry/backoff, array utilities (chunk, groupBy, unique), number formatting, CLI arg parsing, CSV parsing, deep clone/merge
+  - Antes de substituir: verificar o tamanho da lib (`npx packagephobia <pkg>`), se é ESM-compatible, e se não adiciona overhead em hot paths (backtest engine)
+  - Priorizar: implementações custom com >15 linhas que já têm lib equivalente battle-tested
+  - Não trocar one-liners por dependências — o custo de manter a dep é maior que o código
 
-- [ ] **Find untested code paths**
-  - Run coverage report: `npx vitest --coverage`
-  - Focus on: files < 60% branch coverage
-  - Priority targets: any file touching money/orders/positions
-  - _Prompt:_ "Given this coverage report, which uncovered lines handle critical trading logic (entries, exits, position sizing, risk checks)?"
-
-- [ ] **Test quality audit**
-  - Tests assert behavior, not implementation details
-  - Edge cases covered: zero values, negative numbers, empty arrays, boundary conditions
-  - Trading-specific edges: partial fills, slippage, session boundaries, weekend gaps
-  - No flaky tests (time-dependent, order-dependent)
-
-- [ ] **Missing test categories**
-  - Unit tests for all pure calculation functions
-  - Integration tests for strategy pipelines (signal -> filter -> entry -> exit)
-  - Snapshot tests for indicator outputs against known data
-  - Error path tests: what happens when API returns garbage?
+- [ ] **Zod schemas em sync**
+  - Config files validados no startup com Zod (fail-fast)
+  - Novos campos adicionados no arquivo de config E no schema Zod
+  - `exchange-config.json` e `breaker-config.json` — schemas match?
 
 ---
 
-## 3. Observability & Debugging
+## 5. Segurança & Safety (Trading)
 
-- [ ] **Structured logging coverage**
-  - Every external API call logs: request params, response status, latency
-  - Strategy decisions log: signal type, confidence, filters applied, final decision
-  - Position lifecycle logs: open reason, size, entry price, exit reason, exit price, PnL
-  - Rate limit / retry events with backoff info
-  - _Format:_ `{ timestamp, level, module, action, ...context }` (JSON for parsing)
+- [ ] **API keys / secrets**
+  - `.env` contém APENAS secrets (API keys, tokens)
+  - Nenhum secret em código, logs, ou git history
+  - Grep por strings suspeitas: `secret`, `apikey`, `private_key`, `token` em arquivos `.ts`
 
-- [ ] **Error context is sufficient**
-  - Errors include: what was attempted, with what inputs, what failed
-  - Stack traces preserved (no swallowed errors with generic messages)
-  - Network errors log: endpoint, method, status code, response body snippet
+- [ ] **Order safety guards**
+  - Max position size enforced em código (não só config)
+  - Max loss per trade / per day com hard limits
+  - Rate limiting em order submission
+  - Sanity check: rejeitar ordens com preço > X% do mercado
 
-- [ ] **Debug mode / dry-run flags**
-  - Can enable verbose logging per module without code changes
-  - Dry-run mode logs what WOULD happen without executing trades
-  - Paper trading mode validates full flow without real money
+- [ ] **Input validation**
+  - Dados externos (API responses, WS messages) validados com Zod
+  - Preços/quantidades checados para: NaN, Infinity, negativo, zero, magnitude absurda
+  - Timestamps validados (não no futuro, não stale)
 
----
+- [ ] **Floating point**
+  - `truncateSize()` / `truncatePrice()` aplicados antes de TODA chamada SDK
+  - `Math.floor` para buys e sells (Hyperliquid `reduceOnly` rejeita se size > position)
+  - Sem comparação entre valores pré e pós-truncation
 
-## 4. Flow & Readability
-
-- [ ] **Code is concise and intention-revealing**
-  - Functions are < 30 lines (extract if longer)
-  - No deeply nested if/else chains (> 3 levels) -- use early returns or strategy pattern
-  - Variable names describe WHAT, not HOW (`maxRiskPerTrade` not `val2`)
-  - Complex conditions extracted into named booleans (`const isValidEntry = ...`)
-
-- [ ] **Strategy flow is traceable**
-  - Can follow a trade from signal detection to order execution in < 5 file hops
-  - Each step in the pipeline has clear input/output types
-  - Decision points are documented with WHY comments, not WHAT comments
-
-- [ ] **Configuration over hardcoding**
-  - Magic numbers extracted to config with descriptive names
-  - Session times, thresholds, timeouts are configurable
-  - Secrets in `.env` ONLY; operational config (endpoints, params) in config files like `exchange-config.json` -- not hardcoded in source (see AGENTS.md)
+- [ ] **Hyperliquid SDK**
+  - `BTC-PERP` vs `BTC` — `toSymbol()` / `fromSymbol()` usados consistentemente
+  - `floatToWire()` nunca chamado com valores não-truncados
+  - `loadSzDecimals(coin)` chamado no startup antes de qualquer ordem
+  - SDK version pinado; checar changelog em updates
 
 ---
 
-## 5. Security & Safety
-
-- [ ] **Critical: API key / secret handling**
-  - No secrets in code, git history, or logs
-  - Keys loaded from env vars or secret manager only
-  - API keys have minimum required permissions (read-only where possible)
-  - _Check:_ `git log --all -p | grep -i "secret\|apikey\|private_key"` (scan history)
-
-- [ ] **Critical: Order safety guards**
-  - Maximum position size enforced at code level (not just config)
-  - Maximum loss per trade / per day hard limits
-  - Rate limiting on order submission (prevent accidental spam)
-  - Kill switch via `maxTradesPerDay: 0` in config works correctly; _TODO:_ evaluate explicit `enabled: false` flag for clearer intent
-  - Sanity checks: reject orders with obviously wrong prices (> X% from market)
-
-- [ ] **Critical: Input validation**
-  - All external data (API responses, websocket messages) validated with Zod before use
-  - Price/quantity values checked for: NaN, Infinity, negative, zero, absurd magnitude
-  - Timestamps validated (not in the future, not stale beyond threshold)
-
-- [ ] **Network & state safety**
-  - Reconnection logic for websockets with state reconciliation
-  - Idempotency: router deduplicates via `alert_id` in SQLite + Redis (ESTABLISHED PATTERN -- verify it covers all entry points, not just the main router)
-  - Graceful degradation: what happens if Hyperliquid API is down for 5 min?
-
----
-
-## 6. Bug Hunting (High & Critical)
+## 6. Runtime & State
 
 - [ ] **Race conditions**
-  - Concurrent strategy signals don't create conflicting orders
-  - Position state is consistent between check and order placement
-  - Websocket reconnect doesn't miss or duplicate messages
+  - Sinais concorrentes não criam ordens conflitantes
+  - Estado da posição consistente entre check e placement
+  - WS reconnect não perde ou duplica mensagens
+  - `processPendingFill` com await previne duplicate inserts
 
-- [ ] **Floating point traps**
-  - Precision helpers (`truncateSize()`, `truncatePrice()`) extracted to `lib/precision.ts` and applied both at signal-handler level (before storing) and at adapter boundary (safety net)
-  - No raw `number` arithmetic on prices/sizes without truncation applied afterward — signal-handler truncates intent values before positionBook/store, adapter re-truncates (idempotent)
-  - Comparison operators on prices account for truncation (don't compare pre- vs post-truncated values)
-  - Rounding: `Math.floor` for both buys and sells (Hyperliquid `reduceOnly` sells must not exceed position size; ceil would cause rejection)
-  - _TODO:_ Evaluate if migrating to a Decimal library is worth it as complexity grows (current assessment: not needed — truncation at boundaries is sufficient)
+- [ ] **Graceful shutdown**
+  - SIGTERM/SIGINT handler funciona
+  - Shutdown cancela ordens pendentes
+  - WS connections fechadas cleanly
+  - State persistido antes do exit
 
-- [ ] **State management bugs**
-  - Stale state after errors (failed order leaves position tracker in wrong state)
-  - Memory leaks: intervals/timeouts/listeners cleaned up on shutdown
-  - State persisted correctly across restarts (no orphaned positions)
-
-- [ ] **Graceful shutdown sequence**
-  - SIGTERM/SIGINT handler defined and tested
-  - On shutdown: cancel all pending/open orders before exit
-  - On shutdown: close or log open positions (configurable: close vs leave with trailing stop)
-  - On shutdown: flush pending logs and persist state to disk/DB
-  - On shutdown: close websocket connections cleanly (not just process.exit)
-  - Restart recovery: on startup, reconcile local state with exchange state (detect orphaned positions)
-
-- [ ] **Boundary / edge cases**
-  - Session transitions (what happens at exact session open/close?)
-  - Midnight UTC rollover
-  - First candle of the day (no previous data)
-  - Market holidays / low liquidity periods
-  - Order fills at exactly stop loss or take profit price
- 
-- [ ] **Hyperliquid SDK traps**
-  - `floatToWire()` rejects non-truncated values -- verify `truncateSize()` / `truncatePrice()` applied before EVERY SDK call
-  - Symbol format consistency: `BTC-PERP` vs `BTC` -- `toSymbol()` adapter always used
-  - SDK version pinned; check changelog for breaking changes on update
-  - Leverage and margin mode set correctly before order placement (not assumed from previous state)
+- [ ] **State recovery**
+  - No restart, reconcilia estado local com exchange
+  - Detecta posições órfãs
+  - Lock files limpos após crash (`breaker-*.lock`)
 
 ---
 
-## 7. Performance
+## 7. Limpeza de Artefatos
 
-- [ ] **No unnecessary work in hot paths**
-  - Indicator calculations cached when input hasn't changed
-  - Websocket message handlers are fast (< 1ms) -- offload heavy work
-  - No synchronous I/O in the trading loop
+- [ ] **Rodar `/clean` (skill existente) para ver status**
+  - Checkpoints antigos acumulando? (`assets/*/checkpoints/`)
+  - Variant registry com variantes obsoletas?
+  - Lock files órfãos?
+  - Candle databases grandes demais?
 
-- [ ] **Memory management**
-  - Candle/tick history has a max length (not growing unbounded)
-  - Old logs rotated or cleaned up
-  - Large objects (order book snapshots) garbage-collected properly
+- [ ] **Dependências desatualizadas**
+  - `pnpm outdated` — verificar se há updates importantes
+  - Atenção especial: `hyperliquid-ts`, `xstate`, `zod`, `vitest`
 
----
-
-## 8. Documentation & Maintainability
-
-- [ ] **Critical paths are documented**
-  - README covers: setup, config, running, testing
-  - Each strategy module has a header comment explaining the thesis
-  - Risk parameters documented with rationale for chosen values
-
-- [ ] **Changelog discipline**
-  - Breaking changes are noted
-  - Strategy parameter changes logged with before/after and reasoning
-
----
-
-## Quick Commands Reference
-
-```bash
-# Circular dependencies (per package -- monorepo)
-pnpm -r exec npx madge --circular --extensions ts src/
-
-# Dead code / unused exports
-npx knip
-
-# Test coverage
-pnpm test -- --coverage
-
-# Type check (monorepo)
-pnpm typecheck
-
-# Secret scanning
-git secrets --scan  # or gitleaks detect
-
-# Find TODOs and FIXMEs
-grep -rn "TODO\|FIXME\|HACK\|XXX" packages/
-```
-
----
-
-## AI-Assisted Review Prompts
-
-Use these prompts when pasting code into Claude or another AI for review:
-
-1. **Kit extraction:** "Here are my source files. List all pure, stateless functions that are used by more than one module. For each, suggest if it belongs in a shared `@breaker/kit` package."
-
-2. **Test gaps:** "Here is my source code and my test files. Identify the most critical untested code paths, prioritized by risk (anything touching orders, positions, or money first)."
-
-3. **Logging audit:** "Review this module. Where would structured log statements help debug production issues? Suggest specific log lines with context fields."
-
-4. **Bug hunt:** "Analyze this code for race conditions, floating point errors, state inconsistencies, and unhandled edge cases. Focus on high and critical severity only."
-
-5. **Security review:** "Review this code for security issues: exposed secrets, missing input validation, unsafe external data handling, and missing safety guards for trading operations."
