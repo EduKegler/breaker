@@ -10,3 +10,6 @@ export { isSaneEquity } from "./is-sane-equity.js";
 export { truncateSize } from "./truncate-size.js";
 export { truncatePrice } from "./truncate-price.js";
 export { backoffDelay } from "./backoff-delay.js";
+export { formatUsd } from "./format-usd.js";
+export { pctChange } from "./pct-change.js";
+export { formatPctChange } from "./format-pct-change.js";

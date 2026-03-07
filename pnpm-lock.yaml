@@ -157,6 +157,9 @@ importers:
 
   packages/explorer:
     dependencies:
+      '@breaker/kit':
+        specifier: workspace:*
+        version: link:../kit
       '@tanstack/react-query':
         specifier: ^5.90.21
         version: 5.90.21(react@19.2.4)

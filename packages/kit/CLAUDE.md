@@ -16,6 +16,9 @@ Shared utilities consumed by all other packages in the monorepo.
 - `truncateSize(size, szDecimals)` — floor-truncate to exchange-allowed decimals (with epsilon to prevent IEEE 754 drift)
 - `truncatePrice(price)` — truncate to 5 significant figures (SDK requirement)
 - `backoffDelay(attempt, baseMs?, maxMs?)` — exponential backoff delay calculator
+- `formatUsd(n)` — format number as USD currency string
+- `pctChange(current, baseline)` — percentage change between two values
+- `formatPctChange(pct, decimals?)` — format percentage with sign prefix (e.g. `+1.50%`)
 
 ## Known pitfalls
 - `parseEnv` reads `process.env` at call time — tests may need env vars set before importing modules that call it

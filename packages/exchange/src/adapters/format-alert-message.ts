@@ -1,25 +1,17 @@
+import { formatUsd, pctChange, formatPctChange } from "@breaker/kit";
 import type { OrderIntent } from "../domain/signal-to-intent.js";
-
-function formatUsd(n: number): string {
-  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
-}
-
-function pctChange(entry: number, target: number): string {
-  const pct = ((target - entry) / entry) * 100;
-  return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
-}
 
 export function formatOpenMessage(intent: OrderIntent, mode: string): string {
   const emoji = intent.direction === "long" ? "\u{1F7E2}" : "\u{1F534}";
   const dir = intent.direction.toUpperCase();
   const tpLines = intent.takeProfits.map(
-    (tp, i) => `TP${i + 1}: ${formatUsd(tp.price)} (${pctChange(intent.entryPrice, tp.price)})`,
+    (tp, i) => `TP${i + 1}: ${formatUsd(tp.price)} (${formatPctChange(pctChange(tp.price, intent.entryPrice))})`,
   );
 
   return [
     `${emoji} ${intent.coin} ${dir} aberto`,
     `Entry: ${formatUsd(intent.entryPrice)}`,
-    `SL: ${formatUsd(intent.stopLoss)} (${pctChange(intent.entryPrice, intent.stopLoss)})`,
+    `SL: ${formatUsd(intent.stopLoss)} (${formatPctChange(pctChange(intent.stopLoss, intent.entryPrice))})`,
     ...tpLines,
     `Size: ${intent.size} ${intent.coin}`,
     `Mode: ${mode}`,
@@ -38,7 +30,7 @@ export function formatTrailingSlMessage(
   return [
     `\u{1F6E1}\uFE0F ${coin} ${dir} trailing SL movido`,
     `${formatUsd(oldLevel)} \u2192 ${formatUsd(newLevel)}`,
-    `Entry: ${formatUsd(entryPrice)} (${pctChange(entryPrice, newLevel)} do entry)`,
+    `Entry: ${formatUsd(entryPrice)} (${formatPctChange(pctChange(newLevel, entryPrice))} do entry)`,
     `Mode: ${mode}`,
   ].join("\n");
 }

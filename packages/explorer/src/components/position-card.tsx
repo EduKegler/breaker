@@ -1,19 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import type { LivePosition, OpenOrder } from "../types/api.js";
+import { formatUsd } from "@breaker/kit";
 import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
 import { orderTypeLabel } from "./order-type-label.js";
 
-function fmt(n: number): string {
-  return n.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  });
-}
-
 function fmtPnl(n: number): string {
   const sign = n >= 0 ? "+" : "";
-  return sign + fmt(n);
+  return sign + formatUsd(n);
 }
 
 function fmtTrigger(o: OpenOrder): string {
@@ -111,13 +104,13 @@ export function PositionCard({
         <div className="text-txt-secondary">
           Entry{" "}
           <span className="text-txt-primary font-mono">
-            {fmt(position.entryPrice)}
+            {formatUsd(position.entryPrice)}
           </span>
         </div>
         <div className="text-txt-secondary">
           Current{" "}
           <span className="text-txt-primary font-mono">
-            {fmt(position.currentPrice)}
+            {formatUsd(position.currentPrice)}
           </span>
         </div>
         <div className="text-txt-secondary">
@@ -127,7 +120,7 @@ export function PositionCard({
         <div className="text-txt-secondary">
           Notional{" "}
           <span className="text-txt-primary font-mono">
-            {fmt(position.size * position.currentPrice)}
+            {formatUsd(position.size * position.currentPrice)}
           </span>
         </div>
         <div className="text-txt-secondary">
@@ -139,7 +132,7 @@ export function PositionCard({
         <div className="text-txt-secondary">
           Margin{" "}
           <span className="text-txt-primary font-mono">
-            {position.leverage ? fmt(position.size * position.currentPrice / position.leverage) : "—"}
+            {position.leverage ? formatUsd(position.size * position.currentPrice / position.leverage) : "—"}
           </span>
         </div>
         {position.cumulativeFunding !== 0 && (
