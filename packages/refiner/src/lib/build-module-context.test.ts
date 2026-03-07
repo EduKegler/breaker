@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import path from "node:path";
 import {
   buildModuleContext,
   extractFixedRules,
   extractCandidatesFromTable,
   extractComponentCatalog,
   extractVariableBudget,
+  extractStartingPoint,
+  getStartingComponents,
+  getKbSection,
   MODULE_CRITERIA,
+  CANDIDATE_SLUGS,
+  candidateToSlug,
 } from "./build-module-context.js";
 
 vi.mock("node:fs", () => ({
@@ -28,6 +34,11 @@ const SAMPLE_KB = `
 3. **Volume confirmation:** mandatory.
 
 ### 3.2 Strategy candidates
+
+**Recommended first iteration (starting point, not mandatory):**
+
+> Donchian(20) + EMA(200) Daily direction [FIXED] + Volume > 1.5x SMA(vol, 20) on breakout bar + ATR(14) 1H stop x 3.0 + Timeout 48 bars (12h) + TP at 2R.
+> 5 free vars: (1) Donchian period, (2) vol multiplier, (3) ATR stop multiplier, (4) timeout bars, (5) TP R:R.
 
 **Variable budget (8 max):**
 
@@ -87,6 +98,11 @@ const SAMPLE_KB = `
 2. **Band-based entry:** mandatory.
 
 ### 4.2 Strategy candidates
+
+**Recommended first iteration (starting point, not mandatory):**
+
+> Keltner Channels(20, 2.0) on 15m + RSI(2) < 20 for longs / > 85 for shorts + ADX(14) < 25 on 1H as regime gate.
+> 6 free vars: (1) KC period, (2) KC ATR multiplier, (3) RSI threshold long, (4) RSI threshold short, (5) ADX threshold, (6) timeout bars.
 
 **Variable budget (6 max):**
 
@@ -362,12 +378,15 @@ describe("MODULE_CRITERIA", () => {
 });
 
 describe("extractCandidatesFromTable", () => {
-  it("extracts M1 entry signal candidates", () => {
+  it("extracts M1 entry signal candidates with slugs", () => {
     const candidates = extractCandidatesFromTable(SAMPLE_KB, "Entry signal candidates");
     expect(candidates).toHaveLength(3);
     expect(candidates[0].name).toBe("Donchian Channel");
+    expect(candidates[0].slug).toBe("donchian");
     expect(candidates[1].name).toBe("BB squeeze release");
+    expect(candidates[1].slug).toBe("squeeze");
     expect(candidates[2].name).toBe("Opening Range Breakout (ORB)");
+    expect(candidates[2].slug).toBe("orb");
   });
 
   it("extracts descriptions from second column", () => {
@@ -587,5 +606,123 @@ describe("buildModuleContext catalog integration", () => {
       "/nonexistent/kb.md",
     );
     expect(ctx.catalog.slots).toEqual([]);
+  });
+});
+
+describe("extractStartingPoint", () => {
+  it("extracts M1 starting point from KB", () => {
+    const result = extractStartingPoint(SAMPLE_KB, 3);
+    expect(result).toContain("Donchian(20)");
+    expect(result).toContain("5 free vars");
+  });
+
+  it("extracts M2 starting point from KB", () => {
+    const result = extractStartingPoint(SAMPLE_KB, 4);
+    expect(result).toContain("Keltner Channels");
+    expect(result).toContain("6 free vars");
+  });
+
+  it("returns empty string when section not found", () => {
+    expect(extractStartingPoint(SAMPLE_KB, 99)).toBe("");
+  });
+
+  it("returns empty string when no starting point in section", () => {
+    const kb = "## 3. Module 1: Breakout\n\n### 3.1 Fixed rules\n\nSome rules\n\n---";
+    expect(extractStartingPoint(kb, 3)).toBe("");
+  });
+});
+
+describe("getStartingComponents", () => {
+  it("returns M1 breakout starting slugs", () => {
+    const comps = getStartingComponents("M1");
+    expect(comps["Entry Signal"]).toBe("donchian");
+    expect(comps["Regime Filter"]).toBe("ema");
+    expect(comps["Exit"]).toBe("timeout");
+  });
+
+  it("returns M2 mean-reversion starting slugs", () => {
+    const comps = getStartingComponents("M2");
+    expect(comps["Band/Channel"]).toBe("keltner");
+    expect(comps["Exhaustion"]).toBe("rsi2");
+  });
+
+  it("returns a copy (not the original object)", () => {
+    const comps = getStartingComponents("M1");
+    comps["Entry Signal"] = "modified";
+    expect(getStartingComponents("M1")["Entry Signal"]).toBe("donchian");
+  });
+
+  it("throws for unknown module", () => {
+    expect(() => getStartingComponents("M99")).toThrow(/No starting components/);
+  });
+});
+
+describe("candidateToSlug", () => {
+  it("maps known candidates to short slugs", () => {
+    expect(candidateToSlug("Donchian Channel")).toBe("donchian");
+    expect(candidateToSlug("BB squeeze release")).toBe("squeeze");
+    expect(candidateToSlug("SuperTrend flip")).toBe("supertrend");
+    expect(candidateToSlug("Keltner Channels")).toBe("keltner");
+  });
+
+  it("falls back to kebab-case for unknown names", () => {
+    expect(candidateToSlug("My Custom Indicator")).toBe("my-custom-indicator");
+  });
+});
+
+describe("CANDIDATE_SLUGS covers all KB candidates", () => {
+  const kbPath = path.resolve(__dirname, "../../../../docs/knowledge-base.md");
+
+  const moduleSlots = [
+    { id: "M1", num: 3, headers: ["Entry signal candidates", "Entry timing candidates", "Regime filter candidates", "Optional confirmation filter", "Exit candidates"] },
+    { id: "M2", num: 4, headers: ["Band/channel candidates", "Exhaustion confirmation candidates", "Regime filter candidates", "Exit candidates"] },
+    { id: "M3", num: 5, headers: ["Trend confirmation candidates", "Pullback zone candidates", "Pullback confirmation candidates", "Exit candidates"] },
+    { id: "M4", num: 6, headers: ["Entry signal candidates", "Regime filter candidates", "Trailing exit candidates"] },
+  ];
+
+  it("every KB candidate has a CANDIDATE_SLUGS entry (no kebab fallback)", async () => {
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    if (!realFs.default.existsSync(kbPath)) return; // skip if KB not present
+
+    const { extractModuleSection } = await import("./build-module-context.js");
+    const kb = realFs.default.readFileSync(kbPath, "utf8");
+    const failures: string[] = [];
+
+    for (const mod of moduleSlots) {
+      const section = extractModuleSection(kb, mod.num);
+      if (!section) continue;
+      for (const header of mod.headers) {
+        const candidates = extractCandidatesFromTable(section, header);
+        for (const c of candidates) {
+          if (!CANDIDATE_SLUGS[c.name]) {
+            failures.push(`${mod.id} | "${c.name}" — not in CANDIDATE_SLUGS`);
+          }
+        }
+      }
+    }
+
+    expect(failures).toEqual([]);
+  });
+});
+
+describe("getKbSection", () => {
+  it("maps breakout → section 3", () => {
+    expect(getKbSection("breakout")).toBe(3);
+  });
+
+  it("maps mean-reversion → section 4", () => {
+    expect(getKbSection("mean-reversion")).toBe(4);
+  });
+
+  it("maps pullback → section 5", () => {
+    expect(getKbSection("pullback")).toBe(5);
+  });
+
+  it("maps trend-following → section 6", () => {
+    expect(getKbSection("trend-following")).toBe(6);
+  });
+
+  it("throws for unknown strategy", () => {
+    expect(() => getKbSection("unknown")).toThrow(/Unknown strategy profile/);
   });
 });

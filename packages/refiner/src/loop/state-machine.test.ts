@@ -675,6 +675,63 @@ describe("state-machine: WF_REJECT and wfRejectStreak", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Variant switch via actor recreation
+// ---------------------------------------------------------------------------
+describe("state-machine: variant switch via actor recreation", () => {
+  it("new actor starts in refine with all counters reset, preserving baseline bestScore", () => {
+    // Simulate: old variant plateaued (refine escalated to research)
+    const oldActor = startActor({
+      neutralStreak: 3, noChangeCount: 2, wfRejectStreak: 1,
+      phaseIterCount: 8, phaseCycles: 1, bestScore: 60, bestPnl: 200, bestIter: 7,
+      maxCycles: 2,
+    });
+    oldActor.send({ type: "ESCALATE" }); // refine → research
+    expect(oldActor.getSnapshot().value).toBe("research");
+    oldActor.stop();
+
+    // New actor for new variant — starts fresh, carries baseline scores
+    const newActor = startActor({ bestScore: 45, bestPnl: 120, bestIter: 0 });
+    const snap = newActor.getSnapshot();
+    expect(snap.value).toBe("refine");
+    expect(snap.context.neutralStreak).toBe(0);
+    expect(snap.context.noChangeCount).toBe(0);
+    expect(snap.context.wfRejectStreak).toBe(0);
+    expect(snap.context.phaseIterCount).toBe(0);
+    expect(snap.context.phaseCycles).toBe(0);
+    expect(snap.context.fixAttempts).toBe(0);
+    expect(snap.context.transientFailures).toBe(0);
+    expect(snap.context.bestScore).toBe(45);
+    expect(snap.context.bestPnl).toBe(120);
+    expect(snap.context.bestIter).toBe(0);
+    expect(snap.context.needsRebuild).toBe(false);
+  });
+
+  it("new actor can independently escalate through phases", () => {
+    // Old actor exhausted its cycles
+    const oldActor = startActor({ phaseCycles: 1, maxCycles: 2, noChangeCount: 2, initialPhase: "restructure" });
+    oldActor.send({ type: "ESCALATE" });
+    expect(oldActor.getSnapshot().value).toBe("done"); // maxCycles reached
+    oldActor.stop();
+
+    // New actor gets fresh cycles
+    const newActor = startActor({ maxCycles: 2 });
+    expect(newActor.getSnapshot().context.phaseCycles).toBe(0);
+
+    // Can escalate refine → research → restructure → refine
+    newActor.send({ type: "VERDICT", verdict: "neutral" });
+    newActor.send({ type: "VERDICT", verdict: "neutral" });
+    newActor.send({ type: "VERDICT", verdict: "neutral" });
+    newActor.send({ type: "ESCALATE" });
+    expect(newActor.getSnapshot().value).toBe("research");
+
+    newActor.send({ type: "NO_CHANGE" });
+    newActor.send({ type: "NO_CHANGE" });
+    newActor.send({ type: "ESCALATE" });
+    expect(newActor.getSnapshot().value).toBe("restructure");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // done state is final
 // ---------------------------------------------------------------------------
 describe("state-machine: done state", () => {

@@ -85,12 +85,12 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   };
 
   // Format metrics
-  const pnlStr = metrics.totalPnl !== null ? `${metrics.totalPnl.toFixed(2)} USD` : "N/A";
-  const tradesStr = metrics.numTrades !== null ? String(metrics.numTrades) : "N/A";
-  const pfStr = metrics.profitFactor !== null ? metrics.profitFactor.toFixed(2) : "N/A";
-  const ddStr = metrics.maxDrawdownPct !== null ? `${Math.abs(metrics.maxDrawdownPct).toFixed(1)}%` : "N/A";
-  const wrStr = metrics.winRate !== null ? `${metrics.winRate.toFixed(1)}%` : "N/A";
-  const avgRStr = metrics.avgR !== null ? `${metrics.avgR.toFixed(3)}R` : "N/A";
+  const pnlStr = metrics.totalPnl != null ? `${metrics.totalPnl.toFixed(2)} USD` : "N/A";
+  const tradesStr = metrics.numTrades != null ? String(metrics.numTrades) : "N/A";
+  const pfStr = metrics.profitFactor != null ? metrics.profitFactor.toFixed(2) : "N/A";
+  const ddStr = metrics.maxDrawdownPct != null ? `${Math.abs(metrics.maxDrawdownPct).toFixed(1)}%` : "N/A";
+  const wrStr = metrics.winRate != null ? `${metrics.winRate.toFixed(1)}%` : "N/A";
+  const avgRStr = metrics.avgR != null ? `${metrics.avgR.toFixed(3)}R` : "N/A";
 
   // Unmet criteria — module-specific
   const unmetCriteria = buildUnmetCriteria(metrics, mc, pnlStr, tradesStr, pfStr, ddStr, wrStr, avgRStr);
@@ -518,7 +518,7 @@ ${catalogSection}
 \`\`\`json
 {
   "scale": "structural",
-  "selectedComponents": { "Slot Name": "EXACT catalog candidate name (copy verbatim)" },
+  "selectedComponents": { "Slot Name": "slug" },
   "totalVars": <number>,
   "restructureLockChanged": "<which lock changed, or null>",
   "ruleCompliance": "<check each fixed rule>",
@@ -560,67 +560,37 @@ function findLock(slotName: string, locks: Map<string, string>): string | undefi
 }
 
 /**
- * Format the component catalog and tested combinations into a prompt section.
+ * Validate slug-based component selections from Claude's metadata.
+ * Each value must be a valid slug for its slot. Invalid entries are dropped.
+ * Returns only valid { slotName: slug } entries.
  */
-/**
- * Normalize free-text component names from Claude's metadata to canonical
- * catalog candidate names. Uses case-insensitive containment matching,
- * preferring the longest matching candidate to avoid false positives.
- */
-export function normalizeToCatalog(
+export function validateSlugComponents(
   components: Record<string, string>,
   catalog: ComponentCatalog,
 ): Record<string, string> {
-  const normalized: Record<string, string> = {};
-  for (const [slotName, rawName] of Object.entries(components)) {
+  const validated: Record<string, string> = {};
+  for (const [slotName, slug] of Object.entries(components)) {
     const slot = catalog.slots.find((s) => s.slotName === slotName);
-    if (!slot) {
-      normalized[slotName] = rawName;
-      continue;
-    }
-    // Exact match first
-    const exact = slot.candidates.find((c) => c.name === rawName);
-    if (exact) {
-      normalized[slotName] = exact.name;
-      continue;
-    }
-    // Case-insensitive containment: Claude's text contains the catalog name
-    const lower = rawName.toLowerCase();
-    const matches = slot.candidates.filter((c) =>
-      lower.includes(c.name.toLowerCase()),
-    );
-    // Pick longest match to avoid "ATR trail" matching when "ATR trail + partial TP" also matches
-    if (matches.length > 0) {
-      matches.sort((a, b) => b.name.length - a.name.length);
-      normalized[slotName] = matches[0].name;
-    } else {
-      // Fuzzy: try matching first 2 words of raw name against catalog candidates
-      const rawWords = lower.split(/\s+/).slice(0, 2).join(" ");
-      const fuzzy = slot.candidates.find((c) =>
-        c.name.toLowerCase().startsWith(rawWords) || rawWords.startsWith(c.name.toLowerCase().split(/\s+/).slice(0, 2).join(" ")),
-      );
-      normalized[slotName] = fuzzy ? fuzzy.name : rawName;
-    }
+    if (!slot) continue; // unknown slot — drop
+    const match = slot.candidates.find((c) => c.slug === slug);
+    if (!match) continue; // unknown slug for this slot — drop
+    validated[slotName] = slug;
   }
-  return normalized;
+  return validated;
 }
 
 /**
- * Check if a candidate name matches any tested combination's component for a slot.
- * Uses case-insensitive containment to handle Claude's verbose naming.
+ * Check if a candidate's slug has been tested in any combination for a slot.
+ * Uses exact slug comparison — no fuzzy matching needed.
  */
 function isCandidateTested(
-  candidateName: string,
+  candidateSlug: string,
   slotName: string,
   testedCombinations: TestedCombination[],
 ): boolean {
-  const lower = candidateName.toLowerCase();
   return testedCombinations.some((tc) => {
-    const tcName = tc.components[slotName];
-    if (!tcName) return false;
-    if (tcName === candidateName) return true;
-    const tcLower = tcName.toLowerCase();
-    return tcLower.includes(lower) || lower.includes(tcLower);
+    const tcSlug = tc.components[slotName];
+    return tcSlug === candidateSlug;
   });
 }
 
@@ -638,8 +608,8 @@ export function formatCatalogForPrompt(
   const lines: string[] = ["### Component Catalog (from Knowledge Base)"];
   lines.push("");
   lines.push("Select ONE component per slot. You CANNOT invent new components outside this list.");
-  lines.push("Use the EXACT SHORT candidate name as written below in your metadata `selectedComponents`.");
-  lines.push("Example: write `\"Volume Spike\"` NOT `\"Volume Spike vs SMA(vol,20) Timeout at timeoutBars\"`. Max 3 words per name.");
+  lines.push("Use the SLUG (backtick code) in your metadata `selectedComponents`, NOT the full name.");
+  lines.push('Example: `"Entry Signal": "donchian"` NOT `"Entry Signal": "Donchian Channel"`.');
   lines.push("");
 
   for (const slot of catalog.slots) {
@@ -649,13 +619,13 @@ export function formatCatalogForPrompt(
 
     for (let i = 0; i < slot.candidates.length; i++) {
       const c = slot.candidates[i];
-      const tested = isCandidateTested(c.name, slot.slotName, testedCombinations);
+      const tested = isCandidateTested(c.slug, slot.slotName, testedCombinations);
       const isLocked = lockedName && c.name.toLowerCase().includes(lockedName.toLowerCase());
       const markers: string[] = [];
       if (isLocked) markers.push("LOCKED");
       if (tested) markers.push("TESTED");
       const markerStr = markers.length > 0 ? ` [${markers.join(", ")}]` : "";
-      lines.push(`  ${i + 1}. ${c.name}${markerStr} — ${c.description}`);
+      lines.push(`  ${i + 1}. \`${c.slug}\` — ${c.name}${markerStr}: ${c.description}`);
     }
     lines.push("");
   }
@@ -1167,11 +1137,11 @@ function buildOverfitSection(
   // KB §13.3 red flags
   if ((metrics.profitFactor ?? 0) > 3.0) {
     warnings.push(
-      `OVERFIT SIGNAL: PF=${metrics.profitFactor!.toFixed(2)} > 3.0. ` +
+      `OVERFIT SIGNAL: PF=${metrics.profitFactor?.toFixed(2)} > 3.0. ` +
       `Extremely high PF in crypto is suspicious — verify walk-forward pfRatio.`,
     );
   }
-  if (metrics.maxDrawdownPct !== null && Math.abs(metrics.maxDrawdownPct) < 1) {
+  if (metrics.maxDrawdownPct != null && Math.abs(metrics.maxDrawdownPct) < 1) {
     warnings.push(
       `OVERFIT SIGNAL: DD=${Math.abs(metrics.maxDrawdownPct).toFixed(1)}% < 1%. ` +
       `Real crypto strategies have drawdowns — suspiciously low DD suggests curve fitting.`,
@@ -1179,7 +1149,7 @@ function buildOverfitSection(
   }
   if ((metrics.winRate ?? 0) > 80) {
     warnings.push(
-      `OVERFIT SIGNAL: WR=${metrics.winRate!.toFixed(1)}% > 80%. ` +
+      `OVERFIT SIGNAL: WR=${metrics.winRate?.toFixed(1)}% > 80%. ` +
       `Investigate look-ahead bias or excessive curve fitting.`,
     );
   }

@@ -319,13 +319,8 @@ export class StrategyRunner {
         mode: this.deps.config.mode,
         filled_at: exitTs,
       });
-      store.insertFill({
-        order_id: exitOrderId,
-        price: exitPrice,
-        size: pos.size,
-        fee: 0,
-        timestamp: exitTs,
-      });
+      // No placeholder fill here — real fills arrive via WS onFill in daemon.ts.
+      // aggregatePositionHistory falls back to order.price/order.size when no fills exist.
 
       this.deps.positionBook.close(this.deps.coin);
       const totalPnl = pos.unrealizedPnl + pos.cumulativeFunding;

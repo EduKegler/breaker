@@ -29,6 +29,12 @@ claude-raw-output.log
 **/exchange/.env.testnet
 **/exchange/.env.mainnet
 
+# Refiner runtime artifacts (absolute paths, per-machine state)
+**/refiner/assets/**/variant-registry.json
+**/refiner/assets/**/checkpoints/
+**/refiner/assets/**/parameter-history.json
+**/refiner/assets/**/variants/
+
 # Playwright MCP
 .playwright-mcp/
 

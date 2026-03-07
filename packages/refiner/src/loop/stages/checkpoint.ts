@@ -45,7 +45,13 @@ export const checkpoint = {
       if (params && Object.keys(params).length > 0) {
         const { source, stale } = bakeParamDefaults(strategyContent, params);
         bakedContent = source;
+        // 4a: Log params baked and stale params removed
+        const bakedKeys = Object.keys(params).filter((k) => !stale.includes(k));
+        if (bakedKeys.length > 0) {
+          console.log(`\x1b[2m[checkpoint] Baked params: ${bakedKeys.map((k) => `${k}=${params![k]}`).join(", ")}\x1b[0m`);
+        }
         if (stale.length > 0) {
+          console.log(`\x1b[33m[checkpoint] Stale params removed: ${stale.join(", ")}\x1b[0m`);
           cleanedParams = Object.fromEntries(
             Object.entries(params).filter(([k]) => !stale.includes(k)),
           );

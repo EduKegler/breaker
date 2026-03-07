@@ -600,33 +600,62 @@ async function main() {
       onFill: (fills: WsUserFill[], isSnapshot: boolean) => {
         if (isSnapshot) return;
 
-        for (const fill of fills) {
-          // Check if this fill matches a pending GTC entry
-          processPendingFill(fill, {
-            pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: config.mode,
-          }).catch((err) => {
-            log.error({ oid: fill.oid, err }, "Failed to process pending GTC fill");
-          });
-
-          const localOrder = store.getOrderByHlOid(String(fill.oid));
-          if (!localOrder || localOrder.id == null) continue;
-          try {
-            store.insertFill({
-              order_id: localOrder.id,
-              price: parseFloat(fill.px),
-              size: parseFloat(fill.sz),
-              fee: parseFloat(fill.fee),
-              timestamp: new Date(fill.time).toISOString(),
+        void (async () => {
+          for (const fill of fills) {
+            // Check if this fill matches a pending GTC entry (await to prevent duplicate insert below)
+            const handledByPending = await processPendingFill(fill, {
+              pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: config.mode,
+            }).catch((err) => {
+              log.error({ oid: fill.oid, err }, "Failed to process pending GTC fill");
+              return false;
             });
-            log.info({ oid: fill.oid, tag: localOrder.tag, price: fill.px, size: fill.sz }, "Fill recorded");
-          } catch (err) {
-            log.warn({ oid: fill.oid, err }, "Failed to record fill (may be duplicate)");
-          }
-        }
 
-        syncPositionsAndBroadcast(syncDeps).catch((err) => {
-          log.warn({ action: "syncAfterFill", err }, "syncAndBroadcast failed after fill");
-        });
+            if (handledByPending) continue;
+
+            const localOrder = store.getOrderByHlOid(String(fill.oid));
+            if (!localOrder || localOrder.id == null) {
+              // Race condition: order not yet in DB (WS fill arrived before insertOrder).
+              // Retry after delay to let the REST response + insertOrder complete.
+              setTimeout(() => {
+                try {
+                  const retryOrder = store.getOrderByHlOid(String(fill.oid));
+                  if (!retryOrder?.id) {
+                    log.debug({ oid: fill.oid }, "Fill unmatched after retry");
+                    return;
+                  }
+                  store.insertFill({
+                    order_id: retryOrder.id,
+                    price: parseFloat(fill.px),
+                    size: parseFloat(fill.sz),
+                    fee: parseFloat(fill.fee),
+                    timestamp: new Date(fill.time).toISOString(),
+                  });
+                  log.info({ oid: fill.oid, tag: retryOrder.tag, price: fill.px, size: fill.sz }, "Fill recorded (retry)");
+                } catch (err) {
+                  log.debug({ oid: fill.oid, err }, "Fill retry failed (may be duplicate)");
+                }
+              }, 2000);
+              continue;
+            }
+
+            try {
+              store.insertFill({
+                order_id: localOrder.id,
+                price: parseFloat(fill.px),
+                size: parseFloat(fill.sz),
+                fee: parseFloat(fill.fee),
+                timestamp: new Date(fill.time).toISOString(),
+              });
+              log.info({ oid: fill.oid, tag: localOrder.tag, price: fill.px, size: fill.sz }, "Fill recorded");
+            } catch (err) {
+              log.warn({ oid: fill.oid, err }, "Failed to record fill (may be duplicate)");
+            }
+          }
+
+          syncPositionsAndBroadcast(syncDeps).catch((err) => {
+            log.warn({ action: "syncAfterFill", err }, "syncAndBroadcast failed after fill");
+          });
+        })();
       },
 
       onReconnected: () => {

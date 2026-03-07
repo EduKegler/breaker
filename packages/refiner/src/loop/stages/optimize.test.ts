@@ -265,7 +265,7 @@ describe("optimizeStrategy", () => {
     readSpy.mockRestore();
   });
 
-  it("refine: donchianPeriod flagged as unknown param", async () => {
+  it("refine: donchianPeriod accepted silently when not in MODULE_CONSTRAINTS", async () => {
     vi.mocked(execa).mockResolvedValue({
       exitCode: 0,
       stdout: '{ "paramOverrides": { "donchianPeriod": 30 } }',
@@ -278,8 +278,10 @@ describe("optimizeStrategy", () => {
     const result = await optimizeStrategy(baseOpts);
 
     expect(result.success).toBe(true);
-    // donchianPeriod is NOT a valid M1 param (strategy uses bbKcPeriod), so it should be flagged as unknown
-    expect(result.data?.validationWarnings?.some((w) => w.includes("Unknown param") && w.includes("donchianPeriod"))).toBe(true);
+    // donchianPeriod is NOT in M1 constraints but is accepted silently (seed/variant params differ from deployed)
+    expect(result.data?.paramOverrides).toEqual({ donchianPeriod: 30 });
+    const unknownWarnings = result.data?.validationWarnings?.filter((w) => w.includes("Unknown param")) ?? [];
+    expect(unknownWarnings).toHaveLength(0);
     readSpy.mockRestore();
   });
 

@@ -20,7 +20,7 @@ import { createActor } from "xstate";
 
 import { isMainModule, backoffDelay } from "@breaker/kit";
 import { sendWhatsApp as sendWhatsAppWithRetry } from "@breaker/alerts";
-import { getStrategySourcePath } from "../lib/get-strategy-source-path.js";
+import { getStrategySourcePath, factoryToKebab } from "../lib/get-strategy-source-path.js";
 import { strategyRegistry } from "../lib/strategy-registry.js";
 import { loadCandles } from "../lib/candle-loader.js";
 import { lock } from "../lib/lock.js";
@@ -41,20 +41,23 @@ import { integrity } from "./stages/integrity.js";
 import { computeScore } from "./stages/scoring.js";
 import type { ScoreRaw } from "./stages/scoring.js";
 import { compareScores } from "./stages/compare-scores.js";
-import { buildOptimizePrompt, normalizeToCatalog } from "../automation/build-optimize-prompt.js";
+import { buildOptimizePrompt, validateSlugComponents } from "../automation/build-optimize-prompt.js";
 import type { RestructureFailure } from "../automation/build-optimize-prompt.js";
 import { buildFixPrompt } from "../automation/build-fix-prompt.js";
-import { buildModuleContext, MODULE_CRITERIA, computeStretchCriteria } from "../lib/build-module-context.js";
+import { buildModuleContext, MODULE_CRITERIA, computeStretchCriteria, getKbSection } from "../lib/build-module-context.js";
 import { paramWriter } from "./stages/param-writer.js";
 import { conductResearch } from "./stages/research.js";
 import { safeJsonParse } from "../lib/safe-json.js";
 import { breakerMachine } from "./state-machine.js";
 import { computeMinWarmupBars, intervalToMs } from "@breaker/backtest";
-import type { Candle, CandleInterval, Metrics, StrategyParam, TradeAnalysis } from "@breaker/backtest";
+import type { Candle, CandleInterval, Metrics, Strategy, StrategyParam, TradeAnalysis } from "@breaker/backtest";
 import type { IterationMetadata } from "./stages/param-writer.js";
 import type { IterationState, LoopPhase } from "./types.js";
 import { VariantManager } from "./variant-manager.js";
 import { generateVariant } from "./variant-generator.js";
+import { generateSeed } from "./seed-generator.js";
+import { applyRollback, applyB2Rollback } from "./loop-state.js";
+import type { LoopMutableState } from "./loop-state.js";
 
 // ---------------------------------------------------------------------------
 // Graceful shutdown — Ctrl+C kills child processes and releases the lock
@@ -204,12 +207,58 @@ export async function orchestrate(): Promise<void> {
   const degradationPct = (MODULE_CRITERIA[moduleContext.moduleId]?.expectedDegradation ?? 0.3) * 100;
   logDim(`Stretch targets: PF>=${stretchTargets.stretchPF}${stretchTargets.stretchAvgR ? ` avgR>=${stretchTargets.stretchAvgR}` : ""} (${degradationPct}% expected degradation)`);
 
-  // Resolve strategy source file
-  cfg.strategyFile = getStrategySourcePath(cfg.repoRoot, cfg.strategyFactory);
+  // Resolve seed strategy file.
+  // Priority: variant registry (persisted) → config-derived path (backward compat) → generate from KB.
+  const configSeedPath = getStrategySourcePath(cfg.repoRoot, cfg.strategyFactory, cfg.coin, cfg.strategy);
+  cfg.strategyFile = configSeedPath;
+
+  let seedGenerated = false;
+  const registryPath = path.join(cfg.strategyDir, "variant-registry.json");
+  if (fs.existsSync(registryPath)) {
+    // Variant registry exists — check if its seed file is still on disk
+    try {
+      const reg = JSON.parse(fs.readFileSync(registryPath, "utf8")) as { variants: { strategyFile: string }[] };
+      const seedEntry = reg.variants[0];
+      if (seedEntry?.strategyFile && fs.existsSync(seedEntry.strategyFile)) {
+        cfg.strategyFile = seedEntry.strategyFile;
+        logDim(`Seed resolved from variant registry: ${path.basename(seedEntry.strategyFile, ".ts")}`);
+      }
+    } catch { /* corrupt registry — fall through to config-derived check */ }
+  }
+
+  if (!fs.existsSync(cfg.strategyFile)) {
+    const cpData = checkpoint.load(cfg.checkpointDir);
+    if (cpData?.strategyContent) {
+      fs.mkdirSync(path.dirname(cfg.strategyFile), { recursive: true });
+      writeFileAtomic.sync(cfg.strategyFile, cpData.strategyContent);
+      log(`${c.grn}Seed restored from checkpoint${c.r}`);
+    } else {
+      log(`${c.ylw}Seed not found — generating from KB starting point...${c.r}`);
+      const monorepoRoot = path.resolve(cfg.repoRoot, "../..");
+      const seedResult = await generateSeed({
+        strategyDir: path.join(monorepoRoot, "packages", "backtest", "src", "strategies", cfg.coin.toLowerCase(), cfg.strategy),
+        repoRoot: cfg.repoRoot,
+        kbPath,
+        kbSection: getKbSection(cfg.strategy),
+        moduleContext,
+        model: cfg.modelRouting.restructure ?? cfg.modelRouting.optimize,
+        cancelSignal: shutdownController.signal,
+      });
+      cfg.strategyFile = seedResult.strategyFile;
+      logOk(`Seed generated: ${seedResult.variantId} (${seedResult.factoryName})`);
+    }
+    execaSync("pnpm", ["--filter", "@breaker/backtest", "build"], {
+      cwd: path.resolve(cfg.repoRoot, "../.."),
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    seedGenerated = true;
+  }
   const seedStrategyFile = cfg.strategyFile;
 
-  // Resolve strategy factory and create initial strategy
-  const factory = strategyRegistry.get(cfg.strategyFactory);
+  // Factory resolved after variant management (see below) — needs to know which strategy is active
+  type StrategyFactory = (overrides?: Partial<Record<string, number>>) => Strategy;
+  let factory: StrategyFactory;
 
   // Ensure strategy dir exists
   if (!fs.existsSync(cfg.strategyDir)) {
@@ -230,7 +279,9 @@ export async function orchestrate(): Promise<void> {
   const seedParamHistoryFile = cfg.paramHistoryFile;
   const variantMgr = new VariantManager(cfg.strategyDir, seedStrategyFile);
   variantMgr.loadOrInit(seedStrategyFile, seedCheckpointDir, seedParamHistoryFile);
-  let isNonSeedVariant = false;
+  // Tracks when ESM module cache is stale (seed generated, variant switch, restructure).
+  // Forces child-process backtest path since factory() would return old compiled code.
+  let esmCacheStale = seedGenerated;
   let needsVariantGeneration = false;
 
   const activeVariant = variantMgr.getActive();
@@ -239,7 +290,7 @@ export async function orchestrate(): Promise<void> {
     cfg.strategyFile = activeVariant.strategyFile;
     cfg.checkpointDir = activeVariant.checkpointDir;
     cfg.paramHistoryFile = activeVariant.paramHistoryFile;
-    isNonSeedVariant = true;
+    esmCacheStale = true;
     log(`${c.b}Active variant: ${activeVariant.id}${c.r} (${activeVariant.strategyFile})`);
   } else if (!activeVariant) {
     // All variants plateaued/complete — need to generate a new one
@@ -247,12 +298,41 @@ export async function orchestrate(): Promise<void> {
     log(`No active variant — will generate new variant after setup`);
   }
 
+  // 1g: Log variant switch decision
+  const seedFilename = path.basename(seedStrategyFile);
+  const activeFilenameForLog = path.basename(cfg.strategyFile);
+  if (seedFilename !== activeFilenameForLog) {
+    log(`Variant switch: seed=${seedFilename} → active=${activeFilenameForLog}`);
+  } else {
+    logDim(`Using seed strategy: ${seedFilename}`);
+  }
+
+  // Resolve strategy factory — dynamic import when active strategy differs from config's deployed factory
+  const configSeedFilename = factoryToKebab(cfg.strategyFactory) + ".ts";
+  const activeFilename = path.basename(cfg.strategyFile);
+  const needsDynamicFactory = esmCacheStale || activeFilename !== configSeedFilename;
+
+  if (needsDynamicFactory) {
+    const distPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");
+    const mod = await import(distPath) as Record<string, unknown>;
+    const factoryKey = Object.keys(mod).find(k => typeof mod[k] === "function" && k.startsWith("create"));
+    if (!factoryKey) throw new Error(`No create* factory found in ${distPath}`);
+    factory = mod[factoryKey] as StrategyFactory;
+    logDim(`Factory resolved via dynamic import: ${factoryKey} (${activeFilename})`);
+  } else {
+    factory = strategyRegistry.get(cfg.strategyFactory);
+    logDim(`Factory resolved from registry: ${cfg.strategyFactory}`);
+  }
+
   // Load initial param overrides from checkpoint (need strategy to compute warmup)
   let paramOverrides: Record<string, number> = checkpoint.loadParams(cfg.checkpointDir) ?? {};
 
-  // Create initial strategy to compute warmup requirement
+  // Warmup must cover ANY strategy the refiner might generate (restructure can change indicators).
+  // Floor: 6000 bars (~62d of 15m) covers EMA 200 on 4h (3840 bars) with margin.
+  const WARMUP_FLOOR = 6000;
   const initialStrategy = factory(paramOverrides);
-  const warmupBars = computeMinWarmupBars(initialStrategy, cfg.interval as CandleInterval);
+  const computedWarmup = computeMinWarmupBars(initialStrategy, cfg.interval as CandleInterval);
+  const warmupBars = Math.max(computedWarmup, WARMUP_FLOOR);
   const warmupMs = warmupBars * intervalToMs(cfg.interval as CandleInterval);
   const dataStartTime = cfg.startTime - warmupMs;
   logDim(`Warmup: ${warmupBars} bars (${Math.round(warmupMs / 86_400_000)}d) for indicator convergence`);
@@ -275,7 +355,25 @@ export async function orchestrate(): Promise<void> {
   // ---- Variant generation (if previous variant plateaued) ----
   if (needsVariantGeneration) {
     // Load seed checkpoint metrics for the generation prompt
-    const seedCheckpointData = checkpoint.load(seedCheckpointDir);
+    let seedCheckpointData = checkpoint.load(seedCheckpointDir);
+
+    // If seed has no checkpoint yet, run baseline backtest to produce real metrics
+    if (!seedCheckpointData) {
+      log(`${c.blu}Running seed baseline for variant generation prompt...${c.r}`);
+      const seedSource = fs.readFileSync(seedStrategyFile, "utf8");
+      const seedStrategy = factory({});
+      const seedBaseline = runEngineInProcess({
+        candles,
+        strategy: seedStrategy,
+        sourceInterval: cfg.interval as CandleInterval,
+        warmupBars: effectiveWarmupBars,
+      });
+      const seedParamCount = countOptimizableParams(initialStrategy.params);
+      checkpoint.save(seedCheckpointDir, seedSource, seedBaseline.metrics, 0, {}, seedBaseline.trades, seedParamCount, initialStrategy.params, seedBaseline.analysis ?? undefined);
+      seedCheckpointData = { strategyContent: seedSource, metrics: seedBaseline.metrics, analysis: seedBaseline.analysis ?? undefined, strategyParams: initialStrategy.params, iter: 0, timestamp: new Date().toISOString() };
+      logOk(`Seed baseline saved: PnL=$${(seedBaseline.metrics.totalPnl ?? 0).toFixed(2)} trades=${seedBaseline.metrics.numTrades}`);
+    }
+
     const seedMetrics = (seedCheckpointData?.metrics ?? {}) as Metrics;
     const seedAnalysis = seedCheckpointData?.analysis ?? null;
     const seedParams = seedCheckpointData?.strategyParams ?? initialStrategy.params;
@@ -312,7 +410,7 @@ export async function orchestrate(): Promise<void> {
     cfg.strategyFile = newVariant.strategyFile;
     cfg.checkpointDir = newVariant.checkpointDir;
     cfg.paramHistoryFile = newVariant.paramHistoryFile;
-    isNonSeedVariant = true;
+    esmCacheStale = true;
     paramOverrides = {};
     logOk(`New variant active: ${c.b}${newVariant.id}${c.r}`);
 
@@ -324,6 +422,18 @@ export async function orchestrate(): Promise<void> {
       stdio: ["ignore", "pipe", "pipe"],
     });
     logOk("Rebuild complete.");
+
+    // Reload factory from newly built variant — prevents stale ESM cache from
+    // returning the seed's strategy when factory() is called (no-op detection,
+    // guardrails, in-process backtest). The variant's .js was never imported,
+    // so Node's ESM cache doesn't interfere.
+    const variantDistPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");
+    const variantMod = await import(variantDistPath) as Record<string, unknown>;
+    const variantFactoryKey = Object.keys(variantMod).find(k => typeof variantMod[k] === "function" && k.startsWith("create"));
+    if (!variantFactoryKey) throw new Error(`No create* factory found in ${variantDistPath}`);
+    factory = variantMod[variantFactoryKey] as StrategyFactory;
+    esmCacheStale = false; // Factory is fresh — in-process paths are safe
+    logDim(`Factory reloaded for variant: ${variantFactoryKey} (${path.basename(cfg.strategyFile)})`);
   }
 
   // Determine initial phase: CLI flag overrides, otherwise always start from refine.
@@ -331,7 +441,9 @@ export async function orchestrate(): Promise<void> {
   // from refine and escalate organically if refine plateaus.
   const existingHistory = paramWriter.loadHistory(cfg.paramHistoryFile)
   const initialPhase: LoopPhase = (partial as { initialPhase?: LoopPhase }).initialPhase || "refine";
-  let lastStrategyParams = initialStrategy.params;
+  // After variant generation, factory may have been reloaded — use fresh factory
+  // instead of stale initialStrategy (which was created from the seed factory).
+  let lastStrategyParams = factory(paramOverrides).params;
   let paramCount = countOptimizableParams(lastStrategyParams);
 
   // F8: Track last analysis for fallback in prompt after rollback
@@ -346,9 +458,6 @@ export async function orchestrate(): Promise<void> {
   let initialScoreResult: { weighted: number; raw: ScoreRaw; breakdown: string } = { weighted: 0, raw: {} as ScoreRaw, breakdown: "" };
   const existingCheckpoint = checkpoint.load(cfg.checkpointDir);
   let checkpointRestored = false;
-  // Tracks when ESM module cache is stale after restructure changed the .ts file.
-  // Forces child-process backtest path since factory() would return old compiled code.
-  let esmCacheStale = isNonSeedVariant; // Non-seed variants always use child-process
   if (existingCheckpoint) {
     // Validate checkpoint source matches current strategy source.
     // If they differ (e.g., git checkout reverted the file), restore checkpoint source
@@ -394,11 +503,11 @@ export async function orchestrate(): Promise<void> {
     // the WF guardrail from trapping the loop when bestScore=0 causes every
     // positive-scoring iteration to be "accepted" then immediately WF-rejected.
     const baselineSource = fs.readFileSync(cfg.strategyFile, "utf8");
-    log(`${c.blu}Running baseline backtest${isNonSeedVariant ? " (child-process)" : ""}...${c.r}`);
+    log(`${c.blu}Running baseline backtest${esmCacheStale ? " (child-process)" : ""}...${c.r}`);
     let baselineResult;
-    if (isNonSeedVariant) {
-      // Non-seed variant: factory() returns the seed strategy, not the variant.
-      // Use child-process with dynamic import to load the variant's compiled code.
+    if (esmCacheStale) {
+      // ESM cache stale: factory() may return stale code or wrong strategy.
+      // Use child-process with dynamic import to load the current compiled code.
       const strategyDistPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");
       baselineResult = runEngineChild({
         repoRoot: cfg.repoRoot,
@@ -414,6 +523,9 @@ export async function orchestrate(): Promise<void> {
         warmupBars: effectiveWarmupBars,
       });
       if (baselineResult.paramCount != null) paramCount = baselineResult.paramCount;
+      if (baselineResult.strategyParams) {
+        lastStrategyParams = baselineResult.strategyParams as Record<string, import("@breaker/backtest").StrategyParam>;
+      }
     } else {
       const baselineStrategy = factory(paramOverrides);
       baselineResult = runEngineInProcess({
@@ -455,7 +567,7 @@ export async function orchestrate(): Promise<void> {
   // Create xstate actor for state management
   // If checkpoint was restored, set needsRebuild so first iteration uses child-process
   // path (ESM cache prevents factory() from picking up the rebuilt dist/).
-  const actor = createActor(breakerMachine, {
+  let actor = createActor(breakerMachine, {
     input: {
       initialPhase,
       maxCycles: cfg.phases.maxCycles,
@@ -504,7 +616,7 @@ export async function orchestrate(): Promise<void> {
   let lastContentHash: string | undefined;
   let lastRollbackReason: string | undefined;
   let pendingVerdictOverride: { verdict: string; note: string } | undefined;
-  const failedRestructures: RestructureFailure[] = [];
+  let failedRestructures: RestructureFailure[] = [];
 
   // ============================================================
   // OPTIMIZE-FIRST LOOP
@@ -574,15 +686,130 @@ export async function orchestrate(): Promise<void> {
     state.currentPhase = phase;
 
     // Variant plateau detection: when refine escalates to research/restructure,
-    // mark the variant as plateaued and end the loop. The next run will generate
-    // a new variant with different KB catalog components.
+    // mark the variant as plateaued. Instead of ending the run, generate a new
+    // variant and continue with remaining iterations (outer loop).
     if (prevPhase === "refine" && phase !== "refine") {
       const activeVar = variantMgr.getActive();
       const reason = `neutralStreak=${mCtx.neutralStreak}, noChange=${mCtx.noChangeCount}, wfReject=${mCtx.wfRejectStreak}`;
       variantMgr.markPlateaued(reason, mCtx.bestScore, mCtx.bestPnl, mCtx.bestIter, iter - 1);
       variantMgr.save();
-      logWarn(`Variant ${activeVar?.id ?? "?"} plateaued (${reason}). Next run will generate a new variant.`);
-      break;
+      logWarn(`Variant ${activeVar?.id ?? "?"} plateaued (${reason}).`);
+
+      // ---- Outer loop: generate new variant and continue ----
+      const remaining = cfg.maxIter - iter;
+      log(`${c.blu}${c.b}Generating new variant (${remaining} iterations remaining)...${c.r}`);
+
+      // Use best checkpoint from plateaued variant for the generation prompt
+      const plateauCpData = checkpoint.load(cfg.checkpointDir);
+      const plateauMetrics = (plateauCpData?.metrics ?? currentMetrics) as Metrics;
+      const plateauAnalysis = plateauCpData?.analysis ?? currentAnalysis;
+      const plateauParams = plateauCpData?.strategyParams ?? lastStrategyParams;
+      const plateauParamOverrides = checkpoint.loadParams(cfg.checkpointDir) ?? paramOverrides;
+      const plateauScore = state.bestScore;
+
+      const newVariant = await generateVariant({
+        cfg,
+        moduleContext,
+        variantManager: variantMgr,
+        currentMetrics: plateauMetrics,
+        currentAnalysis: plateauAnalysis as TradeAnalysis | null,
+        lastStrategyParams: plateauParams,
+        paramOverrides: plateauParamOverrides,
+        currentScore: plateauScore,
+        bestScore: plateauScore,
+        globalIter: state.globalIter,
+        kbPath,
+        seedStrategyFile,
+        cancelSignal: shutdownController.signal,
+      });
+
+      if (!newVariant) {
+        logWarn("Variant generation failed — exiting loop.");
+        break;
+      }
+
+      // Override cfg paths with new variant
+      cfg.strategyFile = newVariant.strategyFile;
+      cfg.checkpointDir = newVariant.checkpointDir;
+      cfg.paramHistoryFile = newVariant.paramHistoryFile;
+
+      // Rebuild backtest package for new variant
+      log(`${c.blu}Rebuilding @breaker/backtest for new variant...${c.r}`);
+      execaSync("pnpm", ["--filter", "@breaker/backtest", "build"], {
+        cwd: path.resolve(cfg.repoRoot, "../.."),
+        timeout: 30000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      // Reload factory from newly built variant
+      const switchDistPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");
+      const switchMod = await import(switchDistPath) as Record<string, unknown>;
+      const switchFactoryKey = Object.keys(switchMod).find(k => typeof switchMod[k] === "function" && k.startsWith("create"));
+      if (!switchFactoryKey) throw new Error(`No create* factory found in ${switchDistPath}`);
+      factory = switchMod[switchFactoryKey] as StrategyFactory;
+      esmCacheStale = false;
+      checkpointRestored = false;
+      logOk(`New variant: ${c.b}${newVariant.id}${c.r} (factory: ${switchFactoryKey})`);
+
+      // Run baseline backtest for new variant
+      paramOverrides = {};
+      const switchStrategy = factory(paramOverrides);
+      lastStrategyParams = switchStrategy.params;
+      paramCount = countOptimizableParams(lastStrategyParams);
+
+      log(`${c.blu}Running baseline backtest for new variant...${c.r}`);
+      const switchSource = fs.readFileSync(cfg.strategyFile, "utf8");
+      const switchBaseline = runEngineInProcess({
+        candles,
+        strategy: switchStrategy,
+        sourceInterval: cfg.interval as CandleInterval,
+        warmupBars: effectiveWarmupBars,
+      });
+
+      currentMetrics = switchBaseline.metrics;
+      currentAnalysis = switchBaseline.analysis;
+      lastAnalysis = switchBaseline.analysis;
+      currentPnl = currentMetrics.totalPnl ?? 0;
+
+      // Save baseline checkpoint
+      checkpoint.save(cfg.checkpointDir, switchSource, currentMetrics, 0, paramOverrides, switchBaseline.trades, paramCount, lastStrategyParams, currentAnalysis ?? undefined);
+
+      const switchScoreResult = computeScore(currentMetrics, paramCount, currentMetrics.numTrades ?? 0, cfg.scoring.weights);
+      bestScoreBreakdown = switchScoreResult.raw;
+      currentScoreResult = switchScoreResult;
+      logOk(`Baseline: PnL=$${currentPnl.toFixed(2)} score=${switchScoreResult.weighted.toFixed(1)} trades=${currentMetrics.numTrades}`);
+
+      // Reset loop state for new variant
+      lastRollbackReason = undefined;
+      failedRestructures = [];
+      lastContentHash = undefined;
+      pendingVerdictOverride = undefined;
+
+      state.bestScore = switchScoreResult.weighted;
+      state.bestPnl = currentPnl;
+      state.bestIter = 0;
+      state.previousPnl = currentPnl;
+      state.currentScore = switchScoreResult.weighted;
+
+      // Recreate actor with fresh state for new variant
+      actor.stop();
+      actor = createActor(breakerMachine, {
+        input: {
+          initialPhase: "refine",
+          maxCycles: cfg.phases.maxCycles,
+          bestScore: switchScoreResult.weighted,
+          bestPnl: currentPnl,
+          bestIter: 0,
+        },
+      });
+      actor.start();
+
+      emitEvent({
+        artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+        stage: "VARIANT_SWITCH", status: "info",
+        message: `Switched to variant ${newVariant.id} (baseline score=${switchScoreResult.weighted.toFixed(1)})`,
+      });
+      continue;
     }
 
     // Detect restructure→refine via ESCALATE or PHASE_TIMEOUT (ESM cache staleness)
@@ -658,7 +885,7 @@ export async function orchestrate(): Promise<void> {
       });
       pendingVerdictOverride = undefined;
     } catch (err) {
-      logDim(`Param-history backfill error (non-blocking): ${(err as Error).message}`);
+      logWarn(`Param-history backfill error (non-blocking): ${(err as Error).message}`);
     }
 
     // Snapshot pre-optimize metrics for param-writer's "before" field and comparison log
@@ -684,8 +911,27 @@ export async function orchestrate(): Promise<void> {
     log(`${c.blu}🤖 Optimizing${c.r} with ${c.b}${optimizeModel}${c.r} (phase=${effectivePhase}, timeout=${optimizeTimeout / 1000}s)...`);
 
     // Build prompt using persistent metrics (B4: use checkpoint strategyParams after restructure rollback)
-    const currentStrategy = factory(paramOverrides);
-    lastStrategyParams = currentStrategy.params;
+    // For non-seed variants, lastStrategyParams already comes from child-process (correct variant params).
+    // Only update from factory() when ESM cache is reliable (seed strategy, in-process path).
+    if (!esmCacheStale) {
+      const currentStrategy = factory(paramOverrides);
+      lastStrategyParams = currentStrategy.params;
+    }
+
+    // 1a: Log param source and values sent to Claude
+    const paramSource = esmCacheStale ? "child-process / checkpoint" : "factory()";
+    logDim(`Params source: ${paramSource}`);
+    if (lastStrategyParams) {
+      const paramSummary = Object.entries(lastStrategyParams)
+        .filter(([, p]) => p.optimizable)
+        .map(([k, p]) => `${k}=${p.value}`)
+        .join(", ");
+      logDim(`Params sent to Claude: ${paramSummary || "(none)"}`);
+    }
+    if (Object.keys(paramOverrides).length > 0) {
+      logDim(`Active overrides: ${JSON.stringify(paramOverrides)}`);
+    }
+
     const prompt = buildOptimizePrompt({
       metrics: currentMetrics,
       tradeAnalysis: currentAnalysis ?? lastAnalysis,
@@ -800,17 +1046,28 @@ export async function orchestrate(): Promise<void> {
       );
       const actuallyChanged = Object.keys(afterValues).some((k) => afterValues[k] !== beforeValues[k]);
       if (!actuallyChanged) {
+        // 1b: Log before/after when no actual change detected
+        logDim(`No-op detected — before: ${JSON.stringify(beforeValues)}`);
+        logDim(`No-op detected — after:  ${JSON.stringify(afterValues)}`);
         actor.send({ type: "NO_CHANGE" });
         const noChangeCount = actor.getSnapshot().context.noChangeCount;
-        logWarn(`⏸ No change — params identical after apply (${noChangeCount}/${cfg.maxNoChange})${optSummary ? `\n         ${fmtSummary(optSummary)}` : ""}`);
+        logWarn(`⏸ No change — params identical after apply (${noChangeCount}/${cfg.maxNoChange})`);
         if (noChangeCount >= cfg.maxNoChange) {
           logWarn(`No-change limit reached — will escalate phase at next iteration.`);
         }
         continue;
       }
 
+      // 1b: Log which params changed with before→after
+      for (const [k, v] of Object.entries(optResult.data.paramOverrides!)) {
+        const prev = beforeValues[k];
+        if (prev !== undefined && prev !== v) {
+          log(`  Param changed: ${c.b}${k}${c.r} ${prev} → ${v}`);
+        } else if (prev === undefined) {
+          log(`  Param added: ${c.b}${k}${c.r} = ${v}`);
+        }
+      }
       paramOverrides = newOverrides;
-      logDim(`Params updated: ${JSON.stringify(optResult.data.paramOverrides)}`);
     } else {
       // Restructure: file was changed + passed typecheck in optimize step
       // needsRebuild already set by CHANGE_APPLIED with isRestructure=true
@@ -897,6 +1154,8 @@ export async function orchestrate(): Promise<void> {
     let engineResult;
     try {
       const canUseInProcess = !checkpointRestored && !esmCacheStale && (phase === "refine" || contentHash === lastContentHash);
+      // 1d: Log backtest mode decision
+      logDim(`Backtest mode: ${canUseInProcess ? "in-process" : "child-process"} (checkpointRestored=${checkpointRestored}, esmCacheStale=${esmCacheStale}, phase=${phase}, contentHashMatch=${contentHash === lastContentHash})`);
       if (canUseInProcess) {
         // In-process: fast path (~2s). Disabled when checkpoint source was restored
         // at startup (ESM cache means factory() still loads the old compiled code).
@@ -910,10 +1169,15 @@ export async function orchestrate(): Promise<void> {
         });
       } else {
         // Child process: needed after restructure edits (~5s) or for non-seed variants
-        log(`${c.blu}Running child-process backtest${c.r} (${isNonSeedVariant ? "variant" : "post-restructure"})...`);
-        const strategyDistPath = isNonSeedVariant
+        const strategyDistPath = esmCacheStale
           ? cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js")
           : undefined;
+        // 1c: Log child-process details
+        log(`${c.blu}Running child-process backtest${c.r} (ESM cache stale)`);
+        logDim(`  strategyFilePath: ${strategyDistPath ?? "(registry)"}`);
+        if (Object.keys(paramOverrides).length > 0) {
+          logDim(`  paramOverrides: ${JSON.stringify(paramOverrides)}`);
+        }
         engineResult = runEngineChild({
           repoRoot: cfg.repoRoot,
           factoryName: cfg.strategyFactory,
@@ -1008,6 +1272,10 @@ export async function orchestrate(): Promise<void> {
     } else {
       paramCount = countOptimizableParams(factory(paramOverrides).params);
     }
+    // Update strategyParams from child-process (non-seed variants have different params than factory)
+    if ('strategyParams' in engineResult && engineResult.strategyParams) {
+      lastStrategyParams = engineResult.strategyParams as Record<string, import("@breaker/backtest").StrategyParam>;
+    }
 
     // Compute score
     const scoreResult = computeScore(
@@ -1070,6 +1338,10 @@ export async function orchestrate(): Promise<void> {
       ? compareScores(scoreResult.weighted, machCtx.bestScore)
       : (scoreResult.weighted > 0 ? "accept" : "neutral");
     let effectiveVerdict = phaseHelpers.computeEffectiveVerdict(scoreVerdict, meetsMinTrades);
+
+    // 1e: Log verdict with score comparison
+    const verdictSymbol = effectiveVerdict === "accept" ? `${c.grn}✓ ACCEPT` : effectiveVerdict === "reject" ? `${c.red}✗ REJECT` : `${c.ylw}— NEUTRAL`;
+    log(`Verdict: ${verdictSymbol}${c.r} (score=${scoreResult.weighted.toFixed(1)} vs best=${machCtx.bestScore.toFixed(1)}, raw=${scoreVerdict}${!meetsMinTrades ? ", minTrades not met" : ""})`);
 
     // B3: When effectiveVerdict overrides scoreVerdict, store note for param-history backfill
     if (!meetsMinTrades && scoreVerdict === "accept") {
@@ -1233,7 +1505,6 @@ export async function orchestrate(): Promise<void> {
       // from a filtered strategy that trades too little.
       if (phase !== "refine") {
         const bestParams = checkpoint.loadParams(cfg.checkpointDir);
-        if (bestParams) paramOverrides = bestParams;
         const restored = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
         if (restored) {
           logWarn(`B2: Rolled back restructure with insufficient trades to checkpoint (iter ${state.bestIter})`);
@@ -1241,20 +1512,11 @@ export async function orchestrate(): Promise<void> {
           const restoredSource = fs.readFileSync(cfg.strategyFile, "utf8");
           lastContentHash = integrity.computeHash(restoredSource);
           const cpData = checkpoint.load(cfg.checkpointDir);
-          if (cpData?.metrics) {
-            currentMetrics = cpData.metrics as Metrics;
-            currentAnalysis = cpData.analysis ?? null;
-            if (currentAnalysis) lastAnalysis = currentAnalysis;
-            currentPnl = currentMetrics.totalPnl ?? 0;
-          }
-          if (cpData?.paramCount != null) {
-            paramCount = cpData.paramCount;
-          } else if (cpData?.params) {
-            paramCount = Object.keys(cpData.params).length;
-          }
-          if (cpData?.strategyParams) {
-            lastStrategyParams = cpData.strategyParams;
-          }
+          const b2State = applyB2Rollback(
+            { lastStrategyParams, paramOverrides, paramCount, currentMetrics, currentPnl, currentAnalysis, lastAnalysis, lastRollbackReason, failedRestructures },
+            cpData, bestParams,
+          );
+          ({ lastStrategyParams, paramOverrides, paramCount, currentMetrics, currentPnl, currentAnalysis, lastAnalysis, lastRollbackReason, failedRestructures } = b2State);
         }
       }
     } else {
@@ -1263,35 +1525,8 @@ export async function orchestrate(): Promise<void> {
       const isNeutralDrift = effectiveVerdict !== "reject";
       logWarn(`↩ Rolling back: ${isNeutralDrift ? "score in noise band" : effectiveVerdict === scoreVerdict ? "score degraded" : "guardrail rejected"} (score=${scoreResult.weighted.toFixed(1)} vs best=${bestScore.toFixed(1)})`);
 
-      // Track failed restructure for prompt feedback (P3.2: include diagnosis)
-      if (phase !== "refine") {
-        const diagParts: string[] = [];
-        const diagTrades = metrics.numTrades ?? 0;
-        const minTrades = cfg.criteria.minTrades ?? 50;
-        if (diagTrades < minTrades) diagParts.push(`trades ${diagTrades} < minTrades ${minTrades}`);
-        if ((metrics.profitFactor ?? 0) < (cfg.criteria.minPF ?? 1.3)) diagParts.push(`PF ${(metrics.profitFactor ?? 0).toFixed(2)} < ${cfg.criteria.minPF ?? 1.3}`);
-        if (Math.abs(metrics.maxDrawdownPct ?? 0) > (cfg.criteria.maxDD ?? 10)) diagParts.push(`DD ${Math.abs(metrics.maxDrawdownPct ?? 0).toFixed(1)}% > ${cfg.criteria.maxDD ?? 10}%`);
-        if (cfg.criteria.minWR != null && (metrics.winRate ?? 0) < cfg.criteria.minWR) diagParts.push(`WR ${(metrics.winRate ?? 0).toFixed(1)}% < ${cfg.criteria.minWR}%`);
-        if (wfViolations.length > 0) diagParts.push("WF overfit");
-        if (fvViolations.length > 0) diagParts.push(`free vars ${paramCount} > ${cfg.criteria.maxFreeVariables}`);
-        const diagnosis = diagParts.length > 0 ? diagParts.join(", ") : "score degraded";
-
-        failedRestructures.push({
-          globalIter: state.globalIter,
-          trades: diagTrades,
-          pf: metrics.profitFactor ?? 0,
-          score: scoreResult.weighted,
-          diagnosis,
-        });
-        logDim(`Tracked failed restructure: globalIter=${state.globalIter} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)} score=${scoreResult.weighted.toFixed(1)} | ${diagnosis}`);
-      }
-
-      // Restore best params
+      // Side-effects: restore strategy source + params from checkpoint
       const bestParams = checkpoint.loadParams(cfg.checkpointDir);
-      if (bestParams) {
-        paramOverrides = bestParams;
-      }
-      // Restore best strategy source
       const restored = checkpoint.rollback(cfg.checkpointDir, cfg.strategyFile);
       if (!restored) {
         logErr("Rollback failed — no checkpoint found.");
@@ -1300,49 +1535,33 @@ export async function orchestrate(): Promise<void> {
         if (phase !== "refine") {
           actor.send({ type: "SET_NEEDS_REBUILD", value: true });
         }
-        // P1.1: Recalculate lastContentHash from restored file so next refine
-        // iteration correctly detects "unchanged source" and uses in-process path.
         const restoredSource = fs.readFileSync(cfg.strategyFile, "utf8");
         lastContentHash = integrity.computeHash(restoredSource);
       }
 
-      // P1.2: Track rollback reason for next iteration's prompt (P3.1: specific guardrail type)
-      let rollbackCause: string;
-      if (isNeutralDrift) {
-        rollbackCause = `neutral — score ${scoreResult.weighted.toFixed(1)} within noise band of best ${bestScore.toFixed(1)}`;
-      } else if (effectiveVerdict === scoreVerdict) {
-        rollbackCause = `score degraded (${scoreResult.weighted.toFixed(1)} vs best ${bestScore.toFixed(1)})`;
-      } else if (wfViolations.length > 0) {
-        const wfData = analysis.walkForward;
-        rollbackCause = `WF overfit: pfRatio=${wfData?.pfRatio?.toFixed(2) ?? "?"} < 0.6 (train PF=${wfData?.trainPF?.toFixed(2) ?? "?"}, test PF=${wfData?.testPF?.toFixed(2) ?? "?"})`;
-      } else if (fvViolations.length > 0) {
-        rollbackCause = `Free variable cap exceeded: ${paramCount} params > max ${cfg.criteria.maxFreeVariables}`;
-      } else {
-        rollbackCause = `guardrail rejected`;
-      }
-      lastRollbackReason = `Iteration ${iter} rolled back: ${rollbackCause}`;
-
-      // Restore checkpoint metrics to persistent variables
+      // Pure state update: restore metrics, build reason, track failures
       const cpData = checkpoint.load(cfg.checkpointDir);
+      const prevFailedCount = failedRestructures.length;
+      const rollbackState = applyRollback(
+        { lastStrategyParams, paramOverrides, paramCount, currentMetrics, currentPnl, currentAnalysis, lastAnalysis, lastRollbackReason, failedRestructures },
+        cpData, bestParams,
+        {
+          iter, phase, scoreWeighted: scoreResult.weighted, bestScore,
+          effectiveVerdict, scoreVerdict, metrics, paramCount, analysis,
+          wfViolations, fvViolations, maxFreeVariables: cfg.criteria.maxFreeVariables,
+          globalIter: state.globalIter, minTrades: cfg.criteria.minTrades ?? 50,
+          minPF: cfg.criteria.minPF ?? 1.3, maxDD: cfg.criteria.maxDD ?? 10,
+          minWR: cfg.criteria.minWR,
+        },
+      );
+      ({ lastStrategyParams, paramOverrides, paramCount, currentMetrics, currentPnl, currentAnalysis, lastAnalysis, lastRollbackReason, failedRestructures } = rollbackState);
+
       if (cpData?.metrics) {
-        currentMetrics = cpData.metrics as Metrics;
-        currentAnalysis = cpData.analysis ?? null;
-        if (currentAnalysis) lastAnalysis = currentAnalysis;
-        currentPnl = currentMetrics.totalPnl ?? 0;
         logDim(`Using checkpoint metrics after rollback: PnL=$${currentPnl.toFixed(2)} Trades=${currentMetrics.numTrades}`);
       }
-      if (phase !== "refine") {
-        // P1.3/P4.1: Use saved paramCount from checkpoint (accurate optimizable count).
-        // After restructure rollback, ESM cache makes factory() stale.
-        if (cpData?.paramCount != null) {
-          paramCount = cpData.paramCount;
-        } else if (cpData?.params) {
-          paramCount = Object.keys(cpData.params).length;
-        }
-        // B4: Restore strategy params metadata from checkpoint (avoids ESM-stale min/max/step)
-        if (cpData?.strategyParams) {
-          lastStrategyParams = cpData.strategyParams;
-        }
+      if (failedRestructures.length > prevFailedCount) {
+        const last = failedRestructures[failedRestructures.length - 1];
+        logDim(`Tracked failed restructure: globalIter=${last.globalIter} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)} score=${scoreResult.weighted.toFixed(1)} | ${last.diagnosis}`);
       }
 
       emitEvent({
@@ -1360,9 +1579,12 @@ export async function orchestrate(): Promise<void> {
     try {
       if (fs.existsSync(metadataPath)) {
         metadata = safeJsonParse<IterationMetadata>(fs.readFileSync(metadataPath, "utf8"), { repair: true });
+      } else {
+        // 1f: Log when metadata file not found
+        logDim(`Metadata file not found: ${path.basename(metadataPath)}`);
       }
-    } catch {
-      logDim("Could not read metadata JSON from Claude (non-blocking)");
+    } catch (err) {
+      logWarn(`Could not read metadata JSON from Claude: ${(err as Error).message.split("\n")[0]}`);
     }
 
     if (metadata) {
@@ -1381,7 +1603,7 @@ export async function orchestrate(): Promise<void> {
         if (phase === "restructure" || phase === "research") {
           const rawComponents = metadata.selectedComponents;
           if (rawComponents && typeof rawComponents === "object") {
-            const selectedComponents = normalizeToCatalog(rawComponents, moduleContext.catalog);
+            const selectedComponents = validateSlugComponents(rawComponents, moduleContext.catalog);
             paramWriter.recordTestedCombination({
               historyPath: cfg.paramHistoryFile,
               globalIter: state.globalIter,
@@ -1407,8 +1629,9 @@ export async function orchestrate(): Promise<void> {
       try {
         execaSync("git", ["add", cfg.strategyFile], { cwd: cfg.repoRoot, timeout: 10000 });
         execaSync("git", ["commit", "-m", `iter${iter}: optimize ${cfg.asset}/${cfg.strategy} (${phase})`], { cwd: cfg.repoRoot, timeout: 10000 });
-      } catch {
-        // Non-critical
+      } catch (err) {
+        // 1f: Log git commit errors instead of silencing
+        logDim(`Git auto-commit skipped: ${(err as Error).message.split("\n")[0]}`);
       }
     }
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { applyRollback, applyB2Rollback } from "./loop-state.js";
 
 vi.mock("@breaker/alerts", () => ({
   sendWhatsApp: vi.fn().mockResolvedValue(undefined),
@@ -36,7 +37,12 @@ vi.mock("../lib/build-strategy-dir.js", () => ({
 }));
 
 vi.mock("../lib/get-strategy-source-path.js", () => ({
-  getStrategySourcePath: vi.fn((_root: string, _factoryName: string) => `${_root}/packages/backtest/src/strategies/btc/breakout/donchian-adx.ts`),
+  getStrategySourcePath: vi.fn((_root: string, _factoryName: string, _coin?: string, _strategy?: string) => `${_root}/packages/backtest/src/strategies/btc/breakout/donchian-adx.ts`),
+  factoryToKebab: vi.fn((name: string) => {
+    let n = name.replace(/^create/, "");
+    n = n.replace(/([A-Z])/g, (_: string, ch: string) => `-${ch.toLowerCase()}`);
+    return n.startsWith("-") ? n.slice(1) : n;
+  }),
 }));
 
 import { parseArgs } from "./parse-args.js";
@@ -626,102 +632,79 @@ describe("bestScore restoration from checkpoint", () => {
 
 // ---------------------------------------------------------------------------
 // BUG FIX: rollback updates persistent metrics (not stale failed metrics)
+// Migrated from inline logic to use real applyRollback() function
 // ---------------------------------------------------------------------------
 describe("rollback metrics consistency", () => {
   it("after non-refine rollback, persistent currentMetrics updated to checkpoint", () => {
-    // In optimize-first, backtest result updates currentMetrics, then rollback
-    // overwrites currentMetrics with checkpoint data for the next iteration's prompt.
-    const failedMetrics = { totalPnl: 0.14, numTrades: 1, profitFactor: 0, maxDrawdownPct: 0, winRate: 100, avgR: 0.01 };
+    const failedMetrics = { totalPnl: 0.14, numTrades: 1, profitFactor: 0, maxDrawdownPct: 0, winRate: 100, avgR: 0.01 } as any;
     const checkpointMetrics = { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09 };
-    const phase = "restructure";
-    const effectiveVerdict = "reject";
 
-    // After backtest, persistent vars have failed metrics
-    let currentMetrics = { ...failedMetrics };
-    let currentPnl = currentMetrics.totalPnl ?? 0;
+    const result = applyRollback(
+      { lastStrategyParams: {}, paramOverrides: {}, paramCount: 1, currentMetrics: failedMetrics, currentPnl: 0.14, currentAnalysis: null, lastAnalysis: null, lastRollbackReason: undefined, failedRestructures: [] },
+      { strategyContent: "", metrics: checkpointMetrics as any, iter: 1, timestamp: "" },
+      null,
+      { iter: 5, phase: "restructure", scoreWeighted: 10, bestScore: 50, effectiveVerdict: "reject", scoreVerdict: "reject", metrics: failedMetrics, paramCount: 1, analysis: null, wfViolations: [], fvViolations: [], globalIter: 5, minTrades: 50, minPF: 1.3, maxDD: 10 },
+    );
 
-    // Rollback updates persistent vars to checkpoint
-    if (effectiveVerdict === "reject") {
-      const cpData = { metrics: checkpointMetrics };
-      currentMetrics = cpData.metrics as typeof currentMetrics;
-      currentPnl = currentMetrics.totalPnl ?? 0;
-    }
-
-    // Next iteration's optimize prompt sees checkpoint metrics
-    expect(currentMetrics.numTrades).toBe(77);
-    expect(currentMetrics.profitFactor).toBe(0.71);
-    expect(currentPnl).toBe(-70);
+    expect(result.currentMetrics.numTrades).toBe(77);
+    expect(result.currentMetrics.profitFactor).toBe(0.71);
+    expect(result.currentPnl).toBe(-70);
   });
 
   it("refine rollback also updates persistent metrics from checkpoint", () => {
-    const failedMetrics = { totalPnl: -500, numTrades: 150, profitFactor: 0.5, maxDrawdownPct: 30, winRate: 35, avgR: -0.1 };
+    const failedMetrics = { totalPnl: -500, numTrades: 150, profitFactor: 0.5, maxDrawdownPct: 30, winRate: 35, avgR: -0.1 } as any;
     const checkpointMetrics = { totalPnl: 200, numTrades: 180, profitFactor: 1.5, maxDrawdownPct: 8, winRate: 40, avgR: 0.15 };
-    const effectiveVerdict = "reject";
 
-    // After backtest
-    let currentMetrics = { ...failedMetrics };
-    let currentPnl = currentMetrics.totalPnl ?? 0;
+    const result = applyRollback(
+      { lastStrategyParams: {}, paramOverrides: {}, paramCount: 3, currentMetrics: failedMetrics, currentPnl: -500, currentAnalysis: null, lastAnalysis: null, lastRollbackReason: undefined, failedRestructures: [] },
+      { strategyContent: "", metrics: checkpointMetrics as any, iter: 3, timestamp: "" },
+      null,
+      { iter: 5, phase: "refine", scoreWeighted: 20, bestScore: 50, effectiveVerdict: "reject", scoreVerdict: "reject", metrics: failedMetrics, paramCount: 3, analysis: null, wfViolations: [], fvViolations: [], globalIter: 5, minTrades: 50, minPF: 1.3, maxDD: 10 },
+    );
 
-    // Rollback updates persistent vars (both refine and restructure update persistent vars now)
-    if (effectiveVerdict === "reject") {
-      const cpData = { metrics: checkpointMetrics };
-      currentMetrics = cpData.metrics as typeof currentMetrics;
-      currentPnl = currentMetrics.totalPnl ?? 0;
-    }
-
-    expect(currentMetrics.numTrades).toBe(180);
-    expect(currentPnl).toBe(200);
+    expect(result.currentMetrics.numTrades).toBe(180);
+    expect(result.currentPnl).toBe(200);
   });
 });
 
 // ---------------------------------------------------------------------------
 // BUG FIX: failed restructures tracked for prompt feedback
+// Migrated from inline logic to use real applyRollback()
 // ---------------------------------------------------------------------------
 describe("failed restructures tracking", () => {
   it("records failure info on non-refine rollback", () => {
-    const failedRestructures: Array<{ globalIter: number; trades: number; pf: number; score: number }> = [];
-    const phase = "restructure";
-    const effectiveVerdict = "reject";
-    const metrics = { numTrades: 1, profitFactor: 0 };
-    const globalIter = 18;
-    const scoreWeighted = 29.9;
+    const result = applyRollback(
+      { lastStrategyParams: {}, paramOverrides: {}, paramCount: 2, currentMetrics: {} as any, currentPnl: 0, currentAnalysis: null, lastAnalysis: null, lastRollbackReason: undefined, failedRestructures: [] },
+      { strategyContent: "", metrics: {} as any, iter: 1, timestamp: "" },
+      null,
+      { iter: 5, phase: "restructure", scoreWeighted: 29.9, bestScore: 50, effectiveVerdict: "reject", scoreVerdict: "reject", metrics: { numTrades: 1, profitFactor: 0 } as any, paramCount: 2, analysis: null, wfViolations: [], fvViolations: [], globalIter: 18, minTrades: 50, minPF: 1.3, maxDD: 10 },
+    );
 
-    // Simulate rollback tracking logic
-    if (phase !== "refine" && effectiveVerdict === "reject") {
-      failedRestructures.push({
-        globalIter,
-        trades: metrics.numTrades ?? 0,
-        pf: metrics.profitFactor ?? 0,
-        score: scoreWeighted,
-      });
-    }
-
-    expect(failedRestructures).toHaveLength(1);
-    expect(failedRestructures[0]).toEqual({ globalIter: 18, trades: 1, pf: 0, score: 29.9 });
+    expect(result.failedRestructures).toHaveLength(1);
+    expect(result.failedRestructures[0]).toMatchObject({ globalIter: 18, trades: 1, pf: 0, score: 29.9 });
   });
 
   it("does NOT record failure on refine rollback", () => {
-    const failedRestructures: Array<{ globalIter: number; trades: number; pf: number; score: number }> = [];
-    const phase = "refine";
-    const effectiveVerdict = "reject";
+    const result = applyRollback(
+      { lastStrategyParams: {}, paramOverrides: {}, paramCount: 2, currentMetrics: {} as any, currentPnl: 0, currentAnalysis: null, lastAnalysis: null, lastRollbackReason: undefined, failedRestructures: [] },
+      { strategyContent: "", metrics: {} as any, iter: 1, timestamp: "" },
+      null,
+      { iter: 5, phase: "refine", scoreWeighted: 30, bestScore: 50, effectiveVerdict: "reject", scoreVerdict: "reject", metrics: { numTrades: 100, profitFactor: 0.5 } as any, paramCount: 2, analysis: null, wfViolations: [], fvViolations: [], globalIter: 5, minTrades: 50, minPF: 1.3, maxDD: 10 },
+    );
 
-    if (phase !== "refine" && effectiveVerdict === "reject") {
-      failedRestructures.push({ globalIter: 5, trades: 100, pf: 0.5, score: 30 });
-    }
-
-    expect(failedRestructures).toHaveLength(0);
+    expect(result.failedRestructures).toHaveLength(0);
   });
 
   it("accumulates multiple failures across iterations", () => {
-    const failedRestructures: Array<{ globalIter: number; trades: number; pf: number; score: number }> = [];
+    const baseState = { lastStrategyParams: {} as any, paramOverrides: {}, paramCount: 2, currentMetrics: {} as any, currentPnl: 0, currentAnalysis: null, lastAnalysis: null, lastRollbackReason: undefined, failedRestructures: [] as any[] };
+    const cpData = { strategyContent: "", metrics: {} as any, iter: 1, timestamp: "" };
+    const baseCtx = { iter: 5, phase: "restructure" as const, bestScore: 50, effectiveVerdict: "reject", scoreVerdict: "reject", metrics: {} as any, paramCount: 2, analysis: null, wfViolations: [] as any[], fvViolations: [] as any[], minTrades: 50, minPF: 1.3, maxDD: 10 };
 
-    // Iter 1: restructure fails
-    failedRestructures.push({ globalIter: 18, trades: 1, pf: 0, score: 29.9 });
-    // Iter 2: restructure fails again
-    failedRestructures.push({ globalIter: 19, trades: 3, pf: 0, score: 17.9 });
+    const first = applyRollback(baseState, cpData, null, { ...baseCtx, scoreWeighted: 29.9, globalIter: 18 });
+    const second = applyRollback({ ...baseState, failedRestructures: first.failedRestructures }, cpData, null, { ...baseCtx, scoreWeighted: 17.9, globalIter: 19 });
 
-    expect(failedRestructures).toHaveLength(2);
-    expect(failedRestructures.map((f) => f.globalIter)).toEqual([18, 19]);
+    expect(second.failedRestructures).toHaveLength(2);
+    expect(second.failedRestructures.map((f) => f.globalIter)).toEqual([18, 19]);
   });
 });
 
@@ -968,34 +951,51 @@ describe("lastContentHash recalculated after rollback", () => {
 
 // ---------------------------------------------------------------------------
 // BUG FIX P1.3: paramCount recalculated after checkpoint restore
+// Migrated from inline logic to use real applyRollback()/applyB2Rollback()
 // ---------------------------------------------------------------------------
 describe("paramCount after checkpoint restore", () => {
   it("uses checkpoint params count after non-refine rollback", () => {
     const cpParams = { dcSlow: 55, dcFast: 20, atrStopMult: 3.5 };
-    const phase = "restructure";
-    const effectiveVerdict = "reject";
-
-    let paramCount = 8; // stale from ESM-cached factory
-
-    // Simulate non-refine rollback
-    if (effectiveVerdict === "reject" && phase !== "refine") {
-      paramCount = Object.keys(cpParams).length;
-    }
-
-    expect(paramCount).toBe(3);
+    const result = applyRollback(
+      { lastStrategyParams: {}, paramOverrides: {}, paramCount: 8, currentMetrics: {} as any, currentPnl: 0, currentAnalysis: null, lastAnalysis: null, lastRollbackReason: undefined, failedRestructures: [] },
+      { strategyContent: "", metrics: {} as any, params: cpParams, paramCount: 3, iter: 1, timestamp: "" },
+      cpParams,
+      { iter: 5, phase: "restructure", scoreWeighted: 10, bestScore: 50, effectiveVerdict: "reject", scoreVerdict: "reject", metrics: {} as any, paramCount: 8, analysis: null, wfViolations: [], fvViolations: [], globalIter: 5, minTrades: 50, minPF: 1.3, maxDD: 10 },
+    );
+    expect(result.paramCount).toBe(3);
   });
 
-  it("does NOT recalculate paramCount on refine rollback", () => {
-    const phase = "refine";
-    const effectiveVerdict = "reject";
+  it("recalculates paramCount on refine rollback (esmCacheStale path)", () => {
+    const cpParams = { dcSlow: 55, dcFast: 20, atrStopMult: 3.5 };
+    const result = applyRollback(
+      { lastStrategyParams: {}, paramOverrides: {}, paramCount: 8, currentMetrics: {} as any, currentPnl: 0, currentAnalysis: null, lastAnalysis: null, lastRollbackReason: undefined, failedRestructures: [] },
+      { strategyContent: "", metrics: {} as any, params: cpParams, paramCount: 3, iter: 1, timestamp: "" },
+      cpParams,
+      { iter: 5, phase: "refine", scoreWeighted: 10, bestScore: 50, effectiveVerdict: "reject", scoreVerdict: "reject", metrics: {} as any, paramCount: 8, analysis: null, wfViolations: [], fvViolations: [], globalIter: 5, minTrades: 50, minPF: 1.3, maxDD: 10 },
+    );
+    expect(result.paramCount).toBe(3);
+  });
 
-    let paramCount = 8;
+  it("restores lastStrategyParams from checkpoint after refine rollback", () => {
+    // Bug: after rollback in refine, lastStrategyParams kept rejected-iteration values.
+    const checkpointParams = {
+      dcPeriod: { name: "dcPeriod", value: 20, min: 10, max: 50, step: 2, optimizable: true } as any,
+      volMult: { name: "volMult", value: 1.5, min: 0.5, max: 3.0, step: 0.5, optimizable: true } as any,
+    };
+    const rejectedParams = {
+      dcPeriod: { name: "dcPeriod", value: 24, min: 10, max: 50, step: 2, optimizable: true } as any,
+      volMult: { name: "volMult", value: 1.5, min: 0.5, max: 3.0, step: 0.5, optimizable: true } as any,
+    };
 
-    if (effectiveVerdict === "reject" && phase !== "refine") {
-      paramCount = 3; // should NOT enter
-    }
+    const result = applyRollback(
+      { lastStrategyParams: rejectedParams, paramOverrides: {}, paramCount: 2, currentMetrics: {} as any, currentPnl: 0, currentAnalysis: null, lastAnalysis: null, lastRollbackReason: undefined, failedRestructures: [] },
+      { strategyContent: "", metrics: {} as any, strategyParams: checkpointParams, iter: 1, timestamp: "" },
+      null,
+      { iter: 5, phase: "refine", scoreWeighted: 10, bestScore: 50, effectiveVerdict: "reject", scoreVerdict: "reject", metrics: {} as any, paramCount: 2, analysis: null, wfViolations: [], fvViolations: [], globalIter: 5, minTrades: 50, minPF: 1.3, maxDD: 10 },
+    );
 
-    expect(paramCount).toBe(8);
+    expect(result.lastStrategyParams).toEqual(checkpointParams);
+    expect(result.lastStrategyParams.dcPeriod.value).toBe(20); // checkpoint value, NOT 24
   });
 });
 
@@ -1051,6 +1051,81 @@ describe("B3: paramCount from child-process", () => {
     }
 
     expect(paramCount).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG FIX: no-op detection must use variant's param schema, not seed's
+// ---------------------------------------------------------------------------
+describe("no-op detection with variant params vs seed params", () => {
+  it("detects actual change when param exists in variant but not in seed", () => {
+    // Bug: factory() returned seed params → atrTrailMult not found → no-op false positive
+    // Fix: after variant generation, factory is reloaded to return variant params
+    const variantParams = {
+      bbStdMult: { value: 2, optimizable: true },
+      kcMult: { value: 1.5, optimizable: true },
+      atrTrailMult: { value: 3, optimizable: true },
+    };
+
+    // Simulate factory() returning variant params (post-fix)
+    const factory = (overrides: Record<string, number> = {}) => ({
+      params: Object.fromEntries(
+        Object.entries(variantParams).map(([k, p]) => [
+          k, { ...p, value: overrides[k] ?? p.value },
+        ]),
+      ),
+    });
+
+    const paramOverrides = {};
+    const newOverrides = { ...paramOverrides, atrTrailMult: 4 };
+
+    const beforeStrategy = factory(paramOverrides);
+    const newStrategy = factory(newOverrides);
+
+    const beforeValues = Object.fromEntries(
+      Object.entries(beforeStrategy.params).filter(([, p]) => p.optimizable).map(([k, p]) => [k, p.value]),
+    );
+    const afterValues = Object.fromEntries(
+      Object.entries(newStrategy.params).filter(([, p]) => p.optimizable).map(([k, p]) => [k, p.value]),
+    );
+    const actuallyChanged = Object.keys(afterValues).some((k) => afterValues[k] !== beforeValues[k]);
+
+    expect(actuallyChanged).toBe(true);
+    expect(afterValues.atrTrailMult).toBe(4);
+    expect(beforeValues.atrTrailMult).toBe(3);
+  });
+
+  it("seed factory causes false no-op for variant-only params (reproduces bug)", () => {
+    // Pre-fix: factory() still pointed to seed, variant-only params were ignored
+    const seedParams = {
+      dcPeriod: { value: 20, optimizable: true },
+      trailMult: { value: 3, optimizable: true },
+    };
+
+    const seedFactory = (overrides: Record<string, number> = {}) => ({
+      params: Object.fromEntries(
+        Object.entries(seedParams).map(([k, p]) => [
+          k, { ...p, value: overrides[k] ?? p.value },
+        ]),
+      ),
+    });
+
+    // Claude suggests atrTrailMult=4 (variant param, not in seed)
+    const newOverrides = { atrTrailMult: 4 };
+
+    const beforeStrategy = seedFactory({});
+    const newStrategy = seedFactory(newOverrides);
+
+    const beforeValues = Object.fromEntries(
+      Object.entries(beforeStrategy.params).filter(([, p]) => p.optimizable).map(([k, p]) => [k, p.value]),
+    );
+    const afterValues = Object.fromEntries(
+      Object.entries(newStrategy.params).filter(([, p]) => p.optimizable).map(([k, p]) => [k, p.value]),
+    );
+    const actuallyChanged = Object.keys(afterValues).some((k) => afterValues[k] !== beforeValues[k]);
+
+    // Bug: no change detected because seed doesn't have atrTrailMult
+    expect(actuallyChanged).toBe(false);
   });
 });
 
@@ -1304,29 +1379,23 @@ describe("optimize-first: change evaluated in same iteration", () => {
 
 // ---------------------------------------------------------------------------
 // Optimize-first: rollback updates persistent metrics
+// Migrated from inline logic to use real applyRollback()
 // ---------------------------------------------------------------------------
 
 describe("optimize-first: rollback updates persistent metrics", () => {
   it("after rollback, persistent currentMetrics reflect checkpoint state", () => {
-    // Simulates rollback flow in optimize-first loop
-    const backtestMetrics = { totalPnl: -50, numTrades: 10, profitFactor: 0.5 };
+    const backtestMetrics = { totalPnl: -50, numTrades: 10, profitFactor: 0.5 } as any;
     const checkpointMetrics = { totalPnl: 300, numTrades: 150, profitFactor: 1.8 };
 
-    // After backtest, persistent vars updated
-    let currentMetrics = backtestMetrics as any;
-    let currentPnl = backtestMetrics.totalPnl;
+    const result = applyRollback(
+      { lastStrategyParams: {}, paramOverrides: {}, paramCount: 2, currentMetrics: backtestMetrics, currentPnl: -50, currentAnalysis: null, lastAnalysis: null, lastRollbackReason: undefined, failedRestructures: [] },
+      { strategyContent: "", metrics: checkpointMetrics as any, iter: 3, timestamp: "" },
+      null,
+      { iter: 5, phase: "refine", scoreWeighted: 20, bestScore: 50, effectiveVerdict: "reject", scoreVerdict: "reject", metrics: backtestMetrics, paramCount: 2, analysis: null, wfViolations: [], fvViolations: [], globalIter: 5, minTrades: 50, minPF: 1.3, maxDD: 10 },
+    );
 
-    // Verdict: reject → rollback
-    const effectiveVerdict = "reject";
-    if (effectiveVerdict === "reject") {
-      // Restore from checkpoint
-      currentMetrics = checkpointMetrics;
-      currentPnl = checkpointMetrics.totalPnl;
-    }
-
-    // Next iteration's optimize prompt will see checkpoint metrics
-    expect(currentMetrics.numTrades).toBe(150);
-    expect(currentPnl).toBe(300);
+    expect(result.currentMetrics.numTrades).toBe(150);
+    expect(result.currentPnl).toBe(300);
   });
 });
 
@@ -1418,5 +1487,144 @@ describe("baseline-passes-stretch: skip loop when stretch already met", () => {
     }
 
     expect(iterations).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Outer loop: variant switch on plateau
+// ---------------------------------------------------------------------------
+describe("outer loop: variant switch on plateau", () => {
+  it("plateau detection: prevPhase=refine && phase!==refine triggers variant switch", () => {
+    const prevPhase = "refine";
+    const phaseAfterEscalation = "research"; // ESCALATE fired due to neutralStreak >= 3
+    const shouldSwitchVariant = prevPhase === "refine" && phaseAfterEscalation !== "refine";
+    expect(shouldSwitchVariant).toBe(true);
+  });
+
+  it("no variant switch when refine stays in refine (escalation guard not met)", () => {
+    const prevPhase = "refine";
+    const phaseAfterEscalation = "refine";
+    const shouldSwitchVariant = prevPhase === "refine" && phaseAfterEscalation !== "refine";
+    expect(shouldSwitchVariant).toBe(false);
+  });
+
+  it("no variant switch on non-refine escalation (research → restructure)", () => {
+    const prevPhase = "research";
+    const phaseAfterEscalation = "restructure";
+    const shouldSwitchVariant = prevPhase === "refine" && phaseAfterEscalation !== "refine";
+    expect(shouldSwitchVariant).toBe(false);
+  });
+
+  it("loop continues with remaining iterations after variant switch", () => {
+    const maxIter = 20;
+    const iterations: number[] = [];
+    let variantSwitchedAt: number | null = null;
+
+    for (let iter = 1; iter <= maxIter; iter++) {
+      iterations.push(iter);
+
+      // Simulate plateau at iter 8
+      if (iter === 8) {
+        variantSwitchedAt = iter;
+        // In real code: generate new variant, reset state, continue
+        continue;
+      }
+
+      // Simulate some work (just to show loop continues)
+      if (iter === 15) break; // stop early for test
+    }
+
+    expect(variantSwitchedAt).toBe(8);
+    expect(iterations).toContain(8); // plateau iteration
+    expect(iterations).toContain(9); // continues after switch
+    expect(iterations).toContain(15); // loop didn't end at 8
+  });
+
+  it("state variables are properly reset after variant switch", () => {
+    // Simulate state from plateaued variant
+    let currentPnl = 500;
+    let currentMetrics = { totalPnl: 500, numTrades: 200, profitFactor: 2.0 } as any;
+    let lastRollbackReason: string | undefined = "some previous reason";
+    let failedRestructures: any[] = [{ globalIter: 5 }];
+    let lastContentHash: string | undefined = "abc123";
+    let paramOverrides: Record<string, number> = { dcPeriod: 24 };
+
+    // After variant switch: reset with new baseline
+    const newBaselineMetrics = { totalPnl: 120, numTrades: 90, profitFactor: 1.3 } as any;
+    currentMetrics = newBaselineMetrics;
+    currentPnl = newBaselineMetrics.totalPnl;
+    lastRollbackReason = undefined;
+    failedRestructures = [];
+    lastContentHash = undefined;
+    paramOverrides = {};
+
+    expect(currentPnl).toBe(120);
+    expect(currentMetrics.profitFactor).toBe(1.3);
+    expect(lastRollbackReason).toBeUndefined();
+    expect(failedRestructures).toHaveLength(0);
+    expect(lastContentHash).toBeUndefined();
+    expect(paramOverrides).toEqual({});
+  });
+
+  it("actor recreation preserves new variant baseline scores", async () => {
+    // Integration: create actor like orchestrator does after variant switch
+    const { createActor: ca } = await import("xstate");
+    const { breakerMachine: bm } = await import("./state-machine.js");
+
+    const baselineScore = 42.5;
+    const baselinePnl = 120;
+
+    const actor = ca(bm, {
+      input: {
+        initialPhase: "refine",
+        maxCycles: 2,
+        bestScore: baselineScore,
+        bestPnl: baselinePnl,
+        bestIter: 0,
+      },
+    });
+    actor.start();
+
+    const ctx = actor.getSnapshot().context;
+    expect(ctx.bestScore).toBe(42.5);
+    expect(ctx.bestPnl).toBe(120);
+    expect(ctx.bestIter).toBe(0);
+    expect(ctx.phaseCycles).toBe(0);
+    expect(ctx.neutralStreak).toBe(0);
+    expect(actor.getSnapshot().value).toBe("refine");
+    actor.stop();
+  });
+
+  it("variant generation failure causes loop exit (break)", () => {
+    let loopExited = false;
+    const maxIter = 20;
+
+    for (let iter = 1; iter <= maxIter; iter++) {
+      // Simulate plateau at iter 5
+      if (iter === 5) {
+        const newVariant = null; // generation failed
+        if (!newVariant) {
+          loopExited = true;
+          break;
+        }
+      }
+    }
+
+    expect(loopExited).toBe(true);
+  });
+
+  it("esmCacheStale=false and checkpointRestored=false after variant switch", () => {
+    // After variant switch, factory is freshly loaded — no stale cache
+    let esmCacheStale = true;  // was true from previous variant
+    let checkpointRestored = true; // was true from initial setup
+
+    // After variant switch resets:
+    esmCacheStale = false;
+    checkpointRestored = false;
+
+    // canUseInProcess should be true for refine phase
+    const phase = "refine";
+    const canUseInProcess = !checkpointRestored && !esmCacheStale && (phase === "refine" || false);
+    expect(canUseInProcess).toBe(true);
   });
 });

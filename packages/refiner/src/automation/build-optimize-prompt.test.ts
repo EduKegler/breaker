@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { formatCatalogForPrompt, normalizeToCatalog, buildOptimizePrompt } from "./build-optimize-prompt.js";
+import { formatCatalogForPrompt, validateSlugComponents, buildOptimizePrompt } from "./build-optimize-prompt.js";
 import type { RestructureFailure } from "./build-optimize-prompt.js";
 import type { ComponentCatalog, CatalogSlot, ModuleContext } from "../lib/build-module-context.js";
 import type { TestedCombination } from "../types/parameter-history.js";
@@ -21,16 +21,16 @@ describe("formatCatalogForPrompt", () => {
         slotName: "Entry Signal",
         typicalVars: "1-2",
         candidates: [
-          { name: "Donchian Channel", description: "Breakout above/below N-period" },
-          { name: "BB squeeze", description: "BB contracts inside KC" },
+          { name: "Donchian Channel", slug: "donchian", description: "Breakout above/below N-period" },
+          { name: "BB squeeze", slug: "squeeze", description: "BB contracts inside KC" },
         ],
       },
       {
         slotName: "Regime Filter",
         typicalVars: "0-1",
         candidates: [
-          { name: "EMA direction", description: "Trend aligned with EMA" },
-          { name: "ADX threshold", description: "ADX < threshold = consolidation" },
+          { name: "EMA direction", slug: "ema", description: "Trend aligned with EMA" },
+          { name: "ADX threshold", slug: "adx", description: "ADX < threshold = consolidation" },
         ],
       },
     ],
@@ -42,11 +42,12 @@ describe("formatCatalogForPrompt", () => {
     expect(result).toContain("Donchian Channel [LOCKED]");
   });
 
-  it("marks tested candidates with [TESTED]", () => {
+  it("marks tested candidates with [TESTED] using slug comparison", () => {
     const tested: TestedCombination[] = [
-      { iter: 1, components: { "Entry Signal": "BB squeeze" }, bestMetrics: null },
+      { iter: 1, components: { "Entry Signal": "squeeze" }, bestMetrics: null },
     ];
     const result = formatCatalogForPrompt(baseCatalog, tested);
+    expect(result).toContain("[TESTED]");
     expect(result).toContain("BB squeeze [TESTED]");
   });
 
@@ -65,7 +66,7 @@ describe("formatCatalogForPrompt", () => {
     const tested: TestedCombination[] = [
       {
         iter: 3,
-        components: { "Entry Signal": "Donchian Channel", "Regime Filter": "EMA direction" },
+        components: { "Entry Signal": "donchian", "Regime Filter": "ema" },
         bestMetrics: { pnl: 100, pf: 1.5, wr: 45, dd: 8, trades: 50 },
       },
     ];
@@ -75,116 +76,105 @@ describe("formatCatalogForPrompt", () => {
     expect(result).toContain("PF=1.5");
     expect(result).toContain("Do NOT repeat");
   });
+
+  it("shows slug in backticks before candidate name", () => {
+    const result = formatCatalogForPrompt(baseCatalog, []);
+    expect(result).toContain("`donchian` — Donchian Channel:");
+    expect(result).toContain("`squeeze` — BB squeeze:");
+  });
 });
 
 // ---------------------------------------------------------------------------
-// normalizeToCatalog
+// validateSlugComponents
 // ---------------------------------------------------------------------------
 
-describe("normalizeToCatalog", () => {
+describe("validateSlugComponents", () => {
   const catalog: ComponentCatalog = {
     slots: [
       {
         slotName: "Entry Signal",
         candidates: [
-          { name: "Donchian Channel", description: "Breakout" },
-          { name: "BB squeeze", description: "BB inside KC" },
+          { name: "Donchian Channel", slug: "donchian", description: "Breakout" },
+          { name: "BB squeeze", slug: "squeeze", description: "BB inside KC" },
         ],
       },
       {
         slotName: "Regime Filter",
         candidates: [
-          { name: "EMA direction", description: "Trend aligned" },
-          { name: "ADX threshold", description: "Consolidation" },
+          { name: "EMA direction", slug: "ema", description: "Trend aligned" },
+          { name: "ADX threshold", slug: "adx", description: "Consolidation" },
         ],
       },
     ],
   };
 
-  it("keeps exact matches unchanged", () => {
-    const result = normalizeToCatalog(
-      { "Entry Signal": "Donchian Channel", "Regime Filter": "EMA direction" },
+  it("keeps valid slugs unchanged", () => {
+    const result = validateSlugComponents(
+      { "Entry Signal": "donchian", "Regime Filter": "ema" },
       catalog,
     );
-    expect(result["Entry Signal"]).toBe("Donchian Channel");
-    expect(result["Regime Filter"]).toBe("EMA direction");
+    expect(result["Entry Signal"]).toBe("donchian");
+    expect(result["Regime Filter"]).toBe("ema");
   });
 
-  it("normalizes verbose Claude names to canonical catalog names", () => {
-    const result = normalizeToCatalog(
-      { "Entry Signal": "Donchian Channel Breakout (dcSlow period)" },
+  it("drops unknown slots", () => {
+    const result = validateSlugComponents(
+      { "Unknown Slot": "donchian" },
       catalog,
     );
-    expect(result["Entry Signal"]).toBe("Donchian Channel");
+    expect(result).toEqual({});
   });
 
-  it("normalizes case-insensitive matches", () => {
-    const result = normalizeToCatalog(
-      { "Entry Signal": "bb squeeze release with KC expansion" },
+  it("drops invalid slugs for a valid slot", () => {
+    const result = validateSlugComponents(
+      { "Entry Signal": "not-a-real-slug" },
       catalog,
     );
-    expect(result["Entry Signal"]).toBe("BB squeeze");
+    expect(result).toEqual({});
   });
 
-  it("passes through names for unknown slots", () => {
-    const result = normalizeToCatalog(
-      { "Unknown Slot": "Custom Component" },
+  it("drops verbose names (not slugs)", () => {
+    const result = validateSlugComponents(
+      { "Entry Signal": "Donchian Channel Breakout" },
       catalog,
     );
-    expect(result["Unknown Slot"]).toBe("Custom Component");
+    expect(result).toEqual({});
   });
 
-  it("passes through when no catalog candidate matches", () => {
-    const result = normalizeToCatalog(
-      { "Entry Signal": "Completely Novel Approach" },
+  it("keeps valid entries and drops invalid ones in mixed input", () => {
+    const result = validateSlugComponents(
+      { "Entry Signal": "squeeze", "Regime Filter": "invalid", "Unknown": "foo" },
       catalog,
     );
-    expect(result["Entry Signal"]).toBe("Completely Novel Approach");
-  });
-
-  it("picks longest matching candidate when multiple match", () => {
-    const catalogWithOverlap: ComponentCatalog = {
-      slots: [{
-        slotName: "Exit",
-        candidates: [
-          { name: "ATR trail", description: "Simple ATR" },
-          { name: "ATR trail + partial TP", description: "ATR with targets" },
-        ],
-      }],
-    };
-    const result = normalizeToCatalog(
-      { "Exit": "ATR trail + partial TP at 2R with Chandelier" },
-      catalogWithOverlap,
-    );
-    expect(result["Exit"]).toBe("ATR trail + partial TP");
+    expect(result).toEqual({ "Entry Signal": "squeeze" });
   });
 });
 
-describe("formatCatalogForPrompt: fuzzy TESTED matching", () => {
+describe("formatCatalogForPrompt: slug-based TESTED matching", () => {
   const catalog: ComponentCatalog = {
     slots: [{
       slotName: "Entry Signal",
       candidates: [
-        { name: "Donchian Channel", description: "Breakout" },
-        { name: "BB squeeze", description: "BB inside KC" },
+        { name: "Donchian Channel", slug: "donchian", description: "Breakout" },
+        { name: "BB squeeze", slug: "squeeze", description: "BB inside KC" },
       ],
     }],
   };
 
-  it("marks candidate as TESTED when testedCombination uses verbose name", () => {
+  it("marks candidate as TESTED when testedCombination uses exact slug", () => {
     const tested: TestedCombination[] = [
-      { iter: 5, components: { "Entry Signal": "Donchian Channel Breakout (close > dcSlow)" }, bestMetrics: null },
+      { iter: 5, components: { "Entry Signal": "donchian" }, bestMetrics: null },
     ];
     const result = formatCatalogForPrompt(catalog, tested);
     expect(result).toContain("Donchian Channel [TESTED]");
   });
 
-  it("marks candidate as TESTED with case-insensitive match", () => {
+  it("does NOT mark TESTED with verbose name (only slugs match)", () => {
     const tested: TestedCombination[] = [
-      { iter: 5, components: { "Entry Signal": "donchian channel" }, bestMetrics: null },
+      { iter: 5, components: { "Entry Signal": "Donchian Channel" }, bestMetrics: null },
     ];
     const result = formatCatalogForPrompt(catalog, tested);
-    expect(result).toContain("Donchian Channel [TESTED]");
+    expect(result).not.toContain("[TESTED]");
   });
 });
 
@@ -338,25 +328,42 @@ describe("buildOptimizePrompt session sanity (KB §13.2)", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildOptimizePrompt pctOfPosition rule", () => {
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 1, maxIter: 10, globalIter: 1,
+    paramHistoryPath: "/fake/ph.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: { profile: "breakout", moduleId: "M1", moduleName: "Breakout", fixedRules: "", restructureLocks: "", varCap: 8, stoppingCriteria: "", signalTF: "15m", regimeTF: "4H", catalog: { slots: [] } } as ModuleContext,
+  };
+
   it("includes pctOfPosition fraction convention in optimization rules", () => {
     const prompt = buildOptimizePrompt({
-      strategySourcePath: "/fake/strategy.ts",
-      strategyParams: {} as Record<string, StrategyParam>,
-      paramOverrides: {},
-      criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
-      asset: "BTC",
-      phase: "refine" as const,
-      iter: 1,
-      maxIter: 10,
-      globalIter: 1,
-      paramHistoryPath: "/fake/ph.json",
-      artifactsDir: "/fake/artifacts",
+      ...baseOpts,
       metrics: { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: 5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5 },
       tradeAnalysis: null,
-      moduleContext: { profile: "breakout", moduleId: "M1", moduleName: "Breakout", fixedRules: "", restructureLocks: "", varCap: 8, stoppingCriteria: "", signalTF: "15m", regimeTF: "4H", catalog: { slots: [] } },
     });
     expect(prompt).toContain("pctOfPosition is a FRACTION (0-1)");
     expect(prompt).toContain("0.50");
+  });
+
+  it("formats N/A for all undefined metrics without throwing", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: {} as Metrics,
+      tradeAnalysis: null,
+    });
+    expect(prompt).toContain("PnL: N/A");
+    expect(prompt).toContain("Trades: N/A");
+    expect(prompt).toContain("PF: N/A");
+    expect(prompt).toContain("DD: N/A");
+    expect(prompt).toContain("WR: N/A");
+    expect(prompt).toContain("AvgR: N/A");
+    expect(prompt).not.toContain("undefined");
   });
 });
 

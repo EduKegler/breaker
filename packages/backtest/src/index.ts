@@ -73,8 +73,8 @@ export { toSymbol } from "./data/to-symbol.js";
 export type { DataSource } from "./data/to-symbol.js";
 export { CandleCache } from "./data/candle-cache.js";
 
-// Strategies
-export { createDonchianAdx } from "./strategies/btc/breakout/donchian-adx.js";
+// Strategies (re-export from deployed barrel — working copies may not exist)
+export { createDonchianAdx } from "./strategies/deployed/index.js";
 
 // Strategy utilities
 export { bakeParamDefaults } from "./strategies/bake-param-defaults.js";

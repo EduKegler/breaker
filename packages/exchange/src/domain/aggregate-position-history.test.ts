@@ -343,6 +343,87 @@ describe("aggregatePositionHistory", () => {
     expect(pos.realizedPnl).toBeCloseTo(11.4, 2);
   });
 
+  it("SHORT exit with partial WS fills only (no placeholder) computes correct PnL", () => {
+    // Regression: strategy-runner used to insert a placeholder fill (fee=0, full size)
+    // alongside real WS fills, doubling the exit value and producing wrong PnL.
+    // Real bug data: SOL SHORT signal_id=3, entry size=1.1, exit order_id=10
+    // 3 WS partial fills: 0.95 + 0.14 + 0.01 = 1.1 (correct total)
+    const rows: PositionHistoryRow[] = [
+      // Entry: single fill
+      row({
+        signal_id: 3, asset: "SOL", side: "SHORT", strategy_name: "orb-daily",
+        created_at: "2024-02-01T10:00:00", entry_price: 84.66,
+        order_id: 5, tag: "entry", status: "filled", price: 84.66, size: 1.1,
+        order_side: "sell", order_type: "market", mode: "mainnet",
+        fill_price: 84.66, fill_size: 1.1, fee: 0.042,
+        order_created_at: "2024-02-01T10:00:01",
+        filled_at: "2024-02-01T10:00:02", fill_ts: "2024-02-01T10:00:02",
+      }),
+      // SL cancelled
+      row({
+        signal_id: 3, asset: "SOL", side: "SHORT", strategy_name: "orb-daily",
+        created_at: "2024-02-01T10:00:00", entry_price: 84.66,
+        order_id: 6, tag: "sl", status: "cancelled", price: 87.0, size: 1.1,
+        order_side: "buy", order_type: "stop", mode: "mainnet",
+        fill_price: null, fill_size: null, fee: null, fill_ts: null,
+        order_created_at: "2024-02-01T10:00:03", filled_at: null,
+      }),
+      // Exit: 3 partial WS fills (NO placeholder) — same order_id=10
+      row({
+        signal_id: 3, asset: "SOL", side: "SHORT", strategy_name: "orb-daily",
+        created_at: "2024-02-01T10:00:00", entry_price: 84.66,
+        order_id: 10, tag: "exit", status: "filled", price: 84.62, size: 1.1,
+        order_side: "buy", order_type: "market", mode: "mainnet",
+        fill_price: 84.62, fill_size: 0.95, fee: 0.036,
+        order_created_at: "2024-02-01T14:00:00",
+        filled_at: "2024-02-01T14:00:00", fill_ts: "2024-02-01T14:00:00",
+      }),
+      row({
+        signal_id: 3, asset: "SOL", side: "SHORT", strategy_name: "orb-daily",
+        created_at: "2024-02-01T10:00:00", entry_price: 84.66,
+        order_id: 10, tag: "exit", status: "filled", price: 84.62, size: 1.1,
+        order_side: "buy", order_type: "market", mode: "mainnet",
+        fill_price: 84.63, fill_size: 0.14, fee: 0.005,
+        order_created_at: "2024-02-01T14:00:00",
+        filled_at: "2024-02-01T14:00:00", fill_ts: "2024-02-01T14:00:01",
+      }),
+      row({
+        signal_id: 3, asset: "SOL", side: "SHORT", strategy_name: "orb-daily",
+        created_at: "2024-02-01T10:00:00", entry_price: 84.66,
+        order_id: 10, tag: "exit", status: "filled", price: 84.62, size: 1.1,
+        order_side: "buy", order_type: "market", mode: "mainnet",
+        fill_price: 84.63, fill_size: 0.01, fee: 0.0004,
+        order_created_at: "2024-02-01T14:00:00",
+        filled_at: "2024-02-01T14:00:00", fill_ts: "2024-02-01T14:00:02",
+      }),
+    ];
+
+    const result = aggregatePositionHistory(rows);
+    expect(result).toHaveLength(1);
+
+    const pos = result[0];
+    expect(pos.direction).toBe("SHORT");
+    expect(pos.status).toBe("CLOSED");
+    expect(pos.size).toBeCloseTo(1.1, 4);
+
+    // Exit VWAP from 3 partial fills
+    const exitValue = 84.62 * 0.95 + 84.63 * 0.14 + 84.63 * 0.01;
+    const exitVwap = exitValue / 1.1;
+    expect(pos.exitPrice).toBeCloseTo(exitVwap, 2);
+
+    // Total fees: entry 0.042 + exit (0.036 + 0.005 + 0.0004) = 0.0834
+    const totalFees = 0.042 + 0.036 + 0.005 + 0.0004;
+    expect(pos.totalFees).toBeCloseTo(totalFees, 4);
+
+    // PnL SHORT: entryValue - exitValue - fees
+    const entryValue = 84.66 * 1.1;
+    const expectedPnl = entryValue - exitValue - totalFees;
+    expect(pos.realizedPnl).toBeCloseTo(expectedPnl, 2);
+    // PnL should be near zero (small spread minus fees), NOT -93 (the doubled-exit bug)
+    expect(Math.abs(pos.realizedPnl!)).toBeLessThan(1);
+    expect(pos.realizedPnl!).toBeGreaterThan(-1);
+  });
+
   it("extracts mode from entry order", () => {
     const rows: PositionHistoryRow[] = [
       row({ order_id: 1, tag: "entry", mode: "mainnet", status: "filled", fill_price: 95000, fill_size: 0.01, fee: 0.5, filled_at: "2024-01-10T10:00:02", fill_ts: "2024-01-10T10:00:02" }),

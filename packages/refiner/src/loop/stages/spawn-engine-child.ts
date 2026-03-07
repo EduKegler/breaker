@@ -14,6 +14,7 @@ interface EngineResult {
   analysis: TradeAnalysis;
   trades: CompletedTrade[];
   paramCount?: number;
+  strategyParams?: Record<string, unknown>;
 }
 
 /**
@@ -51,18 +52,38 @@ export function runEngineChild(opts: {
     warmupBars,
   });
 
-  const { stdout } = execaSync("node", [childScript], {
-    cwd: repoRoot,
-    timeout: 30000,
-    input,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  let stdout: string;
+  let stderr: string;
+  try {
+    const result = execaSync("node", [childScript], {
+      cwd: repoRoot,
+      timeout: 30000,
+      input,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    stdout = result.stdout;
+    stderr = result.stderr;
+  } catch (err) {
+    // 2a: Include stderr in error message for visibility
+    const execErr = err as { stderr?: string; message?: string };
+    const stderrContent = execErr.stderr?.trim();
+    const errMsg = stderrContent
+      ? `Child-process backtest failed: ${execErr.message}\nstderr: ${stderrContent.slice(0, 500)}`
+      : `Child-process backtest failed: ${execErr.message}`;
+    throw new Error(errMsg);
+  }
+
+  // 2a: Warn if stderr has content even on success
+  if (stderr?.trim()) {
+    console.log(`\x1b[33m[spawn-engine-child] stderr (success): ${stderr.trim().slice(0, 300)}\x1b[0m`);
+  }
 
   const engineResultSchema = z.object({
     metrics: z.object({}).passthrough(),
     analysis: z.object({}).passthrough(),
     trades: z.array(z.object({}).passthrough()),
     paramCount: z.number().optional(),
+    strategyParams: z.record(z.unknown()).optional(),
   }).passthrough();
 
   const result = safeJsonParse<EngineResult>(stdout, { repair: true, schema: engineResultSchema as unknown as z.ZodType<EngineResult> });

@@ -19,88 +19,6 @@ import writeFileAtomic from "write-file-atomic";
 // ---------------------------------------------------------------------------
 
 /**
- * Canonical short names for known KB catalog components.
- * Used to build deterministic, human-readable variant file names.
- */
-const CANONICAL_NAMES: Record<string, string> = {
-  // ── M1 Breakout: Entry Signal ──
-  "Donchian Channel": "donchian",
-  "Bollinger Band squeeze release": "squeeze",
-  "Opening Range Breakout (ORB)": "orb",
-  "Range breakout": "range",
-  "Volatility expansion": "expansion",
-  // ── M1 Breakout: Entry Timing ──
-  "Breakout close": "close",
-  "Retest entry": "retest",
-  // ── M1 Breakout: Regime Filter ──
-  "EMA direction": "ema",
-  "ADX threshold": "adx",
-  "4H consolidation": "consolidation",
-  // ── M1 Breakout: Confirmation ──
-  "RSI momentum": "rsi",
-  "MACD alignment": "macd",
-  // ── M1 Breakout: Exit ──
-  "Trailing channel (Donchian fast)": "trail-dc",
-  "ATR trailing stop": "atr-trail",
-  "Time-based timeout": "timeout",
-  "Partial TP + trail": "partial-tp",
-  // ── M2 Mean-Reversion: Band/Channel ──
-  "Bollinger Bands": "bollinger",
-  "Keltner Channels": "keltner",
-  "Percentage bands": "pct-bands",
-  "VWAP bands": "vwap",
-  // ── M2 Mean-Reversion: Exhaustion ──
-  "RSI(2)": "rsi2",
-  "Williams %R": "williams",
-  "RSI(3-5)": "rsi35",
-  "Stochastic": "stochastic",
-  // ── M2 Mean-Reversion: Regime Filter ──
-  "ADX threshold (low)": "adx-low",
-  "BB width / volatility percentile": "bb-width",
-  "MA slope flat": "ma-flat",
-  // ── M2 Mean-Reversion: Exit ──
-  "Channel midline": "midline",
-  "Opposite band": "opposite",
-  "First up/down close": "first-close",
-  "Timeout": "timeout",
-  "Catastrophic stop": "cat-stop",
-  // ── M3 Pullback: Trend Filter ──
-  // "EMA direction" already mapped above
-  "HH/HL structure": "hhhl",
-  "ADX > threshold": "adx-high",
-  // ── M3 Pullback: Pullback Zone ──
-  "Fibonacci retracement": "fib",
-  "EMA dynamic support": "ema-support",
-  "9/30 pullback zone": "930",
-  "Prior S/R level": "sr",
-  // ── M3 Pullback: Pullback Confirm ──
-  "RSI neutral reset": "rsi-reset",
-  "Candlestick pattern": "candle",
-  "Volume expansion": "volume",
-  "Candle close beyond pullback extreme": "close-beyond",
-  // ── M3 Pullback: Exit ──
-  "Prior swing high/low": "swing",
-  // "ATR trailing stop" already mapped above
-  "Fibonacci extension": "fib-ext",
-  // "Time-based timeout" already mapped above
-  // "Partial TP + trail" already mapped above
-  // ── M4 Trend Following: Entry Signal ──
-  "SuperTrend flip": "supertrend",
-  "EMA crossover": "ema-cross",
-  "Donchian channel breakout": "donchian-daily",
-  "MACD crossover + HTF filter": "macd-htf",
-  // ── M4 Trend Following: Regime Filter ──
-  // "ADX > threshold" already mapped above
-  "EMA slope + price position": "ema-slope",
-  // ── M4 Trend Following: Trailing Exit ──
-  "Chandelier Exit": "chandelier",
-  "SuperTrend flip exit": "supertrend",
-  // "ATR trailing stop" already mapped above
-  "MA crossover exit": "ma-exit",
-  // "Time-based timeout" already mapped above
-};
-
-/**
  * Slot ordering for deterministic variant ID construction.
  * Lower numbers come first. Unknown slots get priority 99.
  */
@@ -122,33 +40,10 @@ const SLOT_PRIORITY: Record<string, number> = {
   "Trailing Exit": 5,
 };
 
-/** Max kebab segments per component (keeps names short). */
-const MAX_SEGMENTS_PER_COMPONENT = 3;
-/** Max total length for variant IDs. */
-const MAX_VARIANT_ID_LENGTH = 60;
-
 /**
- * Convert a catalog component name to its canonical kebab-case form.
- * Known names get a short alias; unknown names are kebab-cased and
- * truncated to MAX_SEGMENTS_PER_COMPONENT words.
- */
-export function toCanonical(name: string): string {
-  const canonical = CANONICAL_NAMES[name];
-  if (canonical) return canonical;
-  const segments = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .split("-")
-    .filter(Boolean);
-  return segments.slice(0, MAX_SEGMENTS_PER_COMPONENT).join("-");
-}
-
-/**
- * Build a deterministic variant ID from selected catalog components.
+ * Build a deterministic variant ID from slug-based catalog components.
  * Components are ordered by slot priority, then joined with hyphens.
- * Total length is capped at MAX_VARIANT_ID_LENGTH; a 4-char hash is
- * appended when truncation occurs to preserve uniqueness.
+ * Since slugs are already short, no truncation is needed.
  */
 export function buildVariantId(components: Record<string, string>): string {
   const entries = Object.entries(components);
@@ -161,16 +56,7 @@ export function buildVariantId(components: Record<string, string>): string {
     return a.localeCompare(b);
   });
 
-  const full = entries.map(([, name]) => toCanonical(name)).join("-");
-  if (full.length <= MAX_VARIANT_ID_LENGTH) return full;
-
-  // Truncate at a segment boundary and append a short hash for uniqueness
-  let hash = 0;
-  for (let i = 0; i < full.length; i++) hash = ((hash << 5) - hash + full.charCodeAt(i)) | 0;
-  const suffix = Math.abs(hash).toString(36).slice(0, 4);
-  const maxBase = MAX_VARIANT_ID_LENGTH - suffix.length - 1; // -1 for the joining hyphen
-  const truncated = full.slice(0, maxBase).replace(/-[^-]*$/, ""); // cut at last full segment
-  return `${truncated}-${suffix}`;
+  return entries.map(([, slug]) => slug).join("-");
 }
 
 // ---------------------------------------------------------------------------

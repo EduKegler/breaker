@@ -15,6 +15,7 @@ import fs from "node:fs";
 /** A single candidate component from the KB catalog */
 export interface CatalogCandidate {
   name: string;
+  slug: string;
   description: string;
 }
 
@@ -63,6 +64,116 @@ export interface FailureContext {
   failureMode: string;
   /** Metrics from the failed run */
   metrics: { pnl: number; pf: number; wr: number; dd: number; trades: number; avgR: number };
+}
+
+// ---------------------------------------------------------------------------
+// Candidate slugs — deterministic short names for KB catalog components
+// ---------------------------------------------------------------------------
+
+/**
+ * Pre-defined slugs for all known KB catalog candidates.
+ * Used to build deterministic, human-readable variant file names.
+ * The prompt shows slugs to Claude, Claude returns slugs, buildVariantId() joins them.
+ */
+export const CANDIDATE_SLUGS: Record<string, string> = {
+  // ── M1 Breakout: Entry Signal ──
+  "Donchian Channel": "donchian",
+  "Bollinger Band squeeze release": "squeeze",
+  "BB squeeze release": "squeeze",
+  "Opening Range Breakout (ORB)": "orb",
+  "Range breakout": "range",
+  "Volatility expansion": "expansion",
+  // ── M1 Breakout: Entry Timing ──
+  "Breakout close": "close",
+  "Retest entry": "retest",
+  // ── M1 Breakout: Regime Filter ──
+  "EMA direction": "ema",
+  "Daily EMA": "ema",
+  "ADX threshold": "adx",
+  "4H consolidation": "consolidation",
+  // ── M1 Breakout: Confirmation ──
+  "RSI momentum": "rsi",
+  "MACD alignment": "macd",
+  "Volume spike": "vol-spike",
+  // ── M1 Breakout: Exit ──
+  "Trailing channel (Donchian fast)": "trail-dc",
+  "ATR trailing stop": "atr-trail",
+  "Time-based timeout": "timeout",
+  "Partial TP + trail": "partial-tp",
+  // ── M2 Mean-Reversion: Band/Channel ──
+  "Bollinger Bands": "bollinger",
+  "Keltner Channels": "keltner",
+  "Percentage bands": "pct-bands",
+  "VWAP bands": "vwap",
+  // ── M2 Mean-Reversion: Exhaustion ──
+  "RSI(2)": "rsi2",
+  "Williams %R": "williams",
+  "RSI(3-5)": "rsi35",
+  "Stochastic": "stochastic",
+  // ── M2 Mean-Reversion: Regime Filter ──
+  "ADX threshold (low)": "adx-low",
+  "BB width / volatility percentile": "bb-width",
+  "MA slope flat": "ma-flat",
+  // ── M2 Mean-Reversion: Exit ──
+  "Channel midline": "midline",
+  "Opposite band": "opposite",
+  "First up/down close": "first-close",
+  "Timeout": "timeout",
+  "Catastrophic stop": "cat-stop",
+  "Catastrophic stop (optional)": "cat-stop",
+  // ── M3 Pullback: Trend Filter ──
+  // "EMA direction" already mapped above
+  "HH/HL structure": "hhhl",
+  "ADX > threshold": "adx-high",
+  // ── M3 Pullback: Pullback Zone ──
+  "Fibonacci retracement": "fib",
+  "EMA dynamic support": "ema-support",
+  "9/30 pullback zone": "930",
+  "Prior S/R level": "sr",
+  // ── M3 Pullback: Pullback Confirm ──
+  "RSI neutral reset": "rsi-reset",
+  "Candlestick pattern": "candle",
+  "Volume expansion": "volume",
+  "Candle close beyond pullback extreme": "close-beyond",
+  // ── M3 Pullback: Exit ──
+  "Prior swing high/low": "swing",
+  // "ATR trailing stop" already mapped above
+  "Fibonacci extension": "fib-ext",
+  // "Time-based timeout" already mapped above
+  // "Partial TP + trail" already mapped above
+  // ── M4 Trend Following: Entry Signal ──
+  "SuperTrend flip": "supertrend",
+  "EMA crossover": "ema-cross",
+  "MA crossover": "ema-cross",
+  "Donchian channel breakout": "donchian-daily",
+  "Price channel breakout": "donchian-daily",
+  "MACD crossover + HTF filter": "macd-htf",
+  // ── M4 Trend Following: Regime Filter ──
+  // "ADX > threshold" already mapped above
+  "EMA slope + price position": "ema-slope",
+  // ── M4 Trend Following: Trailing Exit ──
+  "Chandelier Exit": "chandelier",
+  "SuperTrend flip exit": "supertrend",
+  // "ATR trailing stop" already mapped above
+  "MA crossover exit": "ma-exit",
+  // "Time-based timeout" already mapped above
+};
+
+/**
+ * Convert a catalog candidate name to its slug.
+ * Falls back to kebab-case of the first 3 words if not found.
+ */
+export function candidateToSlug(name: string): string {
+  const slug = CANDIDATE_SLUGS[name];
+  if (slug) return slug;
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .split("-")
+    .filter(Boolean)
+    .slice(0, 3)
+    .join("-");
 }
 
 // ---------------------------------------------------------------------------
@@ -245,8 +356,10 @@ export function extractCandidatesFromTable(
       if (inTable) {
         const cells = trimmed.split("|").map((c) => c.trim()).filter(Boolean);
         if (cells.length >= 2) {
+          const candidateName = cells[0].replace(/\*\*/g, "");
           candidates.push({
-            name: cells[0].replace(/\*\*/g, ""),
+            name: candidateName,
+            slug: candidateToSlug(candidateName),
             description: cells[1].replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").slice(0, 120),
           });
         }
@@ -364,6 +477,95 @@ export function extractComponentCatalog(
   }
 
   return { slots };
+}
+
+// ---------------------------------------------------------------------------
+// Starting point components (KB "Recommended first iteration" → catalog slots)
+// ---------------------------------------------------------------------------
+
+/**
+ * KB-aligned starting point components per module.
+ * Keys are catalog slot names, values are candidate slugs.
+ */
+const STARTING_COMPONENTS: Record<string, Record<string, string>> = {
+  M1: {
+    "Entry Signal": "donchian",
+    "Regime Filter": "ema",
+    "Exit": "timeout",
+  },
+  M2: {
+    "Band/Channel": "keltner",
+    "Exhaustion": "rsi2",
+    "Regime Filter": "adx-low",
+    "Exit": "midline",
+  },
+  M3: {
+    "Trend Filter": "ema",
+    "Pullback Zone": "fib",
+    "Pullback Confirm": "rsi-reset",
+    "Exit": "swing",
+  },
+  M4: {
+    "Entry Signal": "supertrend",
+    "Regime Filter": "adx",
+    "Trailing Exit": "supertrend",
+  },
+};
+
+/**
+ * Get the starting point components for a module (KB "Recommended first iteration").
+ * Returns a slot → slug map usable with buildVariantId().
+ */
+export function getStartingComponents(moduleId: string): Record<string, string> {
+  const components = STARTING_COMPONENTS[moduleId];
+  if (!components) throw new Error(`No starting components for module: "${moduleId}"`);
+  return { ...components };
+}
+
+// ---------------------------------------------------------------------------
+// Starting point extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the "Recommended first iteration" starting point spec from a KB module section.
+ * Returns the blockquote text between the header and the next bold header.
+ */
+export function extractStartingPoint(kbContent: string, sectionNumber: number): string {
+  const section = extractModuleSection(kbContent, sectionNumber);
+  if (!section) return "";
+
+  const marker = "**Recommended first iteration";
+  const startIdx = section.indexOf(marker);
+  if (startIdx === -1) return "";
+
+  const afterHeader = section.indexOf("\n", startIdx);
+  if (afterHeader === -1) return "";
+
+  const rest = section.slice(afterHeader + 1);
+  const lines = rest.split("\n");
+  const resultLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Stop at next bold header or section header
+    if (/^\*\*[A-Z]/.test(trimmed) || /^#{2,4}\s/.test(trimmed)) break;
+    resultLines.push(line);
+  }
+
+  while (resultLines.length > 0 && resultLines[resultLines.length - 1].trim() === "") {
+    resultLines.pop();
+  }
+
+  return resultLines.join("\n").trim();
+}
+
+/**
+ * Get the KB section number for a strategy profile.
+ */
+export function getKbSection(strategy: string): number {
+  const mapping = MODULE_MAP[strategy];
+  if (!mapping) throw new Error(`Unknown strategy profile: "${strategy}"`);
+  return mapping.kbSection;
 }
 
 // ---------------------------------------------------------------------------

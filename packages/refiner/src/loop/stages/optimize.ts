@@ -186,9 +186,8 @@ function validateParamOverrides(
     // For now, assume all overrides are existing params being tuned.
     // If a key is unknown, flag it.
     if (!constraint) {
-      // Unknown param — could be valid (custom strategy param) or error
-      // Accept but warn
-      warnings.push(`Unknown param "${key}" — not in KB constraints for ${moduleId}. Accepting but flagged.`);
+      // Param not in MODULE_CONSTRAINTS — expected for seed/variant strategies
+      // whose params differ from the deployed strategy. Accept silently.
       valid[key] = value;
       newParamCount++;
       continue;
@@ -335,6 +334,12 @@ export async function optimizeStrategy(opts: {
         moduleContext.varCap,
         existingParamCount,
       );
+
+      // 3a: Param validation summary
+      const accepted = Object.keys(valid).length;
+      const clamped = warnings.filter((w) => w.startsWith("Clamped")).length;
+      const rejected = warnings.filter((w) => w.startsWith("REJECTED")).length;
+      log(`  [optimize] Param validation: ${accepted} accepted, ${clamped} clamped, ${rejected} rejected`);
 
       if (warnings.length > 0) {
         log(`  [optimize] Validation warnings:\n${warnings.map((w) => `    - ${w}`).join("\n")}`);

@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { buildOptimizePrompt, normalizeToCatalog } from "../automation/build-optimize-prompt.js";
+import { buildOptimizePrompt, validateSlugComponents } from "../automation/build-optimize-prompt.js";
 import type { RestructureFailure } from "../automation/build-optimize-prompt.js";
 import { optimizeStrategy } from "./stages/optimize.js";
 import { conductResearch } from "./stages/research.js";
@@ -227,10 +227,13 @@ export async function generateVariant(opts: GenerateVariantOpts): Promise<Varian
         { repair: true },
       );
       if (metadata.selectedComponents && typeof metadata.selectedComponents === "object") {
-        components = normalizeToCatalog(
-          metadata.selectedComponents as Record<string, string>,
-          moduleContext.catalog,
-        );
+        const raw = metadata.selectedComponents as Record<string, string>;
+        components = validateSlugComponents(raw, moduleContext.catalog);
+
+        const droppedCount = Object.keys(raw).length - Object.keys(components).length;
+        if (droppedCount > 0) {
+          log(`\x1b[33mDropped ${droppedCount} invalid slug(s) from selectedComponents\x1b[0m`);
+        }
       }
     }
   } catch {

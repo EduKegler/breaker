@@ -7,9 +7,12 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - `src/automation/` — Prompt builders for Claude optimization/fix (`build-optimize-prompt-ts.ts`, `build-fix-prompt-ts.ts`)
 - `src/dashboard/` — Dashboard and anomaly detection
 - `src/lib/` — Config, lock, strategy-registry, candle-loader, strategy-path, safe-json
-- `src/loop/` — Orchestrator + state-machine (xstate v5) + stages (optimize, scoring, checkpoint, guardrails, integrity, events, research, summary, param-writer, run-engine, run-claude)
+- `src/loop/` — Orchestrator + state-machine (xstate v5) + stages + variant-manager + variant-generator + seed-generator
 - `src/types/` — Zod config schemas
-- `assets/{ASSET}/{CATEGORY}/{IMPLEMENTATION}/` — Strategy artifacts (checkpoints, param history, optimization log)
+- `assets/{asset}/{strategy}/` — Strategy data dir (checkpoints, param history, variant registry)
+  - Seed data: `checkpoints/`, `parameter-history.json` (root level)
+  - Non-seed variants: `variants/{variant-id}/checkpoints/`, `variants/{variant-id}/parameter-history.json`
+  - `variant-registry.json` — runtime artifact, gitignored (absolute paths)
 - Strategies live in `packages/backtest/src/strategies/` (shared library)
 
 ## Optimization loop
@@ -21,6 +24,35 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
   - **refine**: param changes only → in-process `runBacktest()` (~2s/iteration)
   - **restructure**: Claude edits strategy `.ts` → typecheck → rebuild → child process (~5s/iteration)
 - Phase escalation: refine → research → restructure (automatic when refine plateaus)
+
+## Variant-based optimization
+- **Motivacao**: O antigo restructure phase ficava preso em rollback loops — refine melhorava params, restructure degradava, rollback restaurava, loop infinito. Variantes resolvem: cada combinacao de componentes KB e uma tentativa atomica. Plateau = proxima combinacao, nao retry.
+- **Ciclo (outer loop)**: seed → refine → plateau → gera nova variante inline → refine → plateau → ... ate esgotar `--max-iter`
+- **Outer loop**: quando plateau e detectado (neutralStreak, noChangeCount, wfRejectStreak), a variante e marcada `plateaued`, nova variante e gerada inline (sem reiniciar o processo), actor xstate e recriado com estado limpo, baseline da nova variante e rodado, e o for-loop continua com iteracoes restantes. Se a geracao falhar, o loop termina.
+- **Sem promocao automatica**: usuario compara scores manualmente via variant-registry.json e decide qual promover.
+- Arquivos-chave:
+  - `variant-manager.ts` — Registry (variant-registry.json), naming (buildVariantId, SLOT_PRIORITY), lifecycle (active→plateaued→complete)
+  - `variant-generator.ts` — Geracao: prompt com failure history + catalog → Claude retorna slugs → validateSlugComponents() → createVariant()
+  - `seed-generator.ts` — Bootstrap: skeleton → optimizeStrategy(restructure) → fixStrategy fallback
+  - `build-module-context.ts` — CANDIDATE_SLUGS, STARTING_COMPONENTS (slug-based), extractStartingPoint(), getKbSection(), MODULE_CRITERIA, ComponentCatalog
+  - `build-optimize-prompt.ts` — validateSlugComponents() (substitui normalizeToCatalog), formatCatalogForPrompt() mostra slugs em backticks
+
+## Seed auto-bootstrap
+- Se seed ausente: variant registry → config-derived path (getStrategySourcePath) → checkpoint restore → gerar do KB via seed-generator.ts
+- Seed USA variant naming (buildVariantId(getStartingComponents(moduleId))), NAO o strategyFactory do config
+- `esmCacheStale` flag controla in-process vs child-process backtest (true para: seed gerado, transicao post-restructure)
+
+## ESM cache & child-process
+- Node ESM module cache nao invalida apos rebuild → `factory()` retorna codigo antigo
+- `esmCacheStale = true` forca child-process via `run-engine-child.ts` com dynamic import (strategyFilePath)
+- Child-process auto-descobre factory via `Object.keys(mod).find(k => k.startsWith("create"))`
+- FACTORIES map em run-engine-child.ts so tem o seed registrado estaticamente; variantes usam dynamic import
+- **CRITICO**: Apos gerar nova variante + rebuild, `factory` DEVE ser recarregada via `await import(distPath)` e `esmCacheStale = false`. Sem isso, `factory()` retorna params do seed → no-op detection, guardrails e backtest in-process operam no schema errado. Variantes com params exclusivos (ex: `atrTrailMult` vs seed's `trailMult`) ficam com no-ops falsos
+
+## Rollback puro (loop-state.ts)
+- `applyRollback()` e `applyB2Rollback()` sao funcoes puras em `loop-state.ts`
+- Orchestrator faz side-effects (checkpoint.rollback, actor.send, fs, emitEvent) e delega restauracao de estado para as funcoes puras
+- Testes em `loop-state.test.ts` cobrem fluxos cross-step (rollback → proxima iteracao recebe estado correto)
 
 ## Experimental integrity (mandatory)
 - Before accepting an iteration result, compare `contentHash` of strategy source.
@@ -63,5 +95,5 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 
 ## Build and test (breaker-specific)
 - Coverage: `pnpm vitest run --coverage`
-- Tests: `pnpm test` (637 tests across 30 files)
+- Tests: `pnpm test` (718 tests across 32 files)
 - After strategy code changes in restructure phase: `pnpm --filter @breaker/backtest typecheck` then `pnpm --filter @breaker/backtest build`

@@ -4,7 +4,6 @@ import path from "node:path";
 import os from "node:os";
 import {
   VariantManager,
-  toCanonical,
   buildVariantId,
 } from "./variant-manager.js";
 import { buildFailureAnalysis } from "./variant-generator.js";
@@ -31,77 +30,15 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// toCanonical
-// ---------------------------------------------------------------------------
-describe("toCanonical", () => {
-  it("maps M1 breakout KB candidates to short names", () => {
-    expect(toCanonical("Donchian Channel")).toBe("donchian");
-    expect(toCanonical("Bollinger Band squeeze release")).toBe("squeeze");
-    expect(toCanonical("Opening Range Breakout (ORB)")).toBe("orb");
-    expect(toCanonical("Range breakout")).toBe("range");
-    expect(toCanonical("Volatility expansion")).toBe("expansion");
-    expect(toCanonical("Breakout close")).toBe("close");
-    expect(toCanonical("Retest entry")).toBe("retest");
-    expect(toCanonical("ADX threshold")).toBe("adx");
-    expect(toCanonical("RSI momentum")).toBe("rsi");
-    expect(toCanonical("ATR trailing stop")).toBe("atr-trail");
-    expect(toCanonical("Time-based timeout")).toBe("timeout");
-    expect(toCanonical("Partial TP + trail")).toBe("partial-tp");
-  });
-
-  it("maps M2 mean-reversion KB candidates to short names", () => {
-    expect(toCanonical("Bollinger Bands")).toBe("bollinger");
-    expect(toCanonical("Keltner Channels")).toBe("keltner");
-    expect(toCanonical("RSI(2)")).toBe("rsi2");
-    expect(toCanonical("Williams %R")).toBe("williams");
-    expect(toCanonical("Stochastic")).toBe("stochastic");
-    expect(toCanonical("ADX threshold (low)")).toBe("adx-low");
-    expect(toCanonical("Channel midline")).toBe("midline");
-    expect(toCanonical("Catastrophic stop")).toBe("cat-stop");
-  });
-
-  it("maps M3 pullback KB candidates to short names", () => {
-    expect(toCanonical("HH/HL structure")).toBe("hhhl");
-    expect(toCanonical("ADX > threshold")).toBe("adx-high");
-    expect(toCanonical("Fibonacci retracement")).toBe("fib");
-    expect(toCanonical("EMA dynamic support")).toBe("ema-support");
-    expect(toCanonical("9/30 pullback zone")).toBe("930");
-    expect(toCanonical("RSI neutral reset")).toBe("rsi-reset");
-    expect(toCanonical("Candle close beyond pullback extreme")).toBe("close-beyond");
-    expect(toCanonical("Prior swing high/low")).toBe("swing");
-    expect(toCanonical("Fibonacci extension")).toBe("fib-ext");
-  });
-
-  it("maps M4 trend-following KB candidates to short names", () => {
-    expect(toCanonical("SuperTrend flip")).toBe("supertrend");
-    expect(toCanonical("EMA crossover")).toBe("ema-cross");
-    expect(toCanonical("Donchian channel breakout")).toBe("donchian-daily");
-    expect(toCanonical("MACD crossover + HTF filter")).toBe("macd-htf");
-    expect(toCanonical("Chandelier Exit")).toBe("chandelier");
-    expect(toCanonical("EMA slope + price position")).toBe("ema-slope");
-  });
-
-  it("falls back to kebab-case for unknown components (max 3 segments)", () => {
-    expect(toCanonical("My Custom Indicator")).toBe("my-custom-indicator");
-    expect(toCanonical("MACD Histogram")).toBe("macd-histogram");
-  });
-
-  it("truncates long unknown names to 3 segments", () => {
-    expect(toCanonical("Volume Spike vs SMA(vol,20) Timeout")).toBe("volume-spike-vs");
-    expect(toCanonical("ATR Normalized N-bar Range Width Gate")).toBe("atr-normalized-n");
-  });
-});
-
-// ---------------------------------------------------------------------------
 // buildVariantId
 // ---------------------------------------------------------------------------
 describe("buildVariantId", () => {
-  it("joins components in slot-priority order", () => {
+  it("joins slugs in slot-priority order", () => {
     // Entry Signal (1) → Regime Filter (3) → Exit (5)
     const id = buildVariantId({
-      "Exit": "Chandelier Exit",
-      "Entry Signal": "Bollinger Band squeeze release",
-      "Regime Filter": "ADX threshold",
+      "Exit": "chandelier",
+      "Entry Signal": "squeeze",
+      "Regime Filter": "adx",
     });
     expect(id).toBe("squeeze-adx-chandelier");
   });
@@ -112,38 +49,33 @@ describe("buildVariantId", () => {
 
   it("handles unknown slot names alphabetically", () => {
     const id = buildVariantId({
-      "Zebra Filter": "ZebraInd",
-      "Alpha Signal": "AlphaInd",
+      "Zebra Filter": "zebra",
+      "Alpha Signal": "alpha",
     });
-    expect(id).toBe("alphaind-zebraind");
+    expect(id).toBe("alpha-zebra");
   });
 
   it("known slots come before unknown slots", () => {
     const id = buildVariantId({
-      "Custom Slot": "CustomInd",
-      "Entry Signal": "Donchian Channel",
+      "Custom Slot": "custom",
+      "Entry Signal": "donchian",
     });
-    expect(id).toBe("donchian-customind");
+    expect(id).toBe("donchian-custom");
   });
 
-  it("truncates long IDs to max 60 chars with hash suffix", () => {
-    const id = buildVariantId({
-      "Entry Signal": "Volume Spike vs SMA(vol,20) Timeout at timeoutBars",
-      "Entry Timing": "Narrow Range Breakout ATR Normalized N-bar Range Width Gate",
-      "Regime Filter": "4H ADX 14 Consolidation Daily EMA 200 Directional",
-      "Confirmation": "Volume Confirmation Relative to 20-period Average",
-      "Exit": "ATR 14 1H StopMult Single TP at tpRR Risk",
+  it("is deterministic regardless of insertion order", () => {
+    const id1 = buildVariantId({
+      "Exit": "timeout",
+      "Entry Signal": "donchian",
+      "Regime Filter": "ema",
     });
-    expect(id.length).toBeLessThanOrEqual(60);
-    // Should still be deterministic
     const id2 = buildVariantId({
-      "Entry Signal": "Volume Spike vs SMA(vol,20) Timeout at timeoutBars",
-      "Entry Timing": "Narrow Range Breakout ATR Normalized N-bar Range Width Gate",
-      "Regime Filter": "4H ADX 14 Consolidation Daily EMA 200 Directional",
-      "Confirmation": "Volume Confirmation Relative to 20-period Average",
-      "Exit": "ATR 14 1H StopMult Single TP at tpRR Risk",
+      "Regime Filter": "ema",
+      "Entry Signal": "donchian",
+      "Exit": "timeout",
     });
-    expect(id).toBe(id2);
+    expect(id1).toBe(id2);
+    expect(id1).toBe("donchian-ema-timeout");
   });
 });
 
@@ -239,15 +171,15 @@ describe("VariantManager", () => {
   });
 
   describe("createVariant", () => {
-    it("creates variant with deterministic ID from components", () => {
+    it("creates variant with deterministic ID from slugs", () => {
       const mgr = new VariantManager(tmpDir, mainStrategyFile);
       mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
       mgr.markPlateaued("test", 0, 0, 0, 0);
 
       const components = {
-        "Entry Signal": "Bollinger Band squeeze release",
-        "Regime Filter": "ADX threshold",
-        "Exit": "Chandelier Exit",
+        "Entry Signal": "squeeze",
+        "Regime Filter": "adx",
+        "Exit": "chandelier",
       };
       const variant = mgr.createVariant(components, "// bb squeeze code");
 
@@ -268,7 +200,7 @@ describe("VariantManager", () => {
       mgr.markPlateaued("test", 0, 0, 0, 0);
 
       mgr.createVariant(
-        { "Entry Signal": "Bollinger Band squeeze release", "Exit": "ATR trailing stop" },
+        { "Entry Signal": "squeeze", "Exit": "atr-trail" },
         "// code",
       );
 
@@ -280,7 +212,7 @@ describe("VariantManager", () => {
       mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
       mgr.markPlateaued("test", 0, 0, 0, 0);
 
-      const components = { "Entry Signal": "Bollinger Band squeeze release" };
+      const components = { "Entry Signal": "squeeze" };
       mgr.createVariant(components, "// code");
       mgr.markPlateaued("test", 0, 0, 0, 0);
 
@@ -303,7 +235,7 @@ describe("VariantManager", () => {
       // seed is still active
 
       expect(() =>
-        mgr.createVariant({ "Entry Signal": "Bollinger Band squeeze release" }, "// code"),
+        mgr.createVariant({ "Entry Signal": "squeeze" }, "// code"),
       ).toThrow(/already an active variant/);
     });
   });
@@ -341,10 +273,10 @@ describe("VariantManager", () => {
       mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
       mgr.markPlateaued("test", 40, 100, 3, 10);
 
-      mgr.createVariant({ "Entry Signal": "Bollinger Band squeeze release" }, "// v1");
+      mgr.createVariant({ "Entry Signal": "squeeze" }, "// v1");
       mgr.markPlateaued("test", 70, 200, 8, 15);
 
-      mgr.createVariant({ "Entry Signal": "Opening Range Breakout (ORB)" }, "// v2");
+      mgr.createVariant({ "Entry Signal": "orb" }, "// v2");
       mgr.markPlateaued("test", 55, 150, 12, 10);
 
       const best = mgr.getBest();
@@ -365,10 +297,10 @@ describe("VariantManager", () => {
       const mgr = new VariantManager(tmpDir, mainStrategyFile);
       mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
       mgr.markPlateaued("test", 0, 0, 0, 0);
-      mgr.createVariant({ "Entry Signal": "Bollinger Band squeeze release", "Exit": "ATR trailing stop" }, "// code");
+      mgr.createVariant({ "Entry Signal": "squeeze", "Exit": "atr-trail" }, "// code");
 
       expect(
-        mgr.isTestedCombination({ "Entry Signal": "Bollinger Band squeeze release", "Exit": "ATR trailing stop" }),
+        mgr.isTestedCombination({ "Entry Signal": "squeeze", "Exit": "atr-trail" }),
       ).toBe(true);
     });
 
@@ -377,7 +309,7 @@ describe("VariantManager", () => {
       mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
 
       expect(
-        mgr.isTestedCombination({ "Entry Signal": "Bollinger Band squeeze release" }),
+        mgr.isTestedCombination({ "Entry Signal": "squeeze" }),
       ).toBe(false);
     });
   });
@@ -388,7 +320,7 @@ describe("VariantManager", () => {
       mgr1.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
       mgr1.markPlateaued("neutral>=3", 60, 150, 5, 10);
       mgr1.createVariant(
-        { "Entry Signal": "Bollinger Band squeeze release", "Regime Filter": "ADX threshold" },
+        { "Entry Signal": "squeeze", "Regime Filter": "adx" },
         "// v1 code",
       );
       mgr1.updateBest(45, 120, 3);
@@ -412,9 +344,9 @@ describe("VariantManager", () => {
       const mgr = new VariantManager(tmpDir, mainStrategyFile);
       mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
       mgr.markPlateaued("test", 0, 0, 0, 0);
-      mgr.createVariant({ "Entry Signal": "Bollinger Band squeeze release" }, "// v1");
+      mgr.createVariant({ "Entry Signal": "squeeze" }, "// v1");
       mgr.markPlateaued("test", 0, 0, 0, 0);
-      mgr.createVariant({ "Entry Signal": "Opening Range Breakout (ORB)" }, "// v2");
+      mgr.createVariant({ "Entry Signal": "orb" }, "// v2");
 
       const all = mgr.getAll();
       expect(all).toHaveLength(3);
@@ -441,7 +373,7 @@ describe("VariantManager", () => {
       mgr2.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
       expect(mgr2.getActive()).toBeNull(); // no active variant
       mgr2.createVariant(
-        { "Entry Signal": "Bollinger Band squeeze release", "Regime Filter": "MA slope flat" },
+        { "Entry Signal": "squeeze", "Regime Filter": "ma-flat" },
         "// squeeze-ma-flat code",
       );
       expect(mgr2.getActive()!.id).toBe("squeeze-ma-flat");
@@ -454,7 +386,7 @@ describe("VariantManager", () => {
       mgr3.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
       expect(mgr3.getActive()).toBeNull();
       mgr3.createVariant(
-        { "Entry Signal": "Opening Range Breakout (ORB)", "Exit": "Chandelier Exit" },
+        { "Entry Signal": "orb", "Exit": "chandelier" },
         "// orb-chandelier code",
       );
       expect(mgr3.getActive()!.id).toBe("orb-chandelier");
@@ -487,7 +419,7 @@ describe("buildFailureAnalysis", () => {
       { id: "donchian-adx", components: {}, bestScore: 50, plateauReason: "noChange>=2" },
       {
         id: "squeeze-adx",
-        components: { "Entry Signal": "Bollinger Band squeeze release", "Regime Filter": "ADX threshold" },
+        components: { "Entry Signal": "squeeze", "Regime Filter": "adx" },
         bestScore: 65.3,
       },
     ];
@@ -495,7 +427,7 @@ describe("buildFailureAnalysis", () => {
     expect(result).toContain("donchian-adx");
     expect(result).toContain("score=50.0");
     expect(result).toContain("noChange>=2");
-    expect(result).toContain("Bollinger Band squeeze release + ADX threshold");
+    expect(result).toContain("squeeze + adx");
     expect(result).toContain("score=65.3");
   });
 });

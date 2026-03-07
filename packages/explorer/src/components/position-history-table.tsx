@@ -107,7 +107,7 @@ function PositionRow({ pos, isExpanded, onToggle }: { pos: PositionSummary; isEx
           {displayPct != null ? `${displayPct >= 0 ? "+" : ""}${displayPct.toFixed(2)}%` : "\u2014"}
         </td>
         <td className={`py-1.5 pr-3 font-mono text-right ${pos.fundingPaid >= 0 ? "text-profit" : "text-loss"}`}>
-          {pos.fundingPaid !== 0 ? `${pos.fundingPaid >= 0 ? "+" : ""}$${pos.fundingPaid.toFixed(2)}` : "\u2014"}
+          {pos.fundingPaid !== 0 ? `${pos.fundingPaid >= 0 ? "+" : ""}$${pos.fundingPaid.toFixed(4)}` : "\u2014"}
         </td>
         <td className="py-1.5 pr-3 font-mono text-txt-secondary">{formatDuration(displayDuration)}</td>
         <td className="py-1.5 pr-3 font-mono text-txt-secondary">{formatDate(pos.openedAt)}</td>

@@ -458,10 +458,9 @@ async function finalizeEntry(
     status: "filled", mode: config.mode, filled_at: new Date().toISOString(),
   });
 
+  // No placeholder fill here — real fills arrive via WS onFill in daemon.ts.
+  // aggregatePositionHistory falls back to order.price/order.size when no fills exist.
   const entryFilledAt = new Date().toISOString();
-  store.insertFill({
-    order_id: entryOrderId, price: actualPrice, size: actualSize, fee: 0, timestamp: entryFilledAt,
-  });
 
   await eventLog.append({
     type: "order_placed",

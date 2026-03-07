@@ -40,6 +40,7 @@ trading/
 - Run for a single package: `pnpm --filter @breaker/refiner build`
 - **Mandatory validation**: every code change (`src/`, `*.ts`) MUST end with `pnpm build && pnpm test`. Do not consider the task complete until tests pass.
 - **Regression rule**: every bug fix MUST include at least 1 test that reproduces the bug and verifies the fix.
+- **Root cause analysis**: after fixing a bug, investigate WHY it happened — trace the root cause to the code pattern, architectural decision, or missing validation that allowed it. Then apply a **structural fix** (guard, constraint, assertion, or design change) that prevents the entire class of bug from recurring, not just the specific instance. If the bug originated from a prompt-driven system (e.g. refiner), update the prompt rules too.
 - **TDD-first**: write or update tests BEFORE implementing the feature/fix.
 - **Post-implementation test review**: after finishing the implementation and all TDD tests pass, do a second pass to add tests that TDD missed — integration tests for new endpoints/WS events, edge cases only visible after seeing the final code, cross-layer interactions (e.g. REST handler → store → aggregation), and any gaps that only become apparent once the full implementation exists.
 - Mandatory pattern: every executable module in src/ must have an `isMainModule(import.meta.url)` guard from `@breaker/kit` (do not execute when imported in tests).

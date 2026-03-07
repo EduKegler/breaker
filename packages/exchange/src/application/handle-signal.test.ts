@@ -565,20 +565,22 @@ describe("handleSignal", () => {
     expect(pos.signalId).toBe(1);            // updated from 0
   });
 
-  it("inserts entry fill record in fills table on success", async () => {
+  it("inserts entry order (no placeholder fill) — real fills arrive via WS", async () => {
     const input = createInput({ alertId: "fill-001" });
 
     const result = await handleSignal(input, deps);
 
     expect(result.success).toBe(true);
 
-    // The entry fill should be stored in the fills table so
-    // aggregatePositionHistory() can find the position
+    // Entry order should exist with correct price/size, but NO placeholder fill.
+    // Real fills with correct fees arrive later via WS onFill in daemon.ts.
+    // aggregatePositionHistory falls back to order.price/order.size when no fills exist.
     const rows = deps.store.getPositionHistoryRows(100);
     const entryRows = rows.filter((r) => r.tag === "entry" && r.status === "filled");
     expect(entryRows.length).toBeGreaterThan(0);
-    expect(entryRows[0].fill_price).toBe(95000); // avgPrice from placeEntryOrder
-    expect(entryRows[0].fill_size).toBe(0.01052); // filledSize
+    expect(entryRows[0].price).toBe(95000);
+    expect(entryRows[0].size).toBe(0.01052);
+    expect(entryRows[0].fill_price).toBeNull(); // no placeholder fill
   });
 
   it("continues even when notification fails", async () => {

@@ -4,7 +4,7 @@ import type { CandleClientOptions } from "./data/fetch-candles.js";
 import { runBacktest, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
 import { computeMetrics } from "./analysis/metrics-calculator.js";
 import { analyzeTradeList } from "./analysis/trade-analysis.js";
-import { createDonchianAdx } from "./strategies/btc/breakout/donchian-adx.js";
+import { createDonchianAdx } from "./strategies/deployed/index.js";
 import path from "node:path";
 import fs from "node:fs";
 import { isMainModule } from "@breaker/kit";
