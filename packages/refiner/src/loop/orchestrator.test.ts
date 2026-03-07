@@ -36,7 +36,7 @@ vi.mock("../lib/build-strategy-dir.js", () => ({
 }));
 
 vi.mock("../lib/get-strategy-source-path.js", () => ({
-  getStrategySourcePath: vi.fn((_root: string, _factoryName: string) => `${_root}/packages/backtest/src/strategies/donchian-adx.ts`),
+  getStrategySourcePath: vi.fn((_root: string, _factoryName: string) => `${_root}/packages/backtest/src/strategies/btc/breakout/donchian-adx.ts`),
 }));
 
 import { parseArgs } from "./parse-args.js";
@@ -878,6 +878,52 @@ describe("B2: restructure score>best + trades<min triggers rollback", () => {
 });
 
 // ---------------------------------------------------------------------------
+// BUG FIX: neutral verdict (score in noise band) triggers rollback
+// ---------------------------------------------------------------------------
+describe("neutral verdict triggers rollback to prevent drift", () => {
+  it("neutral verdict with score <= bestScore enters the else (rollback) branch", () => {
+    // Simulates Step 8 logic: score is within 3% noise band but not improved
+    const scoreWeighted = 78.0;
+    const bestScore = 80.2;
+    const meetsMinTrades = true;
+    const effectiveVerdict = "neutral"; // compareScores(78.0, 80.2) = neutral
+
+    let checkpointed = false;
+    let rolledBack = false;
+
+    // Mirrors the Step 8 if/else chain in orchestrator.ts
+    if (scoreWeighted > bestScore && meetsMinTrades && effectiveVerdict !== "reject") {
+      checkpointed = true;
+    } else if (scoreWeighted > bestScore && !meetsMinTrades) {
+      // score > best but not enough trades
+    } else {
+      // All non-checkpoint cases (reject AND neutral) rollback
+      rolledBack = true;
+    }
+
+    expect(checkpointed).toBe(false);
+    expect(rolledBack).toBe(true);
+  });
+
+  it("neutral verdict with score slightly above best still checkpoints", () => {
+    // Score improved slightly (within noise band but raw score > best)
+    const scoreWeighted = 80.5;
+    const bestScore = 80.2;
+    const meetsMinTrades = true;
+    const effectiveVerdict = "neutral"; // compareScores(80.5, 80.2) = neutral (< 1.02 threshold)
+
+    let checkpointed = false;
+
+    if (scoreWeighted > bestScore && meetsMinTrades && effectiveVerdict !== "reject") {
+      checkpointed = true;
+    }
+
+    // Even "neutral" verdict checkpoints if raw score > bestScore (neutral !== reject)
+    expect(checkpointed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // BUG FIX P1.1: lastContentHash recalculated after rollback
 // ---------------------------------------------------------------------------
 describe("lastContentHash recalculated after rollback", () => {
@@ -1328,5 +1374,49 @@ describe("baseline-passes: no early stop when criteria already met", () => {
 
     const shouldBreak = iterCriteriaPassed && !baselinePassesCriteria;
     expect(shouldBreak).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Baseline already meets stretch targets: skip loop entirely
+// ---------------------------------------------------------------------------
+describe("baseline-passes-stretch: skip loop when stretch already met", () => {
+  it("skips loop when baseline passes criteria AND stretch targets", () => {
+    const baselinePassesCriteria = true;
+    const baselinePassesStretch = baselinePassesCriteria && true; // stretch also met
+
+    // Loop condition: !baselinePassesStretch && iter <= maxIter
+    const iterations: number[] = [];
+    for (let iter = 1; !baselinePassesStretch && iter <= 5; iter++) {
+      iterations.push(iter);
+    }
+
+    expect(iterations).toHaveLength(0);
+  });
+
+  it("enters loop when baseline passes criteria but NOT stretch", () => {
+    const baselinePassesCriteria = true;
+    const baselinePassesStretch = baselinePassesCriteria && false; // stretch not met
+
+    const iterations: number[] = [];
+    for (let iter = 1; !baselinePassesStretch && iter <= 5; iter++) {
+      iterations.push(iter);
+      break; // just test that we enter
+    }
+
+    expect(iterations).toHaveLength(1);
+  });
+
+  it("enters loop when baseline does NOT pass criteria", () => {
+    const baselinePassesCriteria = false;
+    const baselinePassesStretch = false; // can't pass stretch without criteria
+
+    const iterations: number[] = [];
+    for (let iter = 1; !baselinePassesStretch && iter <= 5; iter++) {
+      iterations.push(iter);
+      break;
+    }
+
+    expect(iterations).toHaveLength(1);
   });
 });

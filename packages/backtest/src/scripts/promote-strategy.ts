@@ -10,19 +10,17 @@ import { bakeParamDefaults } from "../strategies/bake-param-defaults.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export const KNOWN_STRATEGIES: ReadonlyArray<{ name: string; asset: string }> = [
-  { name: "donchian-adx", asset: "btc" },
-  { name: "keltner-rsi2", asset: "btc" },
-  { name: "ema-pullback", asset: "sol" },
+export const KNOWN_STRATEGIES: ReadonlyArray<{ name: string; asset: string; category: string }> = [
+  { name: "donchian-adx", asset: "btc", category: "breakout" },
 ];
 
 /**
  * Rewrite relative imports: add one extra `../` level of depth.
- * Source strategies use `../../types/` etc; deployed need `../../../types/`.
+ * Source strategies use `../../../types/` etc; deployed need `../../../../types/`.
  * Handles both single and double quotes.
  */
 export function rewriteImports(content: string): string {
-  // Match: from "../../ (source level) → from "../../../ (deployed level)
+  // Match: from "../../../ (source level) → from "../../../../ (deployed level)
   return content.replace(/from\s+(["'])(\.\.\/)/g, 'from $1../$2');
 }
 
@@ -30,6 +28,7 @@ interface PromoteOptions {
   strategiesDir?: string;
   fromCheckpoint?: string;
   asset?: string;
+  category?: string;
   /** Path to best-params.json to bake into defaults (auto-discovered if not set) */
   paramsFile?: string;
 }
@@ -44,22 +43,15 @@ interface PromoteResult {
 
 /**
  * Try to auto-discover best-params.json from the refiner assets directory.
- * Convention: packages/refiner/assets/{asset}/{strategy}/checkpoints/best-params.json
+ * Convention: packages/refiner/assets/{asset}/{category}/checkpoints/best-params.json
  */
 function discoverParamsFile(strategiesDir: string, asset: string, name: string): string | null {
   // strategiesDir is typically packages/backtest/src/strategies
-  // refiner assets is at packages/refiner/assets/{asset}/{strategy}/checkpoints/
+  // refiner assets is at packages/refiner/assets/{asset}/{category}/checkpoints/
   const backtest = join(strategiesDir, "../..");
   const refinerAssets = join(backtest, "../../refiner/assets", asset);
 
-  // Map strategy file name to strategy category (e.g., donchian-adx → breakout)
-  const categoryMap: Record<string, string> = {
-    "donchian-adx": "breakout",
-    "keltner-rsi2": "mean-reversion",
-    "ema-pullback": "pullback",
-  };
-
-  const category = categoryMap[name];
+  const category = KNOWN_STRATEGIES.find((s) => s.name === name)?.category;
   if (!category) return null;
 
   const paramsPath = join(refinerAssets, category, "checkpoints", "best-params.json");
@@ -68,24 +60,29 @@ function discoverParamsFile(strategiesDir: string, asset: string, name: string):
 
 /**
  * Promote a strategy to the deployed/ directory.
- * Reads source from `strategies/{asset}/{name}.ts` → bakes checkpoint params → rewrites imports → writes to `strategies/{asset}/deployed/{name}.ts`.
+ * Reads source from `strategies/{asset}/{category}/{name}.ts` → bakes checkpoint params → rewrites imports → writes to `strategies/{asset}/{category}/deployed/{name}.ts`.
  */
 export function promoteStrategy(
   name: string,
   options: PromoteOptions = {},
 ): PromoteResult {
   const strategiesDir = options.strategiesDir ?? join(__dirname, "../strategies");
-  const asset = options.asset ?? KNOWN_STRATEGIES.find((s) => s.name === name)?.asset;
+  const known = KNOWN_STRATEGIES.find((s) => s.name === name);
+  const asset = options.asset ?? known?.asset;
+  const category = options.category ?? known?.category;
 
   if (!asset) {
     return { success: false, error: `Unknown strategy "${name}" — cannot determine asset` };
   }
+  if (!category) {
+    return { success: false, error: `Unknown strategy "${name}" — cannot determine category` };
+  }
 
-  const deployedDir = join(strategiesDir, asset, "deployed");
+  const deployedDir = join(strategiesDir, asset, category, "deployed");
 
   const sourcePath = options.fromCheckpoint
     ? join(options.fromCheckpoint, `${name}.ts`)
-    : join(strategiesDir, asset, `${name}.ts`);
+    : join(strategiesDir, asset, category, `${name}.ts`);
 
   if (!existsSync(sourcePath)) {
     return { success: false, error: `Source file not found: ${sourcePath}` };
@@ -127,23 +124,27 @@ function main() {
     .option("--from-checkpoint <path>", "Promote from a refiner checkpoint directory")
     .action((strategy: string | undefined, options: { all?: boolean; asset?: string; fromCheckpoint?: string }) => {
       const strategies = options.all
-        ? KNOWN_STRATEGIES.map((s) => ({ name: s.name, asset: s.asset }))
+        ? KNOWN_STRATEGIES.map((s) => ({ name: s.name, asset: s.asset, category: s.category }))
         : strategy
-          ? [{ name: strategy, asset: options.asset ?? KNOWN_STRATEGIES.find((s) => s.name === strategy)?.asset ?? "" }]
+          ? (() => {
+              const known = KNOWN_STRATEGIES.find((s) => s.name === strategy);
+              return [{ name: strategy, asset: options.asset ?? known?.asset ?? "", category: known?.category ?? "" }];
+            })()
           : [];
 
       if (strategies.length === 0) {
         console.error("Usage: pnpm promote <strategy-name> or pnpm promote --all");
-        console.error(`Known strategies: ${KNOWN_STRATEGIES.map((s) => `${s.name} (${s.asset})`).join(", ")}`);
+        console.error(`Known strategies: ${KNOWN_STRATEGIES.map((s) => `${s.name} (${s.asset}/${s.category})`).join(", ")}`);
         process.exit(1);
       }
 
       const results: Array<{ name: string; result: PromoteResult }> = [];
 
-      for (const { name, asset } of strategies) {
-        console.log(`Promoting ${name} (${asset})...`);
+      for (const { name, asset, category } of strategies) {
+        console.log(`Promoting ${name} (${asset}/${category})...`);
         const result = promoteStrategy(name, {
           asset,
+          category,
           fromCheckpoint: options.fromCheckpoint,
         });
 

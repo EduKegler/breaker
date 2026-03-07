@@ -251,11 +251,12 @@ export async function optimizeStrategy(opts: {
   moduleContext: ModuleContext;
   existingParamCount: number;
   timeoutMs?: number;
+  cancelSignal?: AbortSignal;
 }): Promise<StageResult<OptimizeResult>> {
   const {
     prompt, strategyFile, repoRoot, model, phase,
     artifactsDir, globalIter, moduleContext,
-    existingParamCount, timeoutMs = 900000,
+    existingParamCount, timeoutMs = 900000, cancelSignal,
   } = opts;
 
   try {
@@ -265,7 +266,7 @@ export async function optimizeStrategy(opts: {
 
     const result = await runClaude(
       ["--model", model, "--dangerously-skip-permissions", "--max-turns", String(maxTurns), "-p", prompt],
-      { cwd: repoRoot, timeoutMs, label: "optimize" },
+      { cwd: repoRoot, timeoutMs, label: "optimize", cancelSignal },
     );
 
     if (result.status !== 0) {

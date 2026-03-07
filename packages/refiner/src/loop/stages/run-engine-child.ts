@@ -18,12 +18,13 @@ import {
   analyzeTradeList,
   DEFAULT_BACKTEST_CONFIG,
   createDonchianAdx,
-  createKeltnerRsi2,
 } from "@breaker/backtest";
 import type { CandleInterval, DataSource, Strategy } from "@breaker/backtest";
 
 interface ChildInput {
   factoryName: string;
+  /** Absolute path to compiled .js file for dynamic import (variant strategies). */
+  strategyFilePath?: string;
   paramOverrides: Record<string, number>;
   dbPath: string;
   coin: string;
@@ -36,7 +37,6 @@ interface ChildInput {
 
 const FACTORIES: Record<string, (overrides?: Partial<Record<string, number>>) => Strategy> = {
   createDonchianAdx,
-  createKeltnerRsi2,
 };
 
 async function main(): Promise<void> {
@@ -46,9 +46,26 @@ async function main(): Promise<void> {
   }
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8")) as ChildInput;
 
-  const factory = FACTORIES[input.factoryName];
-  if (!factory) {
-    throw new Error(`Unknown factory: ${input.factoryName}`);
+  let factory: (overrides?: Partial<Record<string, number>>) => Strategy;
+
+  if (input.strategyFilePath) {
+    // Dynamic import for variant strategy files
+    const mod = await import(input.strategyFilePath) as Record<string, unknown>;
+    const key = Object.keys(mod).find(
+      (k) => typeof mod[k] === "function" && k.startsWith("create"),
+    );
+    if (!key) {
+      throw new Error(
+        `No create* factory found in ${input.strategyFilePath}`,
+      );
+    }
+    factory = mod[key] as typeof factory;
+  } else {
+    const registered = FACTORIES[input.factoryName];
+    if (!registered) {
+      throw new Error(`Unknown factory: ${input.factoryName}`);
+    }
+    factory = registered;
   }
 
   const strategy = factory(input.paramOverrides);

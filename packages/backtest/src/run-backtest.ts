@@ -4,9 +4,7 @@ import type { CandleClientOptions } from "./data/fetch-candles.js";
 import { runBacktest, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
 import { computeMetrics } from "./analysis/metrics-calculator.js";
 import { analyzeTradeList } from "./analysis/trade-analysis.js";
-import { createDonchianAdx } from "./strategies/btc/donchian-adx.js";
-import { createKeltnerRsi2 } from "./strategies/btc/keltner-rsi2.js";
-import { createEmaPullback } from "./strategies/sol/ema-pullback.js";
+import { createDonchianAdx } from "./strategies/btc/breakout/donchian-adx.js";
 import path from "node:path";
 import fs from "node:fs";
 import { isMainModule } from "@breaker/kit";
@@ -26,7 +24,7 @@ async function main(): Promise<void> {
   cli.option("--days <n>", "Days to backtest (default: 180, ignored if --start given)");
   cli.option("--source <source>", "Data source: binance|hyperliquid (default: binance)");
   cli.option("--warmup <days>", "Warmup days for indicators (default: 730)");
-  cli.option("--strategy <name>", "Strategy: donchian-adx|keltner-rsi2|ema-pullback (default: donchian-adx)");
+  cli.option("--strategy <name>", "Strategy: donchian-adx (default: donchian-adx)");
   cli.option("--cash", "Use cash sizing mode ($100 per trade)");
   cli.option("--limits", "Enable trade limits (use --no-limits to disable)");
 
@@ -97,8 +95,6 @@ async function main(): Promise<void> {
   // Run backtest
   const strategyFactories: Record<string, () => ReturnType<typeof createDonchianAdx>> = {
     "donchian-adx": createDonchianAdx,
-    "keltner-rsi2": createKeltnerRsi2,
-    "ema-pullback": createEmaPullback,
   };
   const factory = strategyFactories[strategyName];
   if (!factory) {

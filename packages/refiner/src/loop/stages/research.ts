@@ -120,11 +120,12 @@ export async function conductResearch(opts: {
   kbPath: string;
   allowedDomains?: string[];
   criteria?: { minTrades?: number; minPF?: number; maxDD?: number; minWR?: number | null; minAvgR?: number | null };
+  cancelSignal?: AbortSignal;
 }): Promise<StageResult<ResearchBrief>> {
   const {
     asset, moduleContext, currentMetrics, failureHistory,
     exhaustedApproaches, artifactsDir, model, timeoutMs,
-    repoRoot, kbPath, allowedDomains, criteria,
+    repoRoot, kbPath, allowedDomains, criteria, cancelSignal,
   } = opts;
 
   const briefPath = path.join(artifactsDir, "research-brief.json");
@@ -263,7 +264,7 @@ CRITICAL:
         "--allowedTools", "WebSearch,mcp__context7__resolve-library-id,mcp__context7__query-docs,Read,Write",
         "-p", prompt,
       ],
-      { cwd: repoRoot, timeoutMs, label: "research" },
+      { cwd: repoRoot, timeoutMs, label: "research", cancelSignal },
     );
 
     if (result.status !== 0) {

@@ -15,7 +15,7 @@ function log(msg: string): void {
  */
 export async function runClaude(
   args: string[],
-  opts: { cwd: string; timeoutMs: number; label: string; env?: NodeJS.ProcessEnv },
+  opts: { cwd: string; timeoutMs: number; label: string; env?: NodeJS.ProcessEnv; cancelSignal?: AbortSignal },
 ): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const startTime = Date.now();
 
@@ -31,9 +31,19 @@ export async function runClaude(
       reject: false,
       cwd: opts.cwd,
       env: opts.env ?? (process.env as NodeJS.ProcessEnv),
+      ...(opts.cancelSignal ? { cancelSignal: opts.cancelSignal } : {}),
     });
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+    if (result.isCanceled) {
+      log(`  [${opts.label}] CANCELED after ${elapsed}s`);
+      return {
+        status: null,
+        stdout: result.stdout,
+        stderr: result.stderr + "\nKilled: canceled",
+      };
+    }
 
     if (result.timedOut) {
       log(`  [${opts.label}] TIMEOUT after ${elapsed}s`);

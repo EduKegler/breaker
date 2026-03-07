@@ -23,6 +23,8 @@ interface EngineResult {
 export function runEngineChild(opts: {
   repoRoot: string;
   factoryName: string;
+  /** Compiled .js path for dynamic import (variant strategies). */
+  strategyFilePath?: string;
   paramOverrides?: Record<string, number>;
   dbPath: string;
   coin: string;
@@ -32,12 +34,13 @@ export function runEngineChild(opts: {
   endTime: number;
   warmupBars?: number;
 }): EngineResult {
-  const { repoRoot, factoryName, paramOverrides, dbPath, coin, source, interval, startTime, endTime, warmupBars = 0 } = opts;
+  const { repoRoot, factoryName, strategyFilePath, paramOverrides, dbPath, coin, source, interval, startTime, endTime, warmupBars = 0 } = opts;
 
   const childScript = path.join(repoRoot, "dist/loop/stages/run-engine-child.js");
 
   const input = JSON.stringify({
     factoryName,
+    strategyFilePath,
     paramOverrides: paramOverrides ?? {},
     dbPath,
     coin,

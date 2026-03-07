@@ -53,6 +53,29 @@ import { computeMinWarmupBars, intervalToMs } from "@breaker/backtest";
 import type { Candle, CandleInterval, Metrics, StrategyParam, TradeAnalysis } from "@breaker/backtest";
 import type { IterationMetadata } from "./stages/param-writer.js";
 import type { IterationState, LoopPhase } from "./types.js";
+import { VariantManager } from "./variant-manager.js";
+import { generateVariant } from "./variant-generator.js";
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown — Ctrl+C kills child processes and releases the lock
+// ---------------------------------------------------------------------------
+
+const shutdownController = new AbortController();
+
+function installShutdownHandlers(asset: string): void {
+  const handler = () => {
+    // Prevent re-entrance on double Ctrl+C
+    process.removeListener("SIGINT", handler);
+    process.removeListener("SIGTERM", handler);
+    console.log(`\n\x1b[33m⚠ Shutdown requested — cleaning up...\x1b[0m`);
+    shutdownController.abort();
+    try { lock.release(asset); } catch { /* best effort */ }
+    try { closeLoggers(); } catch { /* best effort */ }
+    process.exit(130); // 128 + SIGINT(2)
+  };
+  process.on("SIGINT", handler);
+  process.on("SIGTERM", handler);
+}
 
 // ANSI color helpers (no dependency needed)
 const c = {
@@ -183,6 +206,7 @@ export async function orchestrate(): Promise<void> {
 
   // Resolve strategy source file
   cfg.strategyFile = getStrategySourcePath(cfg.repoRoot, cfg.strategyFactory);
+  const seedStrategyFile = cfg.strategyFile;
 
   // Resolve strategy factory and create initial strategy
   const factory = strategyRegistry.get(cfg.strategyFactory);
@@ -195,11 +219,34 @@ export async function orchestrate(): Promise<void> {
 
   // Acquire lock — everything after this MUST be inside try/finally
   lock.acquire(cfg.asset);
+  installShutdownHandlers(cfg.asset);
   logDim(`Lock acquired for ${cfg.asset}`);
 
   let success = false;
 
   try {
+  // ---- Variant management ----
+  const seedCheckpointDir = cfg.checkpointDir;
+  const seedParamHistoryFile = cfg.paramHistoryFile;
+  const variantMgr = new VariantManager(cfg.strategyDir, seedStrategyFile);
+  variantMgr.loadOrInit(seedStrategyFile, seedCheckpointDir, seedParamHistoryFile);
+  let isNonSeedVariant = false;
+  let needsVariantGeneration = false;
+
+  const activeVariant = variantMgr.getActive();
+  if (activeVariant && activeVariant.id !== path.basename(seedStrategyFile, ".ts")) {
+    // Non-seed variant: override cfg paths
+    cfg.strategyFile = activeVariant.strategyFile;
+    cfg.checkpointDir = activeVariant.checkpointDir;
+    cfg.paramHistoryFile = activeVariant.paramHistoryFile;
+    isNonSeedVariant = true;
+    log(`${c.b}Active variant: ${activeVariant.id}${c.r} (${activeVariant.strategyFile})`);
+  } else if (!activeVariant) {
+    // All variants plateaued/complete — need to generate a new one
+    needsVariantGeneration = true;
+    log(`No active variant — will generate new variant after setup`);
+  }
+
   // Load initial param overrides from checkpoint (need strategy to compute warmup)
   let paramOverrides: Record<string, number> = checkpoint.loadParams(cfg.checkpointDir) ?? {};
 
@@ -225,6 +272,60 @@ export async function orchestrate(): Promise<void> {
   const effectiveWarmupBars = actualWarmupBars === -1 ? candles.length : actualWarmupBars;
   logDim(`Candles loaded: ${candles.length} bars (${effectiveWarmupBars} warmup + ${candles.length - effectiveWarmupBars} window)`);
 
+  // ---- Variant generation (if previous variant plateaued) ----
+  if (needsVariantGeneration) {
+    // Load seed checkpoint metrics for the generation prompt
+    const seedCheckpointData = checkpoint.load(seedCheckpointDir);
+    const seedMetrics = (seedCheckpointData?.metrics ?? {}) as Metrics;
+    const seedAnalysis = seedCheckpointData?.analysis ?? null;
+    const seedParams = seedCheckpointData?.strategyParams ?? initialStrategy.params;
+    const seedParamOverrides = checkpoint.loadParams(seedCheckpointDir) ?? {};
+    const seedScore = seedCheckpointData
+      ? computeScore(seedMetrics, countOptimizableParams(seedParams), seedMetrics.numTrades ?? 0, cfg.scoring.weights).weighted
+      : 0;
+
+    log(`${c.blu}${c.b}Generating new variant...${c.r}`);
+    const newVariant = await generateVariant({
+      cfg,
+      moduleContext,
+      variantManager: variantMgr,
+      currentMetrics: seedMetrics,
+      currentAnalysis: seedAnalysis as TradeAnalysis | null,
+      lastStrategyParams: seedParams,
+      paramOverrides: seedParamOverrides,
+      currentScore: seedScore,
+      bestScore: seedScore,
+      globalIter: paramWriter.loadHistory(seedParamHistoryFile).iterations.length,
+      kbPath,
+      seedStrategyFile,
+      cancelSignal: shutdownController.signal,
+    });
+
+    if (!newVariant) {
+      logWarn("Variant generation failed — no more variants can be generated. Exiting.");
+      variantMgr.save();
+      lock.release(cfg.asset);
+      process.exit(0);
+    }
+
+    // Override cfg paths with new variant
+    cfg.strategyFile = newVariant.strategyFile;
+    cfg.checkpointDir = newVariant.checkpointDir;
+    cfg.paramHistoryFile = newVariant.paramHistoryFile;
+    isNonSeedVariant = true;
+    paramOverrides = {};
+    logOk(`New variant active: ${c.b}${newVariant.id}${c.r}`);
+
+    // Rebuild backtest package so child-process can import the new variant
+    log(`${c.blu}Rebuilding @breaker/backtest for new variant...${c.r}`);
+    execaSync("pnpm", ["--filter", "@breaker/backtest", "build"], {
+      cwd: path.resolve(cfg.repoRoot, "../.."),
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    logOk("Rebuild complete.");
+  }
+
   // Determine initial phase: CLI flag overrides, otherwise always start from refine.
   // Previous sessions may have ended in restructure, but a fresh run should re-evaluate
   // from refine and escalate organically if refine plateaus.
@@ -247,7 +348,7 @@ export async function orchestrate(): Promise<void> {
   let checkpointRestored = false;
   // Tracks when ESM module cache is stale after restructure changed the .ts file.
   // Forces child-process backtest path since factory() would return old compiled code.
-  let esmCacheStale = false;
+  let esmCacheStale = isNonSeedVariant; // Non-seed variants always use child-process
   if (existingCheckpoint) {
     // Validate checkpoint source matches current strategy source.
     // If they differ (e.g., git checkout reverted the file), restore checkpoint source
@@ -293,14 +394,35 @@ export async function orchestrate(): Promise<void> {
     // the WF guardrail from trapping the loop when bestScore=0 causes every
     // positive-scoring iteration to be "accepted" then immediately WF-rejected.
     const baselineSource = fs.readFileSync(cfg.strategyFile, "utf8");
-    const baselineStrategy = factory(paramOverrides);
-    log(`${c.blu}Running baseline backtest...${c.r}`);
-    const baselineResult = runEngineInProcess({
-      candles,
-      strategy: baselineStrategy,
-      sourceInterval: cfg.interval as CandleInterval,
-      warmupBars: effectiveWarmupBars,
-    });
+    log(`${c.blu}Running baseline backtest${isNonSeedVariant ? " (child-process)" : ""}...${c.r}`);
+    let baselineResult;
+    if (isNonSeedVariant) {
+      // Non-seed variant: factory() returns the seed strategy, not the variant.
+      // Use child-process with dynamic import to load the variant's compiled code.
+      const strategyDistPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");
+      baselineResult = runEngineChild({
+        repoRoot: cfg.repoRoot,
+        factoryName: cfg.strategyFactory,
+        strategyFilePath: strategyDistPath,
+        paramOverrides,
+        dbPath: cfg.dbPath,
+        coin: cfg.coin,
+        source: cfg.dataSource,
+        interval: cfg.interval,
+        startTime: dataStartTime,
+        endTime: cfg.endTime,
+        warmupBars: effectiveWarmupBars,
+      });
+      if (baselineResult.paramCount != null) paramCount = baselineResult.paramCount;
+    } else {
+      const baselineStrategy = factory(paramOverrides);
+      baselineResult = runEngineInProcess({
+        candles,
+        strategy: baselineStrategy,
+        sourceInterval: cfg.interval as CandleInterval,
+        warmupBars: effectiveWarmupBars,
+      });
+    }
     initialMetrics = baselineResult.metrics;
     // F8: Save baseline analysis for the first iteration's prompt
     lastAnalysis = baselineResult.analysis;
@@ -317,7 +439,10 @@ export async function orchestrate(): Promise<void> {
   // Check if baseline/checkpoint already passes all criteria.
   // If yes, don't stop on first criteria pass — run all iterations to maximize score.
   const baselinePassesCriteria = checkCriteria(initialMetrics, cfg.criteria, lastAnalysis?.walkForward ?? null);
-  if (baselinePassesCriteria) {
+  const baselinePassesStretch = baselinePassesCriteria && checkStretchCriteria(initialMetrics, cfg.criteria, stretchTargets.stretchPF, stretchTargets.stretchAvgR, lastAnalysis?.walkForward ?? null);
+  if (baselinePassesStretch) {
+    logOk(`Baseline already meets ALL stretch targets (PF=${(initialMetrics.profitFactor ?? 0).toFixed(2)} ≥ ${stretchTargets.stretchPF}) — nothing to optimize`);
+  } else if (baselinePassesCriteria) {
     logOk(`Baseline already passes all criteria — will run all ${cfg.maxIter} iterations to maximize score`);
   }
 
@@ -386,7 +511,13 @@ export async function orchestrate(): Promise<void> {
   // Each iteration: Optimize → Apply → Backtest → Score → Checkpoint/Rollback
   // Baseline already ran in the pre-loop, seeding currentMetrics for the first prompt.
   // ============================================================
-  for (let iter = 1; iter <= cfg.maxIter; iter++) {
+  if (baselinePassesStretch) {
+    success = true;
+    variantMgr.markComplete(initialBestScore, initialBestPnl, initialBestIter, 0);
+    variantMgr.save();
+  }
+
+  for (let iter = 1; !baselinePassesStretch && iter <= cfg.maxIter; iter++) {
     state.iter = iter;
     state.globalIter++;
 
@@ -442,6 +573,18 @@ export async function orchestrate(): Promise<void> {
     const phase = snap.value as LoopPhase;
     state.currentPhase = phase;
 
+    // Variant plateau detection: when refine escalates to research/restructure,
+    // mark the variant as plateaued and end the loop. The next run will generate
+    // a new variant with different KB catalog components.
+    if (prevPhase === "refine" && phase !== "refine") {
+      const activeVar = variantMgr.getActive();
+      const reason = `neutralStreak=${mCtx.neutralStreak}, noChange=${mCtx.noChangeCount}, wfReject=${mCtx.wfRejectStreak}`;
+      variantMgr.markPlateaued(reason, mCtx.bestScore, mCtx.bestPnl, mCtx.bestIter, iter - 1);
+      variantMgr.save();
+      logWarn(`Variant ${activeVar?.id ?? "?"} plateaued (${reason}). Next run will generate a new variant.`);
+      break;
+    }
+
     // Detect restructure→refine via ESCALATE or PHASE_TIMEOUT (ESM cache staleness)
     if (prevPhase === "restructure" && phase === "refine") {
       esmCacheStale = true;
@@ -468,6 +611,7 @@ export async function orchestrate(): Promise<void> {
       const researchResult = await conductResearch({
         asset: cfg.asset,
         moduleContext,
+        cancelSignal: shutdownController.signal,
         currentMetrics: {
           pnl: state.previousPnl,
           pf: lastMetric?.pf ?? 0,
@@ -587,6 +731,7 @@ export async function orchestrate(): Promise<void> {
       moduleContext,
       existingParamCount: paramCount,
       timeoutMs: optimizeTimeout,
+      cancelSignal: shutdownController.signal,
     });
 
     const optSummary = optResult.data?.summary;
@@ -742,6 +887,7 @@ export async function orchestrate(): Promise<void> {
           strategyFile: cfg.strategyFile,
           repoRoot: cfg.repoRoot,
           model: cfg.modelRouting.fix,
+          cancelSignal: shutdownController.signal,
         });
         continue;
       }
@@ -763,11 +909,15 @@ export async function orchestrate(): Promise<void> {
           warmupBars: effectiveWarmupBars,
         });
       } else {
-        // Child process: needed after restructure edits (~5s)
-        log(`${c.blu}Running child-process backtest${c.r} (post-restructure)...`);
+        // Child process: needed after restructure edits (~5s) or for non-seed variants
+        log(`${c.blu}Running child-process backtest${c.r} (${isNonSeedVariant ? "variant" : "post-restructure"})...`);
+        const strategyDistPath = isNonSeedVariant
+          ? cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js")
+          : undefined;
         engineResult = runEngineChild({
           repoRoot: cfg.repoRoot,
           factoryName: cfg.strategyFactory,
+          strategyFilePath: strategyDistPath,
           paramOverrides,
           dbPath: cfg.dbPath,
           coin: cfg.coin,
@@ -812,6 +962,7 @@ export async function orchestrate(): Promise<void> {
           strategyFile: cfg.strategyFile,
           repoRoot: cfg.repoRoot,
           model: cfg.modelRouting.fix,
+          cancelSignal: shutdownController.signal,
         });
         continue;
       }
@@ -1019,6 +1170,8 @@ export async function orchestrate(): Promise<void> {
             lastMetric.durationMs = Date.now() - iterStartMs;
             if (optSummary) lastMetric.summary = optSummary;
           }
+          variantMgr.markComplete(scoreResult.weighted, iterPnl, iter, iter);
+          variantMgr.save();
           break;
         }
         logOk(`✓ KB criteria met — continuing to reach stretch PF>=${stretchTargets.stretchPF} (current=${(metrics.profitFactor ?? 0).toFixed(2)})`);
@@ -1038,11 +1191,13 @@ export async function orchestrate(): Promise<void> {
           state.bestIter = iter;
           bestScoreBreakdown = scoreResult.raw;
           checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, engineTrades, paramCount, lastStrategyParams, analysis ?? undefined);
-          const lastMetric = state.sessionMetrics[state.sessionMetrics.length - 1];
-          if (lastMetric) {
-            lastMetric.durationMs = Date.now() - iterStartMs;
-            if (optSummary) lastMetric.summary = optSummary;
+          const lastMetric2 = state.sessionMetrics[state.sessionMetrics.length - 1];
+          if (lastMetric2) {
+            lastMetric2.durationMs = Date.now() - iterStartMs;
+            if (optSummary) lastMetric2.summary = optSummary;
           }
+          variantMgr.markComplete(scoreResult.weighted, iterPnl, iter, iter);
+          variantMgr.save();
           break;
         }
         logOk(`✓ Criteria passing, stretch PF>=${stretchTargets.stretchPF} not yet reached (current=${(metrics.profitFactor ?? 0).toFixed(2)})`);
@@ -1102,8 +1257,11 @@ export async function orchestrate(): Promise<void> {
           }
         }
       }
-    } else if (effectiveVerdict === "reject") {
-      logWarn(`↩ Rolling back: ${effectiveVerdict === scoreVerdict ? "score degraded" : "guardrail rejected"} (score=${scoreResult.weighted.toFixed(1)} vs best=${bestScore.toFixed(1)})`);
+    } else {
+      // No checkpoint saved — rollback to prevent param drift.
+      // Covers both explicit "reject" and "neutral" (score in noise band but not improved).
+      const isNeutralDrift = effectiveVerdict !== "reject";
+      logWarn(`↩ Rolling back: ${isNeutralDrift ? "score in noise band" : effectiveVerdict === scoreVerdict ? "score degraded" : "guardrail rejected"} (score=${scoreResult.weighted.toFixed(1)} vs best=${bestScore.toFixed(1)})`);
 
       // Track failed restructure for prompt feedback (P3.2: include diagnosis)
       if (phase !== "refine") {
@@ -1150,7 +1308,9 @@ export async function orchestrate(): Promise<void> {
 
       // P1.2: Track rollback reason for next iteration's prompt (P3.1: specific guardrail type)
       let rollbackCause: string;
-      if (effectiveVerdict === scoreVerdict) {
+      if (isNeutralDrift) {
+        rollbackCause = `neutral — score ${scoreResult.weighted.toFixed(1)} within noise band of best ${bestScore.toFixed(1)}`;
+      } else if (effectiveVerdict === scoreVerdict) {
         rollbackCause = `score degraded (${scoreResult.weighted.toFixed(1)} vs best ${bestScore.toFixed(1)})`;
       } else if (wfViolations.length > 0) {
         const wfData = analysis.walkForward;
@@ -1259,6 +1419,8 @@ export async function orchestrate(): Promise<void> {
       if (optSummary) lastMetricEntry.summary = optSummary;
     }
 
+    variantMgr.incrementIterations();
+
     emitEvent({
       artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
       stage: "ANALYSIS_DONE", status: "success", pnl: currentPnl,
@@ -1276,6 +1438,18 @@ export async function orchestrate(): Promise<void> {
   const restoredParams = checkpoint.loadParams(cfg.checkpointDir);
   if (restoredParams) {
     paramOverrides = restoredParams;
+  }
+
+  // ---- Save variant registry ----
+  // Update active variant's best scores and save
+  const endVariant = variantMgr.getActive();
+  if (endVariant) {
+    variantMgr.updateBest(state.bestScore, state.bestPnl, state.bestIter);
+  }
+  variantMgr.save();
+  const allVariants = variantMgr.getAll();
+  if (allVariants.length > 1) {
+    logDim(`Variant scores: ${allVariants.map(v => `${v.id}=${v.bestScore.toFixed(1)} (${v.status})`).join(", ")}`);
   }
 
   // ---- Session Summary ----

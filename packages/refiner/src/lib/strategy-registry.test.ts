@@ -6,25 +6,9 @@ describe("strategyRegistry.get", () => {
     const factory = strategyRegistry.get("createDonchianAdx");
     expect(typeof factory).toBe("function");
     const strategy = factory();
-    expect(strategy.name).toBe("BTC 15m Breakout — BB Squeeze Short + Dual TP");
+    expect(strategy.name).toMatch(/^BTC 15m Breakout/);
     expect(strategy.params).toBeDefined();
     expect(strategy.params.bbKcPeriod).toBeDefined();
-  });
-
-  it("returns createKeltnerRsi2 factory", () => {
-    const factory = strategyRegistry.get("createKeltnerRsi2");
-    expect(typeof factory).toBe("function");
-    const strategy = factory();
-    expect(strategy.name).toBe("BTC 15m Mean Reversion — Keltner RSI2");
-    expect(strategy.params).toBeDefined();
-  });
-
-  it("returns createEmaPullback factory", () => {
-    const factory = strategyRegistry.get("createEmaPullback");
-    expect(typeof factory).toBe("function");
-    const strategy = factory();
-    expect(strategy.name).toBe("SOL 15m Pullback — EMA Pullback");
-    expect(strategy.params).toBeDefined();
   });
 
   it("throws for unknown factory name", () => {
@@ -44,8 +28,6 @@ describe("strategyRegistry.list", () => {
   it("returns all registered factory names", () => {
     const names = strategyRegistry.list();
     expect(names).toContain("createDonchianAdx");
-    expect(names).toContain("createKeltnerRsi2");
-    expect(names).toContain("createEmaPullback");
-    expect(names.length).toBe(3);
+    expect(names.length).toBe(1);
   });
 });

@@ -9,7 +9,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - `src/indicators/` — EMA, SMA, ATR, RSI, ADX (via trading-signals), Donchian, Keltner (custom)
 - `src/engine/` — Backtest loop, order simulation, position tracking, equity curve
 - `src/analysis/` — Metrics calculation, trade analysis, walk-forward, filter simulations
-- `src/strategies/{asset}/` — Strategy implementations organized by asset (btc/, sol/)
+- `src/strategies/{asset}/{category}/` — Strategy implementations organized by asset and category (btc/breakout/, btc/mean-reversion/, sol/pullback/)
 - `src/run-backtest.ts` — CLI entrypoint (isMain guard)
 
 ## Key conventions
@@ -37,16 +37,17 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 - `fetchCandles` tests inject mock CCXT exchange via `_exchange` option (no module mocking)
 - `computeMinWarmupBars(strategy, sourceInterval)` converts `requiredWarmup` to source bars with 20% margin for HTF bucket alignment; used by exchange StrategyRunner for auto-correction
 
-## Strategy organization (per-asset)
-- `src/strategies/{asset}/` — strategy source + tests organized by asset (e.g. `btc/`, `sol/`)
-- `src/strategies/{asset}/deployed/` — frozen copies used by the exchange daemon
-- `src/strategies/deployed/index.ts` — top-level barrel that re-exports from all `{asset}/deployed/`
+## Strategy organization (per-asset, per-category)
+- `src/strategies/{asset}/{category}/` — strategy source + tests organized by asset and category (e.g. `btc/breakout/`, `btc/mean-reversion/`, `sol/pullback/`)
+- `src/strategies/{asset}/{category}/deployed/` — frozen copies used by the exchange daemon; **one deployed strategy per asset+category**
+- `src/strategies/deployed/index.ts` — top-level barrel that re-exports from all `{asset}/{category}/deployed/`
 - Daemon imports from `@breaker/backtest/deployed` (sub-path export), NOT from root
-- `pnpm promote <name>` or `pnpm promote --all` copies `{asset}/{name}.ts` → `{asset}/deployed/{name}.ts` with import rewriting (`../../` → `../../../`)
+- `pnpm promote <name>` or `pnpm promote --all` copies `{asset}/{category}/{name}.ts` → `{asset}/{category}/deployed/{name}.ts` with import rewriting (`../../../` → `../../../../`)
 - `pnpm promote <name> --from-checkpoint <path>` promotes from a refiner checkpoint
 - Promote auto-discovers `best-params.json` from refiner assets and bakes param values into DEFAULT_PARAMS via `bakeParamDefaults()`
 - After promote, run `pnpm build` to compile and restart daemon
-- The refiner can freely modify `src/strategies/{asset}/*.ts` without affecting the running daemon
+- The refiner can freely modify `src/strategies/{asset}/{category}/*.ts` without affecting the running daemon
+- Variant files from the refiner live alongside the seed strategy in `{asset}/{category}/` (e.g. `btc/breakout/bb-squeeze-adx-chandelier.ts`)
 - Strategy files in `src/strategies/` (excluding `deployed/`) are **AI-generated** by the refiner — do NOT create hand-maintained tests for them. Fixes go in the refiner prompt or engine runtime validation, not in the strategy file directly.
 - `pctOfPosition` in `takeProfits` is a **fraction (0-1)**, not a percentage. Engine throws if `> 1`. Use `0.50` for 50%.
 - `bakeParamDefaults(source, overrides)` rewrites `value: X` in strategy DEFAULT_PARAMS to match optimized overrides. Reports `applied` and `stale` params. Used by checkpoint save and promote to make strategy files self-contained.

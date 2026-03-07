@@ -234,10 +234,11 @@ interface Strategy {
 ## OPTIMIZATION RULES
 - **1 change per iteration** (refine phase): change ONE param value. Restructure can make larger changes.
 - **Variable cap: ${moduleContext.varCap}** — current optimizable params must not exceed this. Adding a param requires dropping another.
-- **Core parameters first**: fully sweep core parameter ranges before secondary params.
+- **Core parameters first**: sweep core parameter ranges before secondary params.
+- **Early exit from sweep**: if 3+ consecutive tested values for the same param ALL degrade vs the best score, the param is **directionally exhausted** — stop sweeping that direction, mark the param as done, and move to the next param or direction. Do NOT continue testing remaining values when the trend is clearly negative.
 - **FORBIDDEN: day-of-week filters**. No dayofweek conditions.
 - **FORBIDDEN: hour-of-day filters**. Use adaptive volume/volatility filters instead of time gates.
-- **Axis exhaustion**: a core param is only EXHAUSTED when every value in min/max/step has been tested.
+- **Axis exhaustion**: a core param is EXHAUSTED when every value has been tested OR when directionally exhausted (3+ consecutive degradations).
 - **Directional bias**: if one direction PF < 0.5, diagnosis is STRUCTURAL.
 - **Next steps are conditionals**: use format "if [metric X] then [action Y]".
 - **FORBIDDEN: category change**. Strategy archetype (${moduleContext.profile}) MUST NOT change without RESTRUCTURE approval.
@@ -593,7 +594,12 @@ export function normalizeToCatalog(
       matches.sort((a, b) => b.name.length - a.name.length);
       normalized[slotName] = matches[0].name;
     } else {
-      normalized[slotName] = rawName;
+      // Fuzzy: try matching first 2 words of raw name against catalog candidates
+      const rawWords = lower.split(/\s+/).slice(0, 2).join(" ");
+      const fuzzy = slot.candidates.find((c) =>
+        c.name.toLowerCase().startsWith(rawWords) || rawWords.startsWith(c.name.toLowerCase().split(/\s+/).slice(0, 2).join(" ")),
+      );
+      normalized[slotName] = fuzzy ? fuzzy.name : rawName;
     }
   }
   return normalized;
@@ -632,7 +638,8 @@ export function formatCatalogForPrompt(
   const lines: string[] = ["### Component Catalog (from Knowledge Base)"];
   lines.push("");
   lines.push("Select ONE component per slot. You CANNOT invent new components outside this list.");
-  lines.push("Use the EXACT candidate name as written below in your metadata `selectedComponents`.");
+  lines.push("Use the EXACT SHORT candidate name as written below in your metadata `selectedComponents`.");
+  lines.push("Example: write `\"Volume Spike\"` NOT `\"Volume Spike vs SMA(vol,20) Timeout at timeoutBars\"`. Max 3 words per name.");
   lines.push("");
 
   for (const slot of catalog.slots) {

@@ -1,0 +1,37 @@
+{
+  "variants": [
+    {
+      "id": "donchian-adx",
+      "components": {},
+      "strategyFile": "/Users/edu/Projects/trading/packages/backtest/src/strategies/btc/breakout/donchian-adx.ts",
+      "checkpointDir": "/Users/edu/Projects/trading/packages/refiner/assets/btc/breakout/checkpoints",
+      "paramHistoryFile": "/Users/edu/Projects/trading/packages/refiner/assets/btc/breakout/parameter-history.json",
+      "bestScore": 80.21,
+      "bestPnl": 131.26094648798454,
+      "bestIter": 2,
+      "status": "complete",
+      "iterationsUsed": 2
+    },
+    {
+      "id": "volume-spike-vs-sma-vol-20-timeout-at-timeoutbars-narrow-range-breakout-atr-normalized-n-bar-range-width-gate-4h-adx-14-consolidation-daily-ema-200-directional-atr-14-1h-stopmult-single-tp-at-tprr-risk",
+      "components": {
+        "Entry": "Narrow Range Breakout — ATR-normalized N-bar range width gate",
+        "Regime": "4H ADX(14) consolidation + Daily EMA(200) directional",
+        "Confirmation": "Volume spike vs SMA(vol, 20)",
+        "Stop": "ATR(14, 1H) × stopMult",
+        "TP": "Single TP at tpRR × risk",
+        "Exit": "Timeout at timeoutBars"
+      },
+      "strategyFile": "/Users/edu/Projects/trading/packages/backtest/src/strategies/btc/breakout/volume-spike-vs-sma-vol-20-timeout-at-timeoutbars-narrow-range-breakout-atr-normalized-n-bar-range-width-gate-4h-adx-14-consolidation-daily-ema-200-directional-atr-14-1h-stopmult-single-tp-at-tprr-risk.ts",
+      "checkpointDir": "/Users/edu/Projects/trading/packages/refiner/assets/btc/breakout/variants/volume-spike-vs-sma-vol-20-timeout-at-timeoutbars-narrow-range-breakout-atr-normalized-n-bar-range-width-gate-4h-adx-14-consolidation-daily-ema-200-directional-atr-14-1h-stopmult-single-tp-at-tprr-risk/checkpoints",
+      "paramHistoryFile": "/Users/edu/Projects/trading/packages/refiner/assets/btc/breakout/variants/volume-spike-vs-sma-vol-20-timeout-at-timeoutbars-narrow-range-breakout-atr-normalized-n-bar-range-width-gate-4h-adx-14-consolidation-daily-ema-200-directional-atr-14-1h-stopmult-single-tp-at-tprr-risk/parameter-history.json",
+      "bestScore": 0,
+      "bestPnl": 0,
+      "bestIter": 0,
+      "status": "plateaued",
+      "iterationsUsed": 20,
+      "plateauReason": "neutralStreak=0, noChange=1, wfReject=0"
+    }
+  ],
+  "activeVariantId": null
+}

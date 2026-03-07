@@ -38,6 +38,7 @@ export { bollingerBands } from "./indicators/bollinger-bands.js";
 export type { BollingerBandsResult } from "./indicators/bollinger-bands.js";
 export { detectSqueeze } from "./indicators/detect-squeeze.js";
 export type { SqueezeResult } from "./indicators/detect-squeeze.js";
+export { slope } from "./indicators/slope.js";
 
 // Engine
 export { runBacktest, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
@@ -73,9 +74,7 @@ export type { DataSource } from "./data/to-symbol.js";
 export { CandleCache } from "./data/candle-cache.js";
 
 // Strategies
-export { createDonchianAdx } from "./strategies/btc/donchian-adx.js";
-export { createKeltnerRsi2 } from "./strategies/btc/keltner-rsi2.js";
-export { createEmaPullback } from "./strategies/sol/ema-pullback.js";
+export { createDonchianAdx } from "./strategies/btc/breakout/donchian-adx.js";
 
 // Strategy utilities
 export { bakeParamDefaults } from "./strategies/bake-param-defaults.js";

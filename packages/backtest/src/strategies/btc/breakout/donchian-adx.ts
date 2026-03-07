@@ -9,10 +9,12 @@ import { atr } from "../../../indicators/atr.js";
 import { sma } from "../../../indicators/sma.js";
 
 const MS_1H = 3_600_000;
+const MS_4H = 4 * MS_1H;
 const MS_1D = 86_400_000;
 
-const DAILY_EMA_PERIOD = 200; // fixed — institutional trend filter (0 vars)
-const SQUEEZE_LOOKBACK = 3;   // bars to look back for recent squeeze
+const DAILY_EMA_PERIOD = 200;  // fixed — institutional trend filter (0 vars)
+const HTF_4H_EMA_PERIOD = 21;  // fixed — 4H momentum confirmation filter (0 vars)
+const SQUEEZE_LOOKBACK = 3;    // bars to look back for recent squeeze
 
 export interface DonchianAdxParams {
   bbKcPeriod: StrategyParam;
@@ -28,13 +30,13 @@ export interface DonchianAdxParams {
 
 const DEFAULT_PARAMS: DonchianAdxParams = {
   bbKcPeriod: { value: 20, min: 14, max: 30, step: 2, optimizable: true, description: "Shared period for BB and KC (squeeze detection)" },
-  kcMult: { value: 1.5, min: 1, max: 2.5, step: 0.25, optimizable: true, description: "Keltner Channel ATR multiplier" },
-  bbStdDev: { value: 2, min: 1.5, max: 2.5, step: 0.25, optimizable: true, description: "Bollinger Bands standard deviation multiplier" },
+  kcMult: { value: 1.5, min: 1, max: 2.5, step: 0.25, optimizable: false, description: "Keltner Channel ATR multiplier (fixed — zero trade impact across full range)" },
+  bbStdDev: { value: 2, min: 1.5, max: 2.5, step: 0.25, optimizable: false, description: "Bollinger Bands standard deviation multiplier (fixed — zero trade impact across full range)" },
   atrStopMult: { value: 3, min: 3, max: 5, step: 0.5, optimizable: true, description: "ATR multiplier for safety stop (KB §1.6: min 3.0 for breakout)" },
   volMult: { value: 2, min: 1, max: 3, step: 0.5, optimizable: true, description: "Volume spike multiplier vs SMA(vol, 20) — KB §3.1 rule 3" },
-  tpRR: { value: 1.5, min: 1.5, max: 3, step: 0.5, optimizable: true, description: "TP risk-reward ratio" },
-  trailMult: { value: 3, min: 2, max: 5, step: 0.5, optimizable: true, description: "ATR multiplier for trailing stop (tracks best price since entry)" },
-  timeoutBars: { value: 48, min: 24, max: 96, step: 8, optimizable: true, description: "Bars before timeout exit (KB range: 24–96)" },
+  tpRR: { value: 3, min: 1.5, max: 3, step: 0.5, optimizable: true, description: "TP risk-reward ratio" },
+  trailMult: { value: 4.5, min: 2, max: 5, step: 0.5, optimizable: true, description: "ATR multiplier for trailing stop (tracks best price since entry)" },
+  timeoutBars: { value: 56, min: 24, max: 96, step: 8, optimizable: true, description: "Bars before timeout exit (KB range: 24–96)" },
   maxTradesDay: { value: 3, min: 2, max: 5, step: 1, optimizable: false, description: "Max trades per day" },
 };
 
@@ -68,15 +70,22 @@ function mapHtfToSource(
 }
 
 /**
- * BB Squeeze Release Breakout (short-only) — Daily EMA 200 regime + volume + dual TP.
+ * BB Squeeze Release Breakout (short-only) — Daily EMA 200 regime + 4H EMA21 momentum
+ * + volume + dual TP + 4H momentum reversal exit.
  *
  * Entry: BB/KC squeeze detected → squeeze release → price closes below DC lower AND BB lower
- *        (momentum confirmation) + Daily EMA 200 regime (below) + volume spike.
+ *        (momentum confirmation) + Daily EMA 200 regime (below) + 4H EMA21 bearish momentum
+ *        (price below 4H EMA21, filters false breakouts that lead to SL hits) + volume spike.
  *        Long entries disabled (structural: Long PF=0).
- * Exit: Dual TP — TP1 at 1R (40%), TP2 at tpRR×R (50% of remaining), ATR trail for remainder.
+ * Exit: Dual TP — TP1 at 1.5R (40%), TP2 at tpRR×R (50%), ATR trail for remainder (10%).
+ *        4H EMA21 momentum reversal — if price crosses back above 4H EMA21 during short,
+ *        the bearish thesis is invalidated and trade exits early (cuts losing signal exits).
  *
- * TP1 at stopDist (1R) dramatically increases TP hit rate vs prior single TP at 2R.
- * ATR trail tracks lowest low since entry + trailMult × ATR(1H) for remaining 30%.
+ * Structural changes (iter 54):
+ * - Added 4H momentum reversal exit to cut stalled/losing shorts earlier (35 signal exits
+ *   averaged $0.28/trade — momentum exit should improve PF by exiting losers faster).
+ * - Fixed bbStdDev=2.0 and kcMult=1.5 as non-optimizable (zero trade impact across full
+ *   explored range) — reduces optimizable vars from 8 to 6, improving complexity score.
  */
 export function createDonchianAdx(
   paramOverrides?: Partial<Record<keyof DonchianAdxParams, number>>,
@@ -96,12 +105,13 @@ export function createDonchianAdx(
   let _volSma20: number[] = [];
   let _atr1h: number[] = [];
   let _emaDaily: number[] = [];
+  let _ema4h: number[] = [];
 
   return {
-    name: "BTC 15m Breakout — BB Squeeze Short + Dual TP",
+    name: "BTC 15m Breakout — BB Squeeze Short + 4H Momentum Exit",
     params,
-    requiredTimeframes: ["1h", "1d"],
-    requiredWarmup: { source: 40, "1h": 15, "1d": 210 },
+    requiredTimeframes: ["1h", "4h", "1d"],
+    requiredWarmup: { source: 40, "1h": 15, "4h": 25, "1d": 210 },
 
     init(candles: Candle[], higherTimeframes: Record<string, Candle[]>) {
       const period = params.bbKcPeriod.value;
@@ -146,6 +156,16 @@ export function createDonchianAdx(
       } else {
         _emaDaily = new Array(candles.length).fill(NaN);
       }
+
+      // 4H EMA21 momentum filter — filters false breakouts against 4H trend (anti-repaint)
+      const htf4h = higherTimeframes["4h"];
+      if (htf4h && htf4h.length >= HTF_4H_EMA_PERIOD + 1) {
+        const htf4hCloses = htf4h.map((c: Candle) => c.c);
+        const ema21_4h = ema(htf4hCloses, HTF_4H_EMA_PERIOD);
+        _ema4h = mapHtfToSource(candles, htf4h, ema21_4h, MS_4H);
+      } else {
+        _ema4h = new Array(candles.length).fill(NaN);
+      }
     },
 
     onCandle(ctx: StrategyContext): Signal | null {
@@ -177,6 +197,10 @@ export function createDonchianAdx(
       if (isNaN(htfEma)) return null;
       ctx.indicator("emaDaily200", htfEma);
 
+      const ema4h = _ema4h[index];
+      if (isNaN(ema4h)) return null;
+      ctx.indicator("ema4h21", ema4h);
+
       // --- Squeeze release detection ---
       let hadSqueeze = false;
       for (let k = 1; k <= SQUEEZE_LOOKBACK && index - k >= 0; k++) {
@@ -195,21 +219,25 @@ export function createDonchianAdx(
       // Track calls preserved for diagnostics
       const longBreakout = currentCandle.c > prevDcUpper;
       const longRegime = currentCandle.c > htfEma;
+      const longMomentum4h = currentCandle.c > ema4h;
       const longVol = currentVol > volThreshold;
 
       if (
         ctx.track("L:squeezeRelease", squeezeRelease, squeezeRelease ? 1 : 0, 1) &&
         ctx.track("L:dcBreakout", longBreakout, currentCandle.c, prevDcUpper) &&
         ctx.track("L:regime", longRegime, currentCandle.c, htfEma) &&
+        ctx.track("L:4hTrend", longMomentum4h, currentCandle.c, ema4h) &&
         ctx.track("L:volSpike", longVol, currentVol, volThreshold)
       ) {
         // Long entries disabled — structural diagnostic: Long PF=0, WR=0%
       }
 
-      // SHORT signal: squeeze release + DC breakout + BB momentum + Daily EMA regime + volume
+      // SHORT signal: squeeze release + DC breakout + BB momentum + Daily EMA regime
+      //               + 4H EMA21 bearish momentum (new filter) + volume
       const shortBreakout = currentCandle.c < prevDcLower;
       const shortBbBreak = currentCandle.c < _bbLower[index];
       const shortRegime = currentCandle.c < htfEma;
+      const shortMomentum4h = currentCandle.c < ema4h; // 4H bearish: price below 4H EMA21
       const shortVol = currentVol > volThreshold;
 
       if (
@@ -217,19 +245,20 @@ export function createDonchianAdx(
         ctx.track("S:dcBreakout", shortBreakout, currentCandle.c, prevDcLower) &&
         ctx.track("S:bbBreak", shortBbBreak, currentCandle.c, _bbLower[index]) &&
         ctx.track("S:regime", shortRegime, currentCandle.c, htfEma) &&
+        ctx.track("S:4hTrend", shortMomentum4h, currentCandle.c, ema4h) &&
         ctx.track("S:volSpike", shortVol, currentVol, volThreshold)
       ) {
-        // Dual TP: TP1 at 1R (40%) locks profit early; TP2 at tpRR×R (50% of remaining = 30%);
-        // trailing stop handles final 30% for outsized moves.
+        // Dual TP: TP1 at 1.5R (40%) — widened from 1.0R to reduce WR below 65% rejection
+        // threshold and improve avgR. TP2 at tpRR×R (50%); trailing stop handles final 10%.
         return {
           direction: "short",
           entryPrice: null,
           stopLoss: currentCandle.c + stopDist,
           takeProfits: [
-            { price: currentCandle.c - stopDist, pctOfPosition: 0.40 },
+            { price: currentCandle.c - 1.5 * stopDist, pctOfPosition: 0.40 },
             { price: currentCandle.c - tpRR * stopDist, pctOfPosition: 0.50 },
           ],
-          comment: "Squeeze release short — dual TP",
+          comment: "Squeeze release short — 4H filtered, 1.5R TP1",
         };
       }
 
@@ -246,11 +275,22 @@ export function createDonchianAdx(
         return { exit: true, comment: "timeout" };
       }
 
+      // 4H EMA21 momentum reversal exit — trade thesis broken if price crosses back
+      const ema4hVal = _ema4h[index];
+      const currentCandle = ctx.candles[index];
+      if (!isNaN(ema4hVal)) {
+        if (positionDirection === "short" && currentCandle.c > ema4hVal) {
+          return { exit: true, comment: "signal" };
+        }
+        if (positionDirection === "long" && currentCandle.c < ema4hVal) {
+          return { exit: true, comment: "signal" };
+        }
+      }
+
       // ATR trailing stop — tracks best price since entry
       const atr1hVal = _atr1h[index];
       if (isNaN(atr1hVal)) return null;
       const trailDist = params.trailMult.value * atr1hVal;
-      const currentCandle = ctx.candles[index];
 
       if (positionDirection === "short") {
         let lowestLow = Infinity;
@@ -322,7 +362,7 @@ export function createDonchianAdx(
         return {
           stopLoss: currentCandle.c - stopDist,
           takeProfits: [
-            { price: currentCandle.c + stopDist, pctOfPosition: 0.40 },
+            { price: currentCandle.c + 1.5 * stopDist, pctOfPosition: 0.40 },
             { price: currentCandle.c + tpRR * stopDist, pctOfPosition: 0.50 },
           ],
         };
@@ -331,7 +371,7 @@ export function createDonchianAdx(
       return {
         stopLoss: currentCandle.c + stopDist,
         takeProfits: [
-          { price: currentCandle.c - stopDist, pctOfPosition: 0.40 },
+          { price: currentCandle.c - 1.5 * stopDist, pctOfPosition: 0.40 },
           { price: currentCandle.c - tpRR * stopDist, pctOfPosition: 0.50 },
         ],
       };

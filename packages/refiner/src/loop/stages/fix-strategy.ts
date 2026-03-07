@@ -16,15 +16,16 @@ export async function fixStrategy(opts: {
   strategyFile: string;
   repoRoot: string;
   model: string;
+  cancelSignal?: AbortSignal;
 }): Promise<StageResult<FixResult>> {
-  const { prompt, strategyFile, repoRoot, model } = opts;
+  const { prompt, strategyFile, repoRoot, model, cancelSignal } = opts;
 
   try {
     const beforeContent = fs.readFileSync(strategyFile, "utf8");
 
     const result = await runClaude(
       ["--model", model, "--dangerously-skip-permissions", "-p", prompt],
-      { cwd: repoRoot, timeoutMs: 180000, label: "fix" },
+      { cwd: repoRoot, timeoutMs: 180000, label: "fix", cancelSignal },
     );
 
     if (result.status !== 0) {
