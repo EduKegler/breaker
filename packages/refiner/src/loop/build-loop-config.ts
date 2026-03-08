@@ -36,6 +36,7 @@ export function buildLoopConfig(partial: Partial<LoopConfig>): LoopConfig {
     phases: config.phases,
     scoring: config.scoring,
     research: config.research,
+    perVariantBudget: config.perVariantBudget,
     coin: dataConfig.coin,
     dataSource: dataConfig.dataSource as DataSource,
     interval: dataConfig.interval as CandleInterval,

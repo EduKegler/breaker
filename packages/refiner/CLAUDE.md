@@ -28,10 +28,15 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 ## Variant-based optimization
 - **Motivacao**: O antigo restructure phase ficava preso em rollback loops — refine melhorava params, restructure degradava, rollback restaurava, loop infinito. Variantes resolvem: cada combinacao de componentes KB e uma tentativa atomica. Plateau = proxima combinacao, nao retry.
 - **Ciclo (outer loop)**: seed → refine → plateau → gera nova variante inline → refine → plateau → ... ate esgotar `--max-iter`
-- **Outer loop**: quando plateau e detectado (neutralStreak, noChangeCount, wfRejectStreak), a variante e marcada `plateaued`, nova variante e gerada inline (sem reiniciar o processo), actor xstate e recriado com estado limpo, baseline da nova variante e rodado, e o for-loop continua com iteracoes restantes. Se a geracao falhar, o loop termina.
+- **Outer loop**: quando plateau/kill/budget e detectado, a variante e marcada (`plateaued`/`killed`), nova variante e gerada inline (sem reiniciar o processo), actor xstate e recriado com estado limpo, baseline da nova variante e rodado, e o for-loop continua com iteracoes restantes. Se a geracao falhar (2 tentativas com retry), o loop termina.
+- **Variant switch triggers**: (1) phase escalation (neutralStreak, noChangeCount, wfRejectStreak) → plateaued; (2) early kill (PF < thresholds derivados de MODULE_CRITERIA) → killed; (3) per-variant budget exhausted (default 15 iters) → plateaued.
+- **Early kill progressivo** (`shouldKillVariant` em phase-helpers.ts): PF < 0.3 = kill imediato; iter 3 = PF < minPF×0.6; iter 6 = PF < minPF×0.75. Thresholds derivados de MODULE_CRITERIA, nao hardcoded.
+- **Per-variant budget**: `perVariantBudget` em breaker-config.json (default 15). Forca variant switch mesmo sem plateau de phase.
+- **Retry de geracao**: cada call site de `switchToNewVariant` tenta 2x antes de desistir.
 - **Sem promocao automatica**: usuario compara scores manualmente via variant-registry.json e decide qual promover.
 - Arquivos-chave:
-  - `variant-manager.ts` — Registry (variant-registry.json), naming (buildVariantId, SLOT_PRIORITY), lifecycle (active→plateaued→complete)
+  - `variant-switch.ts` — Funcao `switchToNewVariant()`: encapsula generateVariant → rebuild → import → baseline → checkpoint → score
+  - `variant-manager.ts` — Registry (variant-registry.json), naming (buildVariantId, SLOT_PRIORITY), lifecycle (active→plateaued→complete→killed)
   - `variant-generator.ts` — Geracao: prompt com failure history + catalog → Claude retorna slugs → validateSlugComponents() → createVariant()
   - `seed-generator.ts` — Bootstrap: skeleton → optimizeStrategy(restructure) → fixStrategy fallback
   - `build-module-context.ts` — CANDIDATE_SLUGS, STARTING_COMPONENTS (slug-based), extractStartingPoint(), getKbSection(), MODULE_CRITERIA, ComponentCatalog
@@ -57,7 +62,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 ## Experimental integrity (mandatory)
 - Before accepting an iteration result, compare `contentHash` of strategy source.
 - During an optimization loop, keep the backtest window fixed; only change in a new round.
-- Walk-forward overfit gate (KB §10.1): `validateWalkForward()` in `guardrails.ts` rejects iterations where `overfitFlag=true` (testPF < 50% of trainPF or testPF < 1.0), even if score improved. Prevents promotion of memorized strategies.
+- Walk-forward overfit gate (KB §10.1): `validateWalkForward()` in `guardrails.ts` rejects iterations where `overfitFlag=true` (pfRatio < 0.6, i.e., testPF < 60% of trainPF), even if score improved. Prevents promotion of memorized strategies. Absolute PF < 1.0 is NOT checked by the WF guard — it's enforced by scoring criteria. Conflating "bad strategy" with "overfitting" creates a Catch-22 for losing strategies.
 - Checkpoint save decision uses `effectiveVerdict` (not raw score comparison alone). Guardrail-rejected iterations (WF overfit, free variable count) never save checkpoints, and trigger rollback to last good state.
 - Checkpoint save bakes optimized params into strategy source via `bakeParamDefaults()` — strategy files become self-contained. Stale params (from previous strategy versions) are auto-cleaned from `best-params.json`.
 

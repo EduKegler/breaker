@@ -44,7 +44,7 @@ describe("BreakerConfigSchema", () => {
     expect(data.guardrails.maxRiskTradeUsd).toBe(25);
     expect(data.guardrails.globalMaxTradesDay).toBe(5);
     expect(data.phases.refine.maxIter).toBe(5);
-    expect(data.scoring.weights.pf).toBe(25);
+    expect(data.scoring.weights.pf).toBe(30);
     expect(data.research.enabled).toBe(true);
     expect(data.dateRange).toBe("last365");
   });
@@ -177,12 +177,12 @@ describe("ScoringWeightsSchema", () => {
     const result = ScoringWeightsSchema.safeParse({});
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.data.pf).toBe(25);
-    expect(result.data.avgR).toBe(20);
-    expect(result.data.wr).toBe(10);
-    expect(result.data.dd).toBe(15);
-    expect(result.data.complexity).toBe(10);
-    expect(result.data.sampleConfidence).toBe(20);
+    expect(result.data.pf).toBe(30);
+    expect(result.data.avgR).toBe(25);
+    expect(result.data.wr).toBe(12);
+    expect(result.data.dd).toBe(18);
+    expect(result.data.complexity).toBe(15);
+    expect(result.data.sampleConfidence).toBe(0);
   });
 });
 

@@ -122,7 +122,7 @@
     "maxCycles": 3
   },
   "scoring": {
-    "weights": { "pf": 25, "avgR": 20, "wr": 10, "dd": 15, "complexity": 10, "sampleConfidence": 20 }
+    "weights": { "pf": 30, "avgR": 25, "wr": 12, "dd": 18, "complexity": 15, "sampleConfidence": 0 }
   },
   "research": {
     "enabled": true,

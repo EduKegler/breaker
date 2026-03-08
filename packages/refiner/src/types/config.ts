@@ -76,12 +76,12 @@ export const PhasesConfigSchema = z.object({
 });
 
 export const ScoringWeightsSchema = z.object({
-  pf: z.number().min(0).default(25),
-  avgR: z.number().min(0).default(20),
-  wr: z.number().min(0).default(10),
-  dd: z.number().min(0).default(15),
-  complexity: z.number().min(0).default(10),
-  sampleConfidence: z.number().min(0).default(20),
+  pf: z.number().min(0).default(30),
+  avgR: z.number().min(0).default(25),
+  wr: z.number().min(0).default(12),
+  dd: z.number().min(0).default(18),
+  complexity: z.number().min(0).default(15),
+  sampleConfidence: z.number().min(0).default(0),
 });
 
 export const ScoringConfigSchema = z.object({
@@ -121,6 +121,7 @@ export const BreakerConfigSchema = z
     phases: PhasesConfigSchema.default({}),
     scoring: ScoringConfigSchema.default({}),
     research: ResearchConfigSchema.default({}),
+    perVariantBudget: z.number().int().min(1).default(15),
   })
   .superRefine((data, ctx) => {
     for (const [asset, cfg] of Object.entries(data.assets)) {

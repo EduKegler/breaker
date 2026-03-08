@@ -1,5 +1,6 @@
 import type { ScoreVerdict } from "./stages/scoring.js";
 import type { IterationState, LoopConfig, LoopPhase } from "./types.js";
+import { MODULE_CRITERIA } from "../lib/build-module-context.js";
 
 /**
  * Helpers for phase management in the optimization loop.
@@ -79,5 +80,37 @@ export const phaseHelpers = {
       if (scoreVerdict === "neutral") return "reject";
     }
     return scoreVerdict;
+  },
+
+  /**
+   * Progressive early-kill. Returns kill reason or null.
+   * Thresholds derived from MODULE_CRITERIA (not hardcoded).
+   *
+   * - Universal: PF < 0.3 → kill immediately (any iter)
+   * - Iter 3: bestPF < minPF × 0.6
+   * - Iter 6: bestPF < minPF × 0.75
+   */
+  shouldKillVariant(
+    bestPFEver: number,
+    variantIterCount: number,
+    moduleId: string,
+  ): string | null {
+    // Universal floor (any iter)
+    if (bestPFEver < 0.3) return `PF ${bestPFEver.toFixed(2)} < 0.3 (universal floor)`;
+
+    const mc = MODULE_CRITERIA[moduleId];
+    const minPF = mc?.minPF ?? 1.3;
+
+    // Iter 3 checkpoint
+    if (variantIterCount >= 3 && bestPFEver < minPF * 0.6) {
+      return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.6).toFixed(2)} (60% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
+    }
+
+    // Iter 6 checkpoint
+    if (variantIterCount >= 6 && bestPFEver < minPF * 0.75) {
+      return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.75).toFixed(2)} (75% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
+    }
+
+    return null;
   },
 };

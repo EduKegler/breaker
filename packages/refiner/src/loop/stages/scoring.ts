@@ -17,12 +17,12 @@ interface MultiObjectiveScore {
 }
 
 const DEFAULT_WEIGHTS: ScoringWeights = {
-  pf: 25,
-  avgR: 20,
-  wr: 10,
-  dd: 15,
-  complexity: 10,
-  sampleConfidence: 20,
+  pf: 30,
+  avgR: 25,
+  wr: 12,
+  dd: 18,
+  complexity: 15,
+  sampleConfidence: 0, // gate only — no weight reward for trade count
 };
 
 /**

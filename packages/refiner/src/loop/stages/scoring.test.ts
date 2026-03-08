@@ -38,10 +38,37 @@ describe("computeScore", () => {
     expect(lowComplexity.weighted).toBeGreaterThan(highComplexity.weighted);
   });
 
-  it("rewards more trades (sample confidence)", () => {
-    const manyTrades = computeScore(goodMetrics, 3, 200);
-    const fewTrades = computeScore(goodMetrics, 3, 30);
+  it("rewards more trades when sampleConfidence weight is explicit", () => {
+    const manyTrades = computeScore(goodMetrics, 3, 200, { sampleConfidence: 20 });
+    const fewTrades = computeScore(goodMetrics, 3, 30, { sampleConfidence: 20 });
     expect(manyTrades.weighted).toBeGreaterThan(fewTrades.weighted);
+  });
+
+  it("sampleConfidence=0: more trades do NOT increase score with equal quality", () => {
+    const score50 = computeScore(goodMetrics, 3, 50);
+    const score200 = computeScore(goodMetrics, 3, 200);
+    expect(score50.weighted).toBe(score200.weighted);
+  });
+
+  it("default weight sum is 100", () => {
+    // DEFAULT_WEIGHTS is not exported, but we can verify via the breakdown string
+    // that all weights sum to 100: pf(30) + avgR(25) + wr(12) + dd(18) + complexity(15) + sampleConfidence(0) = 100
+    const score = computeScore(goodMetrics, 3, 180);
+    const matches = score.breakdown.matchAll(/\/(\d+)/g);
+    const sum = [...matches].reduce((acc, m) => acc + Number(m[1]), 0);
+    expect(sum).toBe(100);
+  });
+
+  it("quality beats quantity: better PF with fewer trades scores higher", () => {
+    const highPfFewTrades: Metrics = {
+      ...goodMetrics, profitFactor: 1.5, numTrades: 50,
+    };
+    const lowPfManyTrades: Metrics = {
+      ...goodMetrics, profitFactor: 0.8, numTrades: 150,
+    };
+    const highPfScore = computeScore(highPfFewTrades, 3, 50);
+    const lowPfScore = computeScore(lowPfManyTrades, 3, 150);
+    expect(highPfScore.weighted).toBeGreaterThan(lowPfScore.weighted);
   });
 
   it("includes breakdown string", () => {
@@ -126,7 +153,7 @@ describe("computeScore", () => {
     const nanDD: Metrics = { ...goodMetrics, maxDrawdownPct: NaN };
     const score = computeScore(nanDD, 3, 180);
     expect(score.raw.dd).toBe(0);
-    expect(score.breakdown).toContain("DD: 0.0/15");
+    expect(score.breakdown).toContain("DD: 0.0/18");
   });
 
   it("applies harsh penalty when trades < 20 (Bug B: score inflation)", () => {

@@ -82,3 +82,55 @@ describe("computeEffectiveVerdict", () => {
     expect(phaseHelpers.computeEffectiveVerdict("reject", false)).toBe("reject");
   });
 });
+
+describe("shouldKillVariant", () => {
+  it("kills when PF < 0.3 at any iter", () => {
+    const reason = phaseHelpers.shouldKillVariant(0.25, 1, "M1");
+    expect(reason).toContain("0.3");
+    expect(reason).toContain("universal floor");
+  });
+
+  it("survives PF >= 0.3 at iter 1", () => {
+    expect(phaseHelpers.shouldKillVariant(0.5, 1, "M1")).toBeNull();
+  });
+
+  it("kills at iter 3 when PF < 60% of M1 minPF", () => {
+    // M1 minPF=1.3, 60% = 0.78
+    const reason = phaseHelpers.shouldKillVariant(0.7, 3, "M1");
+    expect(reason).not.toBeNull();
+    expect(reason).toContain("60%");
+    expect(reason).toContain("0.78");
+  });
+
+  it("survives at iter 3 when PF >= 60%", () => {
+    // M1 minPF=1.3, 60% = 0.78; PF=0.8 passes
+    expect(phaseHelpers.shouldKillVariant(0.8, 3, "M1")).toBeNull();
+  });
+
+  it("kills at iter 6 when PF < 75% of M1 minPF", () => {
+    // M1 minPF=1.3, 75% = 0.975
+    const reason = phaseHelpers.shouldKillVariant(0.9, 6, "M1");
+    expect(reason).not.toBeNull();
+    expect(reason).toContain("75%");
+  });
+
+  it("survives at iter 6 when PF >= 75%", () => {
+    // M1 minPF=1.3, 75% = 0.975; PF=1.0 passes
+    expect(phaseHelpers.shouldKillVariant(1.0, 6, "M1")).toBeNull();
+  });
+
+  it("uses M4 thresholds correctly", () => {
+    // M4 minPF=1.4: iter3 = 0.84, iter6 = 1.05
+    expect(phaseHelpers.shouldKillVariant(0.8, 3, "M4")).not.toBeNull();
+    expect(phaseHelpers.shouldKillVariant(0.85, 3, "M4")).toBeNull();
+    expect(phaseHelpers.shouldKillVariant(1.0, 6, "M4")).not.toBeNull();
+    expect(phaseHelpers.shouldKillVariant(1.1, 6, "M4")).toBeNull();
+  });
+
+  it("falls back to minPF=1.3 for unknown moduleId", () => {
+    // Unknown module → minPF=1.3 fallback, iter3 = 0.78
+    const reason = phaseHelpers.shouldKillVariant(0.7, 3, "M99");
+    expect(reason).not.toBeNull();
+    expect(reason).toContain("0.78");
+  });
+});

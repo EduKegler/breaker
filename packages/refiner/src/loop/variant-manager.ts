@@ -14,6 +14,8 @@ import fs from "node:fs";
 import path from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
+import type { ComponentCatalog, CatalogSlot } from "../lib/build-module-context.js";
+
 // ---------------------------------------------------------------------------
 // Component naming
 // ---------------------------------------------------------------------------
@@ -81,11 +83,13 @@ export interface VariantInfo {
   /** Global iteration at which best was achieved */
   bestIter: number;
   /** Current lifecycle status */
-  status: "active" | "plateaued" | "complete";
+  status: "active" | "plateaued" | "complete" | "killed";
   /** Iterations consumed by this variant */
   iterationsUsed: number;
   /** Why it plateaued (if applicable) */
   plateauReason?: string;
+  /** Why it was killed (if applicable) */
+  killReason?: string;
 }
 
 export interface VariantRegistry {
@@ -182,6 +186,26 @@ export class VariantManager {
     if (!active) return;
 
     active.status = "complete";
+    active.bestScore = bestScore;
+    active.bestPnl = bestPnl;
+    active.bestIter = bestIter;
+    active.iterationsUsed = iterationsUsed;
+    this.registry.activeVariantId = null;
+  }
+
+  /** Mark the active variant as killed (early termination due to no edge). Clears active. */
+  markKilled(
+    reason: string,
+    bestScore: number,
+    bestPnl: number,
+    bestIter: number,
+    iterationsUsed: number,
+  ): void {
+    const active = this.getActive();
+    if (!active) return;
+
+    active.status = "killed";
+    active.killReason = reason;
     active.bestScore = bestScore;
     active.bestPnl = bestPnl;
     active.bestIter = bestIter;
@@ -293,4 +317,112 @@ export class VariantManager {
       "utf8",
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Factory name fix
+// ---------------------------------------------------------------------------
+
+/**
+ * Fix factory function name in generated strategy source to match the variant ID.
+ * Renames `createOldName` → `createNewName` and related PascalCase types.
+ * Returns source unchanged if no `create*` export is found or name already matches.
+ */
+export function fixFactoryName(source: string, variantId: string): string {
+  const expectedFactory = "create" + variantId.split("-").map(s => s[0].toUpperCase() + s.slice(1)).join("");
+  const match = source.match(/export\s+function\s+(create\w+)/);
+  if (!match || match[1] === expectedFactory) return source;
+
+  const currentFactory = match[1];
+  let fixed = source.replaceAll(currentFactory, expectedFactory);
+
+  // Also rename PascalCase types (DonchianEmaTimeoutParams → SqueezeAdxTrailDcParams)
+  const currentPascal = currentFactory.replace(/^create/, "");
+  const expectedPascal = expectedFactory.replace(/^create/, "");
+  fixed = fixed.replaceAll(currentPascal, expectedPascal);
+  return fixed;
+}
+
+// ---------------------------------------------------------------------------
+// Pre-selection of next component combination
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate all combinations from the cartesian product of candidate slugs
+ * across the given slots. Each combo is a Record<slotName, slug>.
+ */
+function cartesianProduct(slots: CatalogSlot[]): Record<string, string>[] {
+  if (slots.length === 0) return [{}];
+
+  const [first, ...rest] = slots;
+  const restCombos = cartesianProduct(rest);
+  const result: Record<string, string>[] = [];
+
+  for (const candidate of first.candidates) {
+    for (const combo of restCombos) {
+      result.push({ [first.slotName]: candidate.slug, ...combo });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Count how many tested IDs contain a given slug as a substring.
+ * Used to score novelty — lower count = less tested = preferred.
+ */
+function slugUsageCount(slug: string, testedIds: Set<string>): number {
+  let count = 0;
+  for (const id of testedIds) {
+    if (id.includes(slug)) count++;
+  }
+  return count;
+}
+
+/**
+ * Sum of usage counts for all slugs in a combination.
+ * Lower = more novel.
+ */
+function totalSlugUsage(
+  combo: Record<string, string>,
+  testedIds: Set<string>,
+): number {
+  let total = 0;
+  for (const slug of Object.values(combo)) {
+    total += slugUsageCount(slug, testedIds);
+  }
+  return total;
+}
+
+/**
+ * Select the next untested component combination from the catalog.
+ *
+ * Algorithm:
+ * 1. Only required (non-optional) slots are used
+ * 2. Cartesian product of all required slot candidates
+ * 3. Filter out combinations whose buildVariantId() is already in testedIds
+ * 4. Sort remaining by novelty (prefer slugs that appear less in tested IDs)
+ * 5. Return the first one, or null when exhausted
+ */
+export function selectNextCombination(
+  catalog: ComponentCatalog,
+  testedIds: Set<string>,
+): Record<string, string> | null {
+  const requiredSlots = catalog.slots.filter((s) => !s.optional);
+  if (requiredSlots.length === 0) return null;
+
+  const combos = cartesianProduct(requiredSlots);
+
+  const untested = combos.filter(
+    (combo) => !testedIds.has(buildVariantId(combo)),
+  );
+
+  if (untested.length === 0) return null;
+
+  // Sort by novelty: prefer combos with less-tested slugs
+  untested.sort((a, b) => {
+    return totalSlugUsage(a, testedIds) - totalSlugUsage(b, testedIds);
+  });
+
+  return untested[0];
 }

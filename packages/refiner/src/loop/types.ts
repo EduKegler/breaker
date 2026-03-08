@@ -17,6 +17,7 @@ export interface LoopConfig {
   phases: PhasesConfig;
   scoring: ScoringConfig;
   research: ResearchConfig;
+  perVariantBudget: number;
   coin: string;
   dataSource: DataSource;
   interval: CandleInterval;

@@ -5,8 +5,11 @@ import os from "node:os";
 import {
   VariantManager,
   buildVariantId,
+  selectNextCombination,
+  fixFactoryName,
 } from "./variant-manager.js";
 import { buildFailureAnalysis } from "./variant-generator.js";
+import type { ComponentCatalog } from "../lib/build-module-context.js";
 
 let tmpDir: string;
 let strategyDir: string;
@@ -167,6 +170,33 @@ describe("VariantManager", () => {
       expect(v.status).toBe("complete");
       expect(v.bestScore).toBe(85);
       expect(mgr.getActive()).toBeNull();
+    });
+  });
+
+  describe("markKilled", () => {
+    it("marks active variant as killed with reason", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+
+      mgr.markKilled("PF 0.25 < 0.3 (universal floor)", 20, -50, 2, 3);
+
+      const v = mgr.getAll()[0];
+      expect(v.status).toBe("killed");
+      expect(v.killReason).toBe("PF 0.25 < 0.3 (universal floor)");
+      expect(v.bestScore).toBe(20);
+      expect(v.bestPnl).toBe(-50);
+      expect(v.bestIter).toBe(2);
+      expect(v.iterationsUsed).toBe(3);
+      expect(mgr.getActive()).toBeNull();
+    });
+
+    it("is a no-op when no active variant", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+
+      mgr.markKilled("test", 99, 99, 99, 99);
+      expect(mgr.getAll()[0].status).toBe("plateaued"); // not overwritten
     });
   });
 
@@ -429,5 +459,158 @@ describe("buildFailureAnalysis", () => {
     expect(result).toContain("noChange>=2");
     expect(result).toContain("squeeze + adx");
     expect(result).toContain("score=65.3");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selectNextCombination
+// ---------------------------------------------------------------------------
+describe("selectNextCombination", () => {
+  const testCatalog: ComponentCatalog = {
+    slots: [
+      {
+        slotName: "Entry Signal",
+        candidates: [
+          { name: "Donchian Channel", slug: "donchian", description: "Breakout" },
+          { name: "BB squeeze", slug: "squeeze", description: "Squeeze" },
+        ],
+      },
+      {
+        slotName: "Entry Timing",
+        candidates: [
+          { name: "Close", slug: "close", description: "Breakout close" },
+        ],
+        optional: true,
+      },
+      {
+        slotName: "Regime Filter",
+        candidates: [
+          { name: "EMA direction", slug: "ema", description: "EMA filter" },
+          { name: "ADX threshold", slug: "adx", description: "ADX filter" },
+        ],
+      },
+      {
+        slotName: "Exit",
+        candidates: [
+          { name: "ATR trailing stop", slug: "atr-trail", description: "Trail" },
+          { name: "Timeout", slug: "timeout", description: "Time" },
+        ],
+      },
+    ],
+  };
+
+  it("returns an untested combination when testedIds is empty", () => {
+    const result = selectNextCombination(testCatalog, new Set());
+    expect(result).not.toBeNull();
+    // Should only have required slots (not Entry Timing which is optional)
+    expect(Object.keys(result!)).toEqual(
+      expect.arrayContaining(["Entry Signal", "Regime Filter", "Exit"]),
+    );
+    expect(Object.keys(result!)).not.toContain("Entry Timing");
+  });
+
+  it("skips combinations already in testedIds", () => {
+    // Test with the first combo already tested
+    const first = selectNextCombination(testCatalog, new Set())!;
+    const firstId = buildVariantId(first);
+
+    const second = selectNextCombination(testCatalog, new Set([firstId]));
+    expect(second).not.toBeNull();
+    expect(buildVariantId(second!)).not.toBe(firstId);
+  });
+
+  it("returns null when all required-slot combinations are exhausted", () => {
+    // 2 entry × 2 regime × 2 exit = 8 combinations
+    const allCombos: string[] = [];
+    for (const entry of ["donchian", "squeeze"]) {
+      for (const regime of ["ema", "adx"]) {
+        for (const exit of ["atr-trail", "timeout"]) {
+          allCombos.push(buildVariantId({
+            "Entry Signal": entry,
+            "Regime Filter": regime,
+            "Exit": exit,
+          }));
+        }
+      }
+    }
+
+    const result = selectNextCombination(testCatalog, new Set(allCombos));
+    expect(result).toBeNull();
+  });
+
+  it("prefers combinations with less-tested slugs (novelty)", () => {
+    // Mark all donchian combos as tested → next combo should prefer squeeze
+    const donchianCombos = [
+      buildVariantId({ "Entry Signal": "donchian", "Regime Filter": "ema", "Exit": "atr-trail" }),
+      buildVariantId({ "Entry Signal": "donchian", "Regime Filter": "ema", "Exit": "timeout" }),
+      buildVariantId({ "Entry Signal": "donchian", "Regime Filter": "adx", "Exit": "atr-trail" }),
+      buildVariantId({ "Entry Signal": "donchian", "Regime Filter": "adx", "Exit": "timeout" }),
+    ];
+
+    const result = selectNextCombination(testCatalog, new Set(donchianCombos));
+    expect(result).not.toBeNull();
+    expect(result!["Entry Signal"]).toBe("squeeze");
+  });
+
+  it("ignores optional slots", () => {
+    const result = selectNextCombination(testCatalog, new Set());
+    expect(result).not.toBeNull();
+    // Entry Timing is optional — should not be in the result
+    expect(result!["Entry Timing"]).toBeUndefined();
+  });
+
+  it("returns null for catalog with no required slots", () => {
+    const allOptionalCatalog: ComponentCatalog = {
+      slots: [
+        {
+          slotName: "Optional Slot",
+          candidates: [{ name: "A", slug: "a", description: "test" }],
+          optional: true,
+        },
+      ],
+    };
+    expect(selectNextCombination(allOptionalCatalog, new Set())).toBeNull();
+  });
+
+  it("returns null for empty catalog", () => {
+    expect(selectNextCombination({ slots: [] }, new Set())).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fixFactoryName
+// ---------------------------------------------------------------------------
+describe("fixFactoryName", () => {
+  it("renames create* function to match variant ID", () => {
+    const source = `export function createDonchianEmaTimeout(overrides) {
+  const params: DonchianEmaTimeoutParams = { dcSlow: 20 };
+  return { name: "DonchianEmaTimeout", params };
+}`;
+    const result = fixFactoryName(source, "squeeze-adx-trail-dc");
+    expect(result).toContain("createSqueezeAdxTrailDc");
+    expect(result).not.toContain("createDonchianEmaTimeout");
+  });
+
+  it("preserves source when factory name already matches", () => {
+    const source = `export function createSqueezeAdx(overrides) { return {}; }`;
+    const result = fixFactoryName(source, "squeeze-adx");
+    expect(result).toBe(source);
+  });
+
+  it("renames related PascalCase types/interfaces", () => {
+    const source = `interface DonchianEmaTimeoutParams { dcSlow: number; }
+export function createDonchianEmaTimeout(overrides: Partial<DonchianEmaTimeoutParams>) {
+  const p: DonchianEmaTimeoutParams = { dcSlow: 20 };
+}`;
+    const result = fixFactoryName(source, "squeeze-adx-trail-dc");
+    expect(result).toContain("SqueezeAdxTrailDcParams");
+    expect(result).not.toContain("DonchianEmaTimeoutParams");
+    expect(result).toContain("createSqueezeAdxTrailDc");
+  });
+
+  it("handles source with no create* function (returns as-is)", () => {
+    const source = `const x = 42;\nexport default x;`;
+    const result = fixFactoryName(source, "squeeze-adx");
+    expect(result).toBe(source);
   });
 });
