@@ -39,6 +39,10 @@ export type { BollingerBandsResult } from "./indicators/bollinger-bands.js";
 export { detectSqueeze } from "./indicators/detect-squeeze.js";
 export type { SqueezeResult } from "./indicators/detect-squeeze.js";
 export { slope } from "./indicators/slope.js";
+export { supertrend } from "./indicators/supertrend.js";
+export type { SuperTrendResult } from "./indicators/supertrend.js";
+export { chandelier } from "./indicators/chandelier.js";
+export type { ChandelierResult } from "./indicators/chandelier.js";
 
 // Engine
 export { runBacktest, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
