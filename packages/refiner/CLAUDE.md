@@ -4,7 +4,7 @@
 B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-driven Execution & Routing. Automated strategy optimization using in-process `@breaker/backtest` engine (no Playwright, no TradingView, no Pine Script).
 
 ## Project structure
-- `src/automation/` — Prompt builders for Claude optimization/fix (`build-optimize-prompt-ts.ts`, `build-fix-prompt-ts.ts`)
+- `src/automation/` — Prompt builders for Claude optimization/fix (`build-optimize-prompt.ts`, `build-fix-prompt.ts`)
 - `src/dashboard/` — Dashboard and anomaly detection
 - `src/lib/` — Config, lock, strategy-registry, candle-loader, strategy-path, safe-json
 - `src/loop/` — Orchestrator + state-machine (xstate v5) + stages + variant-manager + variant-generator + seed-generator
