@@ -10,7 +10,6 @@ Lightweight REST service that sends and receives WhatsApp messages via the Evolu
 - `src/lib/env.ts` — Centralized Zod-validated env schema (all env vars with defaults)
 - `src/lib/evolution.ts` — Evolution API integration with retry logic
 - `src/types/message.ts` — Zod validation schemas for message payloads
-- `infra/` — infrastructure config (reserved for future Docker/deploy setup)
 
 ## Configuration (whatsapp-gateway-specific)
 - All env vars are validated via Zod schema in `src/lib/env.ts` with safe defaults (won't throw when imported without env vars).
