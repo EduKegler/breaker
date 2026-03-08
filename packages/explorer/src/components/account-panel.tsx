@@ -6,7 +6,7 @@ function truncateAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-function formatUsd(value: number): string {
+function formatUsdCompact(value: number): string {
   const abs = Math.abs(value);
   const sign = value < 0 ? "-" : "";
   if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
@@ -14,9 +14,9 @@ function formatUsd(value: number): string {
   return `${sign}$${abs.toFixed(2)}`;
 }
 
-function formatPnl(value: number): string {
+function formatPnlCompact(value: number): string {
   const sign = value >= 0 ? "+" : "";
-  return `${sign}${formatUsd(value)}`;
+  return `${sign}${formatUsdCompact(value)}`;
 }
 
 function marginPct(used: number, total: number): number {
@@ -97,7 +97,7 @@ export function AccountPanel({ account, positions }: AccountPanelProps) {
             Equity
           </span>
           <span className="font-mono text-base font-semibold text-txt-primary leading-none">
-            {formatUsd(account.accountValue)}
+            {formatUsdCompact(account.accountValue)}
           </span>
         </div>
 
@@ -111,7 +111,7 @@ export function AccountPanel({ account, positions }: AccountPanelProps) {
           <span className={`font-mono text-sm font-medium leading-none rounded-sm px-1.5 py-0.5 ${pnlColor} ${pnlGlow} ${
             unrealizedPnl >= 0 ? "bg-profit/[0.06]" : "bg-loss/[0.06]"
           }`}>
-            {formatPnl(unrealizedPnl)}
+            {formatPnlCompact(unrealizedPnl)}
           </span>
         </div>
 
@@ -123,7 +123,7 @@ export function AccountPanel({ account, positions }: AccountPanelProps) {
             Free
           </span>
           <span className="font-mono text-sm text-profit/80 leading-none">
-            {formatUsd(account.withdrawable)}
+            {formatUsdCompact(account.withdrawable)}
           </span>
         </div>
 
@@ -135,7 +135,7 @@ export function AccountPanel({ account, positions }: AccountPanelProps) {
             Margin
           </span>
           <span className="font-mono text-sm text-amber leading-none">
-            {formatUsd(account.totalMarginUsed)}
+            {formatUsdCompact(account.totalMarginUsed)}
           </span>
           {account.accountValue > 0 && (
             <div className="flex items-center gap-1.5">
@@ -160,7 +160,7 @@ export function AccountPanel({ account, positions }: AccountPanelProps) {
             Ntl
           </span>
           <span className="font-mono text-sm text-txt-primary/60 leading-none">
-            {formatUsd(account.totalNtlPos)}
+            {formatUsdCompact(account.totalNtlPos)}
           </span>
         </div>
 
