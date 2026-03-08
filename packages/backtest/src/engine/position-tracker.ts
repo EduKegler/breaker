@@ -1,5 +1,14 @@
 import type { Position, CompletedTrade, Fill } from "../types/order.js";
 
+interface CostResult {
+  pnl: number;
+  netPnl: number;
+  commission: number;
+  slippageCost: number;
+  rMultiple: number;
+  pnlPct: number;
+}
+
 export class PositionTracker {
   private position: Position | null = null;
   private completedTrades: CompletedTrade[] = [];
@@ -59,6 +68,41 @@ export class PositionTracker {
   }
 
   /**
+   * Compute PnL, commission, slippage, netPnl, rMultiple, and pnlPct
+   * for closing `exitSize` units at `exitFill` price.
+   */
+  private calculateCosts(
+    exitFill: Fill,
+    exitSize: number,
+    fundingCost: number,
+  ): CostResult {
+    const { direction, entryPrice, fills } = this.position!;
+
+    const pnl =
+      direction === "long"
+        ? (exitFill.price - entryPrice) * exitSize
+        : (entryPrice - exitFill.price) * exitSize;
+
+    const entryFills = fills.filter(f => f.tag === "entry");
+    const originalSize = entryFills.reduce((s, f) => s + f.size, 0);
+    const entryFees = entryFills.reduce((s, f) => s + f.fee, 0);
+    const commission = (exitSize / originalSize) * entryFees + exitFill.fee;
+    const entrySlip = entryFills.reduce((s, f) => s + f.slippage, 0);
+    const slippageCost = (exitSize / originalSize) * entrySlip + exitFill.slippage;
+
+    const netPnl = pnl - commission - fundingCost;
+
+    const rMultiple =
+      this.initialStopDistance > 0
+        ? netPnl / (this.initialStopDistance * exitSize)
+        : 0;
+
+    const pnlPct = entryPrice > 0 ? (pnl / (entryPrice * exitSize)) * 100 : 0;
+
+    return { pnl, netPnl, commission, slippageCost, rMultiple, pnlPct };
+  }
+
+  /**
    * Close entire position. Returns the completed trade.
    */
   closePosition(
@@ -73,46 +117,27 @@ export class PositionTracker {
       throw new Error("Cannot close position: no position open");
     }
 
-    const { direction, entryPrice, size, entryTimestamp, entryBarIndex, fills } =
+    const { direction, entryPrice, size, entryTimestamp, entryBarIndex } =
       this.position;
 
-    const pnl =
-      direction === "long"
-        ? (fill.price - entryPrice) * size
-        : (entryPrice - fill.price) * size;
-
-    const entryFills = fills.filter(f => f.tag === "entry");
-    const originalSize = entryFills.reduce((s, f) => s + f.size, 0);
-    const entryFees = entryFills.reduce((s, f) => s + f.fee, 0);
-    const totalCommission = (size / originalSize) * entryFees + fill.fee;
-    const entrySlip = entryFills.reduce((s, f) => s + f.slippage, 0);
-    const totalSlippage = (size / originalSize) * entrySlip + fill.slippage;
-
-    const netPnl = pnl - totalCommission - fundingCost;
-
-    const rMultiple =
-      this.initialStopDistance > 0
-        ? netPnl / (this.initialStopDistance * size)
-        : 0;
-
-    const pnlPct = entryPrice > 0 ? (pnl / (entryPrice * size)) * 100 : 0;
+    const costs = this.calculateCosts(fill, size, fundingCost);
 
     const trade: CompletedTrade = {
       direction,
       entryPrice,
       exitPrice: fill.price,
       size,
-      pnl: netPnl,
-      pnlPct,
-      rMultiple,
+      pnl: costs.netPnl,
+      pnlPct: costs.pnlPct,
+      rMultiple: costs.rMultiple,
       entryTimestamp,
       exitTimestamp: fill.timestamp,
       entryBarIndex,
       exitBarIndex,
       barsHeld: exitBarIndex - entryBarIndex,
       exitType,
-      commission: totalCommission,
-      slippageCost: totalSlippage,
+      commission: costs.commission,
+      slippageCost: costs.slippageCost,
       fundingCost,
       entryComment,
       exitComment,
@@ -146,42 +171,24 @@ export class PositionTracker {
 
     const { direction, entryPrice, entryTimestamp, entryBarIndex } = this.position;
 
-    const pnl =
-      direction === "long"
-        ? (fill.price - entryPrice) * fill.size
-        : (entryPrice - fill.price) * fill.size;
-
-    const entryFills = this.position.fills.filter(f => f.tag === "entry");
-    const originalSize = entryFills.reduce((s, f) => s + f.size, 0);
-    const entryFees = entryFills.reduce((s, f) => s + f.fee, 0);
-    const totalCommission = (fill.size / originalSize) * entryFees + fill.fee;
-    const entrySlip = entryFills.reduce((s, f) => s + f.slippage, 0);
-    const totalSlippage = (fill.size / originalSize) * entrySlip + fill.slippage;
-
-    const netPnl = pnl - totalCommission - fundingCost;
-    const rMultiple =
-      this.initialStopDistance > 0
-        ? netPnl / (this.initialStopDistance * fill.size)
-        : 0;
-
-    const pnlPct = entryPrice > 0 ? (pnl / (entryPrice * fill.size)) * 100 : 0;
+    const costs = this.calculateCosts(fill, fill.size, fundingCost);
 
     const trade: CompletedTrade = {
       direction,
       entryPrice,
       exitPrice: fill.price,
       size: fill.size,
-      pnl: netPnl,
-      pnlPct,
-      rMultiple,
+      pnl: costs.netPnl,
+      pnlPct: costs.pnlPct,
+      rMultiple: costs.rMultiple,
       entryTimestamp,
       exitTimestamp: fill.timestamp,
       entryBarIndex,
       exitBarIndex,
       barsHeld: exitBarIndex - entryBarIndex,
       exitType,
-      commission: totalCommission,
-      slippageCost: totalSlippage,
+      commission: costs.commission,
+      slippageCost: costs.slippageCost,
       fundingCost,
       entryComment,
       exitComment,
