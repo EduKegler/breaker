@@ -30,6 +30,7 @@ import { resolveHistoricalStatuses } from "./application/resolve-historical-stat
 import { createApp } from "./create-app.js";
 import { replayStrategy } from "./application/replay-strategy.js";
 import { fetchCandlesForReplay, SIGNAL_WINDOW } from "./application/fetch-candles-for-replay.js";
+import { cancelPendingGtcOrders } from "./application/cancel-pending-gtc-orders.js";
 import { aggregatePositionHistory } from "./domain/aggregate-position-history.js";
 import { WsBroker } from "./lib/ws-broker.js";
 import type { HlClient } from "./types/hl-client.js";
@@ -736,6 +737,10 @@ async function main() {
     reconciler.stop();
     if (priceTickInterval) clearInterval(priceTickInterval);
     clearInterval(heartbeatInterval);
+
+    // Cancel pending GTC orders before disconnecting
+    await cancelPendingGtcOrders({ pendingEntryBook, hlClient, log });
+
     eventStream?.stop();
     wsBroker.close();
 
