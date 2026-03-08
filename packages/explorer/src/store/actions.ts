@@ -2,17 +2,16 @@ import type { StateCreator } from "zustand";
 import type { StoreState, Actions } from "./types.js";
 import type { CandleData, ReplaySignal, ConfigResponse } from "../types/api.js";
 import { api } from "../lib/api.js";
+import { mergeByKey } from "../lib/merge-by-key.js";
+
+const byTime = (a: { t: number }, b: { t: number }) => a.t - b.t;
 
 function mergeReplaySignals(
   prev: Record<string, ReplaySignal[]>,
   coin: string,
   incoming: ReplaySignal[],
 ): Record<string, ReplaySignal[]> {
-  const existing = prev[coin] ?? [];
-  const keys = new Set(existing.map((s) => `${s.t}:${s.strategyName}`));
-  const fresh = incoming.filter((s) => !keys.has(`${s.t}:${s.strategyName}`));
-  if (fresh.length === 0) return prev;
-  return { ...prev, [coin]: [...existing, ...fresh].sort((a, b) => a.t - b.t) };
+  return mergeByKey(prev, coin, incoming, (s) => `${s.t}:${s.strategyName}`, byTime);
 }
 
 function mergeCandles(
@@ -20,11 +19,7 @@ function mergeCandles(
   coin: string,
   incoming: CandleData[],
 ): Record<string, CandleData[]> {
-  const existing = prev[coin] ?? [];
-  const existingTimes = new Set(existing.map((c) => c.t));
-  const fresh = incoming.filter((c) => !existingTimes.has(c.t));
-  if (fresh.length === 0) return prev;
-  return { ...prev, [coin]: [...fresh, ...existing].sort((a, b) => a.t - b.t) };
+  return mergeByKey(prev, coin, incoming, (c) => c.t, byTime);
 }
 
 export const createActions: StateCreator<StoreState, [], [], Actions> = (set, get) => ({
