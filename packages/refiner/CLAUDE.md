@@ -40,7 +40,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
   - `variant-generator.ts` — Geracao: pre-seleciona combinacao via `selectNextCombination()` → prompt com componentes atribuidos → Claude implementa → `fixFactoryName()` → `createVariant()`
   - `seed-generator.ts` — Bootstrap: skeleton → optimizeStrategy(restructure) → fixStrategy fallback
   - `build-module-context.ts` — CANDIDATE_SLUGS, STARTING_COMPONENTS (slug-based), extractStartingPoint(), getKbSection(), MODULE_CRITERIA, ComponentCatalog
-  - `build-optimize-prompt.ts` — validateSlugComponents() (substitui normalizeToCatalog), formatCatalogForPrompt() mostra slugs em backticks
+  - `build-optimize-prompt.ts` — preSelectedComponents (restructure com componentes atribuídos), validateSlugComponents() com 3-pass fuzzy matching (alias → prefix/substring → global), formatCatalogForPrompt() mostra slugs em backticks
 
 ## Seed auto-bootstrap
 - Se seed ausente: variant registry → config-derived path (getStrategySourcePath) → checkpoint restore → gerar do KB via seed-generator.ts
@@ -83,6 +83,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - State management: xstate v5 machine in `src/loop/state-machine.ts` advises phase/counter state; for-loop still drives iteration flow
 
 ## Config vs KB alignment
+- Scoring weights: `sampleConfidence=0` (gate binário via `sampleFloor`, não recompensa mais trades). Pesos redistribuídos: pf=30, avgR=25, wr=12, dd=18, complexity=15.
 - `breaker-config.json` top-level `minPF` set to KB floor (1.3). Strategy profiles can set stricter values.
 - Orchestrator enforces KB module floors at runtime via `MODULE_CRITERIA` — config values less strict than KB are auto-bumped.
 - M2 (mean-reversion) WR gate: KB requires WR >= 50%. Enforced by MODULE_CRITERIA + orchestrator floor override.
@@ -94,6 +95,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - Strategy files should **not have hand-maintained unit tests** — they are ephemeral artifacts. Engine-level tests cover correctness.
 
 ## Known pitfalls
+- `docs/knowledge-base.md` é parseado em runtime por `extractComponentCatalog()` — alterar formato (headers, tabelas) quebra geração de variantes. Teste de integração em `build-module-context.test.ts` valida com o KB real.
 - Can't run breaker inside Claude Code session (nested session protection); use `unset CLAUDECODE`
 - `run-engine-child.ts` child-process path E2E validated (~280ms with 26k candles after init() optimization)
 - `backoffDelay` extracted to `@breaker/kit` — import from kit, not from loop/
