@@ -223,4 +223,289 @@ describe("processPendingFill", () => {
     const entryOrder = orders.find((o) => o.tag === "entry");
     expect(entryOrder?.status).toBe("filled");
   });
+
+  it("uses fill price/size (not pending entry values) for protection orders", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-fill-vals", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: JSON.stringify([{ price: 62000, pctOfPosition: 1 }]),
+      risk_check_passed: 1, risk_check_reason: null, strategy_name: null,
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 400, direction: "long", size: 0.02,
+      price: 60000, stopLoss: 59000,
+      takeProfits: [{ price: 62000, pctOfPosition: 1 }],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    // Fill at different price and size than the pending entry
+    const fill = makeFill({ oid: 400, px: "59500", sz: "0.015" });
+
+    await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    // Protection orders use fill values, not pending values
+    expect(hlClient.placeStopOrder).toHaveBeenCalledWith("BTC", false, 0.015, 59000, true);
+    const pos = positionBook.get("BTC")!;
+    expect(pos.entryPrice).toBe(59500);
+    expect(pos.size).toBe(0.015);
+  });
+
+  it("processes short direction fill correctly", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-short-1", source: "strategy-runner", asset: "BTC",
+      side: "SHORT", entry_price: 60000, stop_loss: 61000,
+      take_profits: JSON.stringify([{ price: 58000, pctOfPosition: 1 }]),
+      risk_check_passed: 1, risk_check_reason: null, strategy_name: null,
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 500, direction: "short", size: 0.01,
+      price: 60000, stopLoss: 61000,
+      takeProfits: [{ price: 58000, pctOfPosition: 1 }],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    const fill = makeFill({ oid: 500, px: "60000", sz: "0.01", side: "A" });
+
+    const result = await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    expect(result).toBe(true);
+    // Short -> entrySide=sell -> isBuy=true for SL/TP (opposite side to close)
+    expect(hlClient.placeStopOrder).toHaveBeenCalledWith("BTC", true, 0.01, 61000, true);
+    expect(hlClient.placeTpOrder).toHaveBeenCalledWith("BTC", true, 0.01, 58000, true);
+    expect(positionBook.get("BTC")!.direction).toBe("short");
+  });
+
+  it("appends gtc_entry_filled event to event log", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-event-1", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 600, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000, takeProfits: [],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    const fill = makeFill({ oid: 600, px: "60000", sz: "0.01" });
+
+    await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    expect(eventLog.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "gtc_entry_filled",
+        data: expect.objectContaining({
+          signalId,
+          coin: "BTC",
+          hlOrderId: 600,
+          filledSize: 0.01,
+          filledPrice: 60000,
+        }),
+      }),
+    );
+  });
+
+  it("updates signal outcome to executed", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-outcome-1", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null, outcome: "resting",
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 700, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000, takeProfits: [],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    const fill = makeFill({ oid: 700, px: "60000", sz: "0.01" });
+
+    await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    const signals = store.getRecentSignals(10);
+    const signal = signals.find((s) => s.id === signalId);
+    expect(signal?.outcome).toBe("executed");
+  });
+
+  it("sends notification via alertsClient on successful fill", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-notify-1", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: JSON.stringify([{ price: 62000, pctOfPosition: 1 }]),
+      risk_check_passed: 1, risk_check_reason: null, strategy_name: null,
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 800, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000,
+      takeProfits: [{ price: 62000, pctOfPosition: 1 }],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "breakout signal",
+    });
+
+    const fill = makeFill({ oid: 800, px: "60000", sz: "0.01" });
+
+    await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    expect(alertsClient.notifyPositionOpened).toHaveBeenCalledWith(
+      expect.objectContaining({
+        coin: "BTC",
+        side: "buy",
+        size: 0.01,
+        entryPrice: 60000,
+        stopLoss: 59000,
+        direction: "long",
+        entryType: "gtc",
+        comment: "breakout signal",
+      }),
+      "testnet",
+    );
+  });
+
+  it("still completes when notification fails", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-notify-fail", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 900, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000, takeProfits: [],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    vi.mocked(alertsClient.notifyPositionOpened).mockRejectedValueOnce(new Error("network error"));
+
+    const fill = makeFill({ oid: 900, px: "60000", sz: "0.01" });
+
+    const result = await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    // Should still succeed despite notification failure
+    expect(result).toBe(true);
+    expect(positionBook.isFlat("BTC")).toBe(false);
+  });
+
+  it("proceeds when no entry order exists in store (WS fill arrives before order INSERT)", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-race-1", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+
+    // Add pending entry but do NOT insert the order row in store
+    // (simulates WS fill arriving before the order INSERT completes)
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 1000, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000, takeProfits: [],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    const fill = makeFill({ oid: 1000, px: "60000", sz: "0.01" });
+
+    const result = await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    // Should still complete — just skips order status update
+    expect(result).toBe(true);
+    expect(positionBook.isFlat("BTC")).toBe(false);
+    // SL/TP should still be placed
+    expect(hlClient.placeStopOrder).toHaveBeenCalled();
+  });
+
+  it("handles duplicate fill insertion gracefully (catch block)", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-dup-fill", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+
+    const orderId = store.insertOrder({
+      signal_id: signalId, hl_order_id: "1100", coin: "BTC", side: "buy",
+      size: 0.01, price: 60000, order_type: "limit", tag: "entry",
+      status: "pending", mode: "testnet", filled_at: null,
+    });
+
+    // Pre-insert a fill (simulates a duplicate scenario)
+    store.insertFill({
+      order_id: orderId,
+      price: 60000,
+      size: 0.01,
+      fee: 0.009,
+      timestamp: new Date().toISOString(),
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 1100, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000, takeProfits: [],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    const fill = makeFill({ oid: 1100, px: "60000", sz: "0.01" });
+
+    // Should not throw even if fill insertion fails (no UNIQUE constraint here,
+    // but the catch block handles any insertFill error)
+    const result = await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    expect(result).toBe(true);
+    expect(positionBook.isFlat("BTC")).toBe(false);
+  });
+
+  it("removes pending entry from book even when fill values are used for position", async () => {
+    const signalId = store.insertSignal({
+      alert_id: "gtc-remove-pending", source: "strategy-runner", asset: "BTC",
+      side: "LONG", entry_price: 60000, stop_loss: 59000,
+      take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
+      strategy_name: null,
+    });
+
+    pendingEntryBook.add({
+      coin: "BTC", hlOrderId: 1200, direction: "long", size: 0.01,
+      price: 60000, stopLoss: 59000, takeProfits: [],
+      expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
+      strategyName: null, comment: "",
+    });
+
+    expect(pendingEntryBook.has("BTC")).toBe(true);
+    expect(pendingEntryBook.count()).toBe(1);
+
+    const fill = makeFill({ oid: 1200, px: "60000", sz: "0.01" });
+
+    await processPendingFill(fill, {
+      pendingEntryBook, positionBook, hlClient, store, eventLog, alertsClient, mode: "testnet",
+    });
+
+    expect(pendingEntryBook.has("BTC")).toBe(false);
+    expect(pendingEntryBook.count()).toBe(0);
+  });
 });
