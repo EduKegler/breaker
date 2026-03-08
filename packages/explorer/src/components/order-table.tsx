@@ -1,6 +1,6 @@
 import type { OrderRow } from "../types/api.js";
 import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
-import { parseUtc } from "../lib/parse-utc.js";
+import { formatDate } from "../lib/format-table.js";
 
 const statusDot: Record<string, string> = {
   filled: "bg-profit",
@@ -49,14 +49,7 @@ export function OrderTable({ orders }: { orders: OrderRow[] }) {
               }`}
             >
               <td className="py-1.5 pr-3 font-mono text-txt-secondary">
-                {o.created_at
-                  ? parseUtc(o.created_at).toLocaleString([], {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : "—"}
+                {o.created_at ? formatDate(o.created_at) : "—"}
               </td>
               <td className="py-1.5 pr-3 font-display font-semibold text-txt-primary">
                 {o.coin}
