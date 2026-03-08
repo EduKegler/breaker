@@ -41,10 +41,10 @@ The name B.R.E.A.K.E.R. is an acrostic of the packages:
 |:------:|---------|-------------|:------:|
 | **B** | [`@breaker/backtest`](packages/backtest/) | Local backtesting engine — candles, indicators, trade simulation | Active |
 | **R** | [`@breaker/refiner`](packages/refiner/) | AI-driven strategy optimization loop with Claude | Active |
-| **E** | [`@breaker/exchange`](packages/exchange/) | Order execution and position management on Hyperliquid | Stub |
+| **E** | [`@breaker/exchange`](packages/exchange/) | Order execution and position management on Hyperliquid | Active |
 | **A** | [`@breaker/alerts`](packages/alerts/) | WhatsApp messaging via Evolution API | Active |
 | **K** | [`@breaker/kit`](packages/kit/) | Shared utilities — isMainModule, parseEnv, formatZodErrors | Active |
-| **E** | [`@breaker/explorer`](packages/explorer/) | Local analysis dashboard and visualization | Stub |
+| **E** | [`@breaker/explorer`](packages/explorer/) | Local analysis dashboard and visualization | Active |
 | **R** | [`@breaker/router`](packages/router/) | TradingView alert receiver with dedup and forwarding | Active |
 
 ## Quick Start
@@ -97,14 +97,14 @@ trading/
 ├── packages/
 │   ├── backtest/        # B — backtesting engine
 │   ├── refiner/         # R — automated optimization
-│   ├── exchange/        # E — Hyperliquid execution (stub)
+│   ├── exchange/        # E — Hyperliquid execution
 │   ├── alerts/          # A — WhatsApp gateway
 │   ├── kit/             # K — shared utilities
-│   ├── explorer/        # E — analysis dashboard (stub)
+│   ├── explorer/        # E — analysis dashboard
 │   └── router/          # R — webhook receiver
 ├── package.json         # root (private, workspaces)
 ├── pnpm-workspace.yaml  # declares packages/*
 ├── tsconfig.base.json   # shared TypeScript config
-├── AGENTS.md            # AI agent instructions
-└── CLAUDE.md            # references AGENTS.md
+├── AGENTS.md            # AI agent instructions (→ CLAUDE.md)
+└── CLAUDE.md            # project instructions & conventions
 ```
