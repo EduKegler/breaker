@@ -19,7 +19,7 @@ interface RangeEmaPartialTpParams {
 
 const DEFAULT_PARAMS: RangeEmaPartialTpParams = {
   rangePeriod: { value: 15, min: 10, max: 30, step: 5, optimizable: true, description: "Bars to define the consolidation range" },
-  rangeWidthThreshold: { value: 1.5, min: 1.0, max: 3.0, step: 0.25, optimizable: true, description: "Max ATR-normalized bar width for range qualification" },
+  rangeWidthThreshold: { value: 2.0, min: 1.0, max: 3.0, step: 0.25, optimizable: true, description: "Max ATR-normalized bar width for range qualification" },
   emaPeriod: { value: 50, min: 20, max: 100, step: 10, optimizable: true, description: "Daily EMA period for regime filter" },
   volMultiplier: { value: 2.0, min: 1.0, max: 3.0, step: 0.25, optimizable: true, description: "Volume spike threshold (X * SMA20 volume)" },
   atrStopMult: { value: 3.0, min: 3.0, max: 6.0, step: 0.5, optimizable: true, description: "ATR(14) 1H initial stop multiplier (KB §1.6 >= 3.0)" },

@@ -6,7 +6,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 ## Project structure
 - `src/types/` — Candle, Strategy, Order, Metrics (BREAKER-compatible)
 - `src/data/` — Multi-source candle client (Bybit, Coinbase, Hyperliquid; CCXT) + SQLite cache
-- `src/indicators/` — EMA, SMA, ATR, RSI, ADX (via trading-signals), Donchian, Keltner (custom)
+- `src/indicators/` — EMA, SMA, ATR, RSI, ADX, MACD, Bollinger Bands, Keltner, Donchian, Chandelier, SuperTrend, VWAP, Williams %R, Stochastic, Slope, True Range, Detect Squeeze (all pure functions on number arrays)
 - `src/engine/` — Backtest loop, order simulation, position tracking, equity curve
 - `src/analysis/` — Metrics calculation, trade analysis, walk-forward, filter simulations
 - `src/strategies/{asset}/{category}/` — Strategy implementations organized by asset and category (btc/breakout/, btc/mean-reversion/, sol/pullback/)
@@ -54,7 +54,7 @@ Local backtesting engine replacing TradingView automation. Fetches candles from 
 
 ## Build and test
 - `pnpm build` — compile TypeScript
-- `pnpm test` — run all tests
+- `pnpm test` — 405 tests across 43 files
 - `pnpm typecheck` — type-check without emitting
 - `pnpm promote` — promote strategies to deployed/
 - Every src file has a matching test file (TDD-first) — except AI-generated strategy files in `src/strategies/` (excluded from coverage)
