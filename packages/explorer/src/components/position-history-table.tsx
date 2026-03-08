@@ -4,6 +4,7 @@ import { useStore } from "../store/use-store.js";
 import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
 import { parseUtc } from "../lib/parse-utc.js";
 import { formatDuration } from "../lib/format-duration.js";
+import { formatDate, formatPrice } from "../lib/format-table.js";
 
 const eventColors: Record<string, string> = {
   signal_received: "bg-blue-400",
@@ -18,20 +19,6 @@ const eventColors: Record<string, string> = {
   trailing_sl_filled: "bg-amber",
   exit_filled: "bg-blue-400",
 };
-
-function formatDate(dt: string): string {
-  return parseUtc(dt).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatPrice(price: number | null): string {
-  if (price == null) return "\u2014";
-  return price >= 100 ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : `$${price.toFixed(4)}`;
-}
 
 function EventTimeline({ events }: { events: PositionEvent[] }) {
   return (

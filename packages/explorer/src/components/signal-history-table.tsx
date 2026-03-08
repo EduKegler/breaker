@@ -1,6 +1,6 @@
 import type { SignalRow } from "../types/api.js";
 import { strategyDisplayName } from "../lib/strategy-abbreviations.js";
-import { parseUtc } from "../lib/parse-utc.js";
+import { formatDate, formatPrice } from "../lib/format-table.js";
 
 type Outcome = "executed" | "rejected" | "no_fill" | "error" | "blocked" | "resting";
 
@@ -12,22 +12,6 @@ const outcomeConfig: Record<Outcome, { label: string; bg: string; text: string }
   blocked: { label: "Blocked", bg: "bg-terminal-border", text: "text-txt-secondary" },
   resting: { label: "Resting", bg: "bg-blue-500/15", text: "text-blue-400" },
 };
-
-function formatDate(dt: string): string {
-  return parseUtc(dt).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatPrice(price: number | null): string {
-  if (price == null) return "\u2014";
-  return price >= 100
-    ? `$${price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-    : `$${price.toFixed(4)}`;
-}
 
 function resolveOutcome(signal: SignalRow): Outcome {
   if (signal.outcome) return signal.outcome as Outcome;
