@@ -74,7 +74,7 @@ afterEach(() => {
 
 describe("lock.acquireBlocking", () => {
   it("acquires immediately when lock is free", async () => {
-    await lock.acquireBlocking(BLOCKING_ASSET, { timeoutMs: 1000, pollMs: 50 });
+    await lock.acquireBlocking(BLOCKING_ASSET, { timeoutMs: 1000, pollMs: 10 });
     const data = lock.read(BLOCKING_ASSET);
     expect(data).not.toBeNull();
     expect(data!.pid).toBe(process.pid);
@@ -84,10 +84,10 @@ describe("lock.acquireBlocking", () => {
   it("waits and acquires when lock is released", async () => {
     lock.acquire(BLOCKING_ASSET);
 
-    // Release after 150ms
-    setTimeout(() => lock.release(BLOCKING_ASSET), 150);
+    // Release after a short delay (proper-lockfile retries handle the polling)
+    setTimeout(() => lock.release(BLOCKING_ASSET), 30);
 
-    await lock.acquireBlocking(BLOCKING_ASSET, { timeoutMs: 2000, pollMs: 50 });
+    await lock.acquireBlocking(BLOCKING_ASSET, { timeoutMs: 2000, pollMs: 10 });
     const data = lock.read(BLOCKING_ASSET);
     expect(data).not.toBeNull();
     expect(data!.pid).toBe(process.pid);
@@ -97,8 +97,10 @@ describe("lock.acquireBlocking", () => {
   it("throws on timeout when lock is never released", async () => {
     lock.acquire(BLOCKING_ASSET);
 
+    // With timeoutMs=50 and pollMs=10, retries = ceil(50/10) = 5, each 10ms
+    // Total wall-clock ~50-100ms — fast and deterministic
     await expect(
-      lock.acquireBlocking(BLOCKING_ASSET, { timeoutMs: 200, pollMs: 50 }),
+      lock.acquireBlocking(BLOCKING_ASSET, { timeoutMs: 50, pollMs: 10 }),
     ).rejects.toThrow(/Timeout/);
 
     lock.release(BLOCKING_ASSET);
