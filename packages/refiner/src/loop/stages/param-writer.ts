@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
 import type {
   ParameterHistory,
@@ -11,6 +10,7 @@ import type {
 } from "../../types/parameter-history.js";
 import type { LoopPhase } from "../types.js";
 import { safeJsonParse } from "../../lib/safe-json.js";
+import { paramHistorySchema } from "../../lib/param-history-schema.js";
 
 export interface IterationMetadata {
   changeApplied: {
@@ -44,17 +44,6 @@ function emptyHistory(): ParameterHistory {
   };
 }
 
-const parameterHistorySchema = z.object({
-  iterations: z.array(z.object({}).passthrough()),
-  neverWorked: z.array(z.unknown()),
-  exploredRanges: z.record(z.string(), z.array(z.unknown())),
-  pendingHypotheses: z.array(z.object({}).passthrough()),
-  approaches: z.array(z.object({}).passthrough()).optional(),
-  researchLog: z.array(z.object({}).passthrough()).optional(),
-  testedCombinations: z.array(z.object({}).passthrough()).optional(),
-  currentPhase: z.string().optional(),
-  phaseStartIter: z.number().optional(),
-});
 
 function isAlreadyInNeverWorked(
   neverWorked: (string | NeverWorkedEntry)[],
@@ -77,7 +66,7 @@ export const paramWriter = {
   loadHistory(filePath: string): ParameterHistory {
     try {
       const raw = fs.readFileSync(filePath, "utf8");
-      return safeJsonParse(raw, { schema: parameterHistorySchema }) as unknown as ParameterHistory;
+      return safeJsonParse(raw, { schema: paramHistorySchema }) as unknown as ParameterHistory;
     } catch {
       return emptyHistory();
     }

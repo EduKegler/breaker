@@ -19,6 +19,7 @@ import type { ScoreRaw } from "../loop/stages/scoring.js";
 import type { ModuleContext, ComponentCatalog, CatalogSlot } from "../lib/build-module-context.js";
 import { MODULE_CRITERIA, computeStretchCriteria } from "../lib/build-module-context.js";
 import { safeJsonParse } from "../lib/safe-json.js";
+import { paramHistorySchema } from "../lib/param-history-schema.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -102,18 +103,6 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const tradeAnalysisSection = tradeAnalysis ? buildTradeAnalysisSection(tradeAnalysis) : "";
 
   // Parameter history
-  const paramHistorySchema = z.object({
-    iterations: z.array(z.object({}).passthrough()),
-    neverWorked: z.array(z.unknown()),
-    exploredRanges: z.record(z.string(), z.array(z.unknown())),
-    pendingHypotheses: z.array(z.object({}).passthrough()),
-    approaches: z.array(z.object({}).passthrough()).optional(),
-    researchLog: z.array(z.object({}).passthrough()).optional(),
-    testedCombinations: z.array(z.object({}).passthrough()).optional(),
-    currentPhase: z.string().optional(),
-    phaseStartIter: z.number().optional(),
-  });
-
   let paramHistory: ParameterHistory | null = null;
   try {
     paramHistory = safeJsonParse(
