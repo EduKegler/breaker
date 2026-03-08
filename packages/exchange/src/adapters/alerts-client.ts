@@ -2,7 +2,8 @@ import got, { type RequestError } from "got";
 import type { OrderIntent } from "../domain/signal-to-intent.js";
 import type { AlertsClient } from "../types/alerts-client.js";
 import { logger } from "../lib/logger.js";
-import { formatOpenMessage, formatTrailingSlMessage } from "./format-alert-message.js";
+import { formatOpenMessage } from "./format-open-message.js";
+import { formatTrailingSlMessage } from "./format-trailing-sl-message.js";
 
 const log = logger.createChild("alertsClient");
 

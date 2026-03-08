@@ -20,7 +20,8 @@ src/
 │   ├── candle-streamer.ts     # WS-based candle streaming (primary)
 │   ├── candle-poller.ts       # REST-based candle polling (legacy)
 │   ├── alerts-client.ts       # HttpAlertsClient (WhatsApp via @breaker/alerts)
-│   ├── format-alert-message.ts # formatOpenMessage, formatTrailingSlMessage
+│   ├── format-open-message.ts  # formatOpenMessage (position opened alert)
+│   ├── format-trailing-sl-message.ts # formatTrailingSlMessage (trailing SL moved alert)
 │   ├── hl-event-stream.ts     # HlEventStream (WS order/fill subscriptions)
 │   ├── sqlite-store.ts        # SQLite: signals, orders, fills, equity_snapshots
 │   └── event-log.ts           # NDJSON append-only audit trail

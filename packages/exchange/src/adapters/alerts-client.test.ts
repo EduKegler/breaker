@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { formatOpenMessage, formatTrailingSlMessage } from "./format-alert-message.js";
+import { formatOpenMessage } from "./format-open-message.js";
+import { formatTrailingSlMessage } from "./format-trailing-sl-message.js";
 import type { OrderIntent } from "../domain/signal-to-intent.js";
 import type { AlertsClient } from "../types/alerts-client.js";
 import { HttpAlertsClient } from "./alerts-client.js";
