@@ -23,7 +23,6 @@ export { DryRunHlClient } from "./adapters/dry-run-client.js";
 export { HlEventStream } from "./adapters/hl-event-stream.js";
 export { SqliteStore } from "./adapters/sqlite-store.js";
 export { EventLog } from "./adapters/event-log.js";
-export { CandlePoller } from "./adapters/candle-poller.js";
 export { HttpAlertsClient } from "./adapters/alerts-client.js";
 export { formatOpenMessage } from "./adapters/format-open-message.js";
 

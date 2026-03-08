@@ -18,7 +18,6 @@ src/
 │   ├── hyperliquid-client.ts  # SDK wrapper (HyperliquidClient class)
 │   ├── dry-run-client.ts      # DryRunHlClient (logs actions, no SDK)
 │   ├── candle-streamer.ts     # WS-based candle streaming (primary)
-│   ├── candle-poller.ts       # REST-based candle polling (legacy)
 │   ├── alerts-client.ts       # HttpAlertsClient (WhatsApp via @breaker/alerts)
 │   ├── format-open-message.ts  # formatOpenMessage (position opened alert)
 │   ├── format-trailing-sl-message.ts # formatTrailingSlMessage (trailing SL moved alert)
