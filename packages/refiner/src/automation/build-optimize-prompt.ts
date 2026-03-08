@@ -57,6 +57,8 @@ interface BuildPromptOptions {
   bestScoreBreakdown?: ScoreRaw;
   bestScore?: number;
   walkForward?: WalkForward | null;
+  /** Pre-selected components for restructure — skips Claude's selection step */
+  preSelectedComponents?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +156,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
     phase, strategySourcePath, metadataPath, paramHistoryPath,
     globalIter, iter, maxIter, pnlStr, tradesStr, wrStr, asset,
     moduleContext, paramHistory, researchBriefPath,
+    opts.preSelectedComponents,
   );
 
   return `TypeScript strategy optimization loop — iteration ${iter}/${maxIter}.
@@ -408,6 +411,7 @@ function buildPhaseTask(
   pnlStr: string, tradesStr: string, wrStr: string, asset: string,
   moduleContext: ModuleContext, paramHistory: ParameterHistory | null,
   researchBriefPath?: string,
+  preSelectedComponents?: Record<string, string>,
 ): string {
   if (phase === "refine") {
     return `## TASK (phase: REFINE)
@@ -489,6 +493,41 @@ CRITICAL: Do NOT run WebSearch. Focus on clean implementation.
     moduleContext.restructureLocks,
   );
 
+  // Pre-selected components: system chose combination, Claude only implements
+  if (preSelectedComponents && Object.keys(preSelectedComponents).length > 0) {
+    const assignedSection = buildAssignedComponentsSection(preSelectedComponents, moduleContext.catalog);
+
+    return `## TASK (phase: RESTRUCTURE)
+
+${assignedSection}
+
+${catalogSection}
+
+### Instructions
+
+1. **IMPLEMENT** the assigned components above in \`${strategySourcePath}\`
+   - Must comply with ALL fixed rules for ${moduleContext.moduleId}
+   - Must stay within ${moduleContext.varCap} var cap
+   - RENAME the factory function to match the target variant filename (use \`create{PascalCase}\` naming) and rename related interfaces/types accordingly
+2. **Run** \`pnpm --filter @breaker/backtest typecheck\` to validate
+3. **Write metadata** to \`${metadataPath}\`:
+\`\`\`json
+{
+  "scale": "structural",
+  "totalVars": <number>,
+  "restructureLockChanged": "<which lock changed, or null>",
+  "ruleCompliance": "<check each fixed rule>",
+  "rationale": "<implementation notes>"
+}
+\`\`\`
+   Do NOT edit \`${paramHistoryPath}\`.
+4. **Output summary** as the LAST line of your response:
+   \`SUMMARY: <one-line description of what you did and why, max 150 chars>\``;
+  }
+
+  // Fallback: Claude selects components (legacy path)
+  const slugRef = buildSlugReference(moduleContext.catalog);
+
   return `## TASK (phase: RESTRUCTURE)
 
 **CRITICAL**: EDIT \`${strategySourcePath}\`. You must SELECT components from the KB catalog below. Do NOT invent new components outside the catalog.
@@ -504,6 +543,10 @@ ${catalogSection}
 2. **IMPLEMENT** the selected combination in \`${strategySourcePath}\`
 3. **Run** \`pnpm --filter @breaker/backtest typecheck\` to validate
 4. **Write metadata** to \`${metadataPath}\`:
+
+**⚠ EXACT slot names and slugs required — only these values are accepted:**
+${slugRef}
+
 \`\`\`json
 {
   "scale": "structural",
@@ -515,8 +558,30 @@ ${catalogSection}
 }
 \`\`\`
    Do NOT edit \`${paramHistoryPath}\`.
+   **Do NOT abbreviate or modify the slot names or slugs above. Copy them verbatim.**
 5. **Output summary** as the LAST line of your response:
    \`SUMMARY: <one-line description of what you did and why, max 150 chars>\``;
+}
+
+/**
+ * Build the "Assigned Components" section for pre-selected restructure.
+ * Lists each pre-selected component with its description from the catalog.
+ */
+function buildAssignedComponentsSection(
+  components: Record<string, string>,
+  catalog: ComponentCatalog,
+): string {
+  const lines = ["### Assigned Components — You MUST implement ALL of these:"];
+  lines.push("");
+
+  for (const [slotName, slug] of Object.entries(components)) {
+    const slot = catalog.slots.find((s) => s.slotName === slotName);
+    const candidate = slot?.candidates.find((c) => c.slug === slug);
+    const desc = candidate ? `${candidate.name}: ${candidate.description}` : slug;
+    lines.push(`- **${slotName}**: \`${slug}\` — ${desc}`);
+  }
+
+  return lines.join("\n");
 }
 
 /**
@@ -549,23 +614,178 @@ function findLock(slotName: string, locks: Map<string, string>): string | undefi
 }
 
 /**
+ * Common slot name aliases Claude tends to use instead of catalog names.
+ * Maps lowercase alias → catalog slot name.
+ */
+const SLOT_ALIASES: Record<string, string> = {
+  "entry": "Entry Signal",
+  "signal": "Entry Signal",
+  "entry timing": "Entry Timing",
+  "timing": "Entry Timing",
+  "regime": "Regime Filter",
+  "htf regime": "Regime Filter",
+  "regime filter": "Regime Filter",
+  "trend filter": "Trend Filter",
+  "trend": "Trend Filter",
+  "confirmation": "Confirmation",
+  "volume": "Confirmation",
+  "confirm": "Confirmation",
+  "exit": "Exit",
+  "stop": "Exit",
+  "trail": "Exit",
+  "trailing": "Exit",
+  "trailing exit": "Trailing Exit",
+  "timeout": "Exit",
+  "tp": "Exit",
+  "band": "Band/Channel",
+  "band/channel": "Band/Channel",
+  "channel": "Band/Channel",
+  "exhaustion": "Exhaustion",
+  "pullback zone": "Pullback Zone",
+  "pullback": "Pullback Zone",
+  "pullback confirm": "Pullback Confirm",
+};
+
+/**
+ * Find a candidate slug within a compound slug value.
+ * Tries: exact → prefix → substring → token matching.
+ * Only applies fuzzy matching to slug-like values (lowercase, hyphens, digits).
+ *
+ * Token matching handles Claude injecting details into slugs:
+ *   "vol-sma20-spike" matches "vol-spike" (all tokens of "vol-spike" found in input)
+ *   "atr-1h-trail" matches "atr-trail" (all tokens found)
+ *   "daily-ema200-slope" matches "ema" (input token "ema200" starts with "ema")
+ */
+function findCandidateSlug(
+  slug: string,
+  candidates: { slug: string }[],
+): string | undefined {
+  // Exact match
+  const exact = candidates.find((c) => c.slug === slug);
+  if (exact) return exact.slug;
+
+  const lower = slug.toLowerCase();
+  const looksLikeSlug = /^[a-z0-9-]+$/.test(lower);
+  if (!looksLikeSlug) return undefined;
+
+  // Prefix match: "donchian-breakout" starts with "donchian"
+  const prefix = candidates.find((c) => lower.startsWith(c.slug));
+  if (prefix) return prefix.slug;
+
+  // Substring match: "bb-kc-squeeze-release" contains "squeeze"
+  // Use longest match to avoid false positives (prefer "vol-spike" over "vol")
+  let bestSubstring: string | undefined;
+  let bestSubLen = 0;
+  for (const c of candidates) {
+    if (lower.includes(c.slug) && c.slug.length > bestSubLen) {
+      bestSubstring = c.slug;
+      bestSubLen = c.slug.length;
+    }
+  }
+  if (bestSubstring) return bestSubstring;
+
+  // Token matching: "vol-sma20-spike" → tokens ["vol","sma20","spike"]
+  // "vol-spike" → parts ["vol","spike"] → all found in input tokens
+  const inputTokens = lower.split("-");
+  let bestToken: string | undefined;
+  let bestTokenParts = 0;
+  for (const c of candidates) {
+    const parts = c.slug.split("-");
+    const allFound = parts.every((part) =>
+      inputTokens.some((tok) => tok === part || tok.startsWith(part)),
+    );
+    if (allFound && parts.length > bestTokenParts) {
+      bestToken = c.slug;
+      bestTokenParts = parts.length;
+    }
+  }
+  return bestToken;
+}
+
+/**
  * Validate slug-based component selections from Claude's metadata.
  * Each value must be a valid slug for its slot. Invalid entries are dropped.
  * Returns only valid { slotName: slug } entries.
+ *
+ * Uses a three-pass approach:
+ * 1. Exact match on both slot name and slug
+ * 2. Fuzzy slot name (alias map + word overlap) + fuzzy slug (prefix/substring)
+ * 3. Global search: find any candidate across all slots that matches the slug
  */
 export function validateSlugComponents(
   components: Record<string, string>,
   catalog: ComponentCatalog,
 ): Record<string, string> {
   const validated: Record<string, string> = {};
+  const usedSlots = new Set<string>();
+
+  // Collect unresolved entries for pass 3
+  const unresolved: [string, string][] = [];
+
   for (const [slotName, slug] of Object.entries(components)) {
-    const slot = catalog.slots.find((s) => s.slotName === slotName);
-    if (!slot) continue; // unknown slot — drop
-    const match = slot.candidates.find((c) => c.slug === slug);
-    if (!match) continue; // unknown slug for this slot — drop
-    validated[slotName] = slug;
+    // Pass 1: exact slot name match
+    const exactSlot = catalog.slots.find((s) => s.slotName === slotName);
+    if (exactSlot) {
+      const match = findCandidateSlug(slug, exactSlot.candidates);
+      if (match) {
+        validated[exactSlot.slotName] = match;
+        usedSlots.add(exactSlot.slotName);
+        continue;
+      }
+    }
+
+    // Pass 2: fuzzy slot name via alias map + word overlap
+    const lowerSlot = slotName.toLowerCase();
+    const aliasTarget = SLOT_ALIASES[lowerSlot];
+    const fuzzySlot = aliasTarget
+      ? catalog.slots.find((s) => s.slotName === aliasTarget && !usedSlots.has(s.slotName))
+      : exactSlot ?? catalog.slots.find((s) =>
+          !usedSlots.has(s.slotName) && (
+            s.slotName.toLowerCase().startsWith(lowerSlot) ||
+            lowerSlot.startsWith(s.slotName.toLowerCase().split(" ")[0])
+          ),
+        );
+    if (fuzzySlot) {
+      const match = findCandidateSlug(slug, fuzzySlot.candidates);
+      if (match) {
+        validated[fuzzySlot.slotName] = match;
+        usedSlots.add(fuzzySlot.slotName);
+        continue;
+      }
+    }
+
+    unresolved.push([slotName, slug]);
   }
+
+  // Pass 3: global search — for each unresolved slug, find ANY matching candidate
+  for (const [, slug] of unresolved) {
+    for (const slot of catalog.slots) {
+      if (usedSlots.has(slot.slotName)) continue;
+      const match = findCandidateSlug(slug, slot.candidates);
+      if (match) {
+        validated[slot.slotName] = match;
+        usedSlots.add(slot.slotName);
+        break;
+      }
+    }
+  }
+
   return validated;
+}
+
+/**
+ * Build a compact slug reference table to place next to the metadata template.
+ * This puts the exact valid slot names and slugs close to where Claude writes
+ * the metadata, preventing drift from the catalog shown earlier in the prompt.
+ */
+function buildSlugReference(catalog: ComponentCatalog): string {
+  if (catalog.slots.length === 0) return "";
+  const lines: string[] = [];
+  for (const slot of catalog.slots) {
+    const slugs = slot.candidates.map((c) => `\`${c.slug}\``).join(", ");
+    lines.push(`- \`"${slot.slotName}"\`: ${slugs}`);
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -728,11 +948,18 @@ function buildLastIterationSection(paramHistory: ParameterHistory | null): strin
   // Skip if pending (no result yet)
   if (last.verdict === "pending") return "";
 
+  // When verdict is not "improved", the change was rolled back — clarify that
+  // the current params are back to "from" values, not "to" values.
+  const wasRolledBack = last.verdict !== "improved";
+  const rollbackNote = wasRolledBack && last.change
+    ? `\n⚠ ROLLED BACK: ${last.change.param} was reverted to ${last.change.from} (current value). The "to" value (${last.change.to}) is NOT active.`
+    : "";
+
   return `## LAST ITERATION RESULT
 ${changeStr}
 Before: ${beforeStr}
 After: ${afterStr}
-Verdict: ${last.verdict}${last.note ? ` — ${last.note}` : ""}
+Verdict: ${last.verdict}${last.note ? ` — ${last.note}` : ""}${rollbackNote}
 → Use this cause-effect data to inform your next change. Do NOT repeat changes that degraded metrics.
 
 `;

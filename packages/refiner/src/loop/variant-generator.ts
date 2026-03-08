@@ -9,19 +9,18 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { buildOptimizePrompt, validateSlugComponents } from "../automation/build-optimize-prompt.js";
+import { buildOptimizePrompt } from "../automation/build-optimize-prompt.js";
 import type { RestructureFailure } from "../automation/build-optimize-prompt.js";
 import { optimizeStrategy } from "./stages/optimize.js";
 import { conductResearch } from "./stages/research.js";
 import { checkpoint } from "./stages/checkpoint.js";
-import { safeJsonParse } from "../lib/safe-json.js";
 import type { VariantManager, VariantInfo } from "./variant-manager.js";
+import { selectNextCombination, buildVariantId, fixFactoryName } from "./variant-manager.js";
 import type { LoopConfig } from "./types.js";
 import type { ModuleContext } from "../lib/build-module-context.js";
 import type { Metrics, TradeAnalysis, StrategyParam } from "@breaker/backtest";
 import type { ScoreRaw } from "./stages/scoring.js";
 import type { ScoringWeights } from "../types/config.js";
-import type { IterationMetadata } from "./stages/param-writer.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -153,8 +152,22 @@ export async function generateVariant(opts: GenerateVariantOpts): Promise<Varian
     }
   }
 
-  // ---- Build restructure prompt with variant history ----
+  // ---- Pre-select next component combination ----
   const allVariants = variantManager.getAll();
+  const testedIds = new Set(allVariants.map((v) => v.id));
+
+  const preSelectedComponents = selectNextCombination(moduleContext.catalog, testedIds);
+  if (!preSelectedComponents) {
+    log("\x1b[33mAll component combinations exhausted — cannot generate new variant\x1b[0m");
+    return null;
+  }
+
+  const targetVariantId = buildVariantId(preSelectedComponents);
+  log(
+    `\x1b[34mPre-selected combination: ${targetVariantId} (${Object.entries(preSelectedComponents).map(([s, c]) => `${s}=${c}`).join(", ")})\x1b[0m`,
+  );
+
+  // ---- Build restructure prompt with variant history ----
   const failureAnalysis = buildFailureAnalysis(allVariants);
 
   const failedRestructures: RestructureFailure[] = allVariants
@@ -190,6 +203,7 @@ export async function generateVariant(opts: GenerateVariantOpts): Promise<Varian
     bestScoreBreakdown,
     bestScore,
     walkForward: currentAnalysis?.walkForward ?? null,
+    preSelectedComponents,
   });
 
   // ---- Run Claude to generate new strategy ----
@@ -215,49 +229,13 @@ export async function generateVariant(opts: GenerateVariantOpts): Promise<Varian
     return null;
   }
 
-  // ---- Read generated source and extract components ----
+  // ---- Read generated source, fix factory name, and create variant ----
   const generatedSource = fs.readFileSync(seedStrategyFile, "utf8");
+  const fixedSource = fixFactoryName(generatedSource, targetVariantId);
 
-  let components: Record<string, string> = {};
-  try {
-    const metadataPath = path.join(cfg.artifactsDir, `iter${globalIter}-metadata.json`);
-    if (fs.existsSync(metadataPath)) {
-      const metadata = safeJsonParse<IterationMetadata>(
-        fs.readFileSync(metadataPath, "utf8"),
-        { repair: true },
-      );
-      if (metadata.selectedComponents && typeof metadata.selectedComponents === "object") {
-        const raw = metadata.selectedComponents as Record<string, string>;
-        components = validateSlugComponents(raw, moduleContext.catalog);
-
-        const droppedCount = Object.keys(raw).length - Object.keys(components).length;
-        if (droppedCount > 0) {
-          log(`\x1b[33mDropped ${droppedCount} invalid slug(s) from selectedComponents\x1b[0m`);
-        }
-      }
-    }
-  } catch {
-    // Non-critical — components are for naming only
-  }
-
-  if (Object.keys(components).length === 0) {
-    log("\x1b[33mNo selectedComponents in metadata — cannot create named variant\x1b[0m");
-    // Restore seed file
-    checkpoint.rollback(cfg.checkpointDir, seedStrategyFile);
-    return null;
-  }
-
-  // ---- Check if combination was already tested ----
-  if (variantManager.isTestedCombination(components)) {
-    log(`\x1b[33mCombination already tested — skipping\x1b[0m`);
-    checkpoint.rollback(cfg.checkpointDir, seedStrategyFile);
-    return null;
-  }
-
-  // ---- Create the variant (saves to deterministic path) ----
   let variant: VariantInfo;
   try {
-    variant = variantManager.createVariant(components, generatedSource);
+    variant = variantManager.createVariant(preSelectedComponents, fixedSource);
   } catch (err) {
     log(`\x1b[33mFailed to create variant: ${(err as Error).message}\x1b[0m`);
     checkpoint.rollback(cfg.checkpointDir, seedStrategyFile);

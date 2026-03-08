@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateGuardrails, validateParamGuardrails, validateWalkForward, validateArchetypeWR, validateFreeVariableCount, validateDiagnosticTracking, validateStrategyStructure } from "./guardrails.js";
+import { validateGuardrails, validateParamGuardrails, validateWalkForward, validateArchetypeWR, validateFreeVariableCount, validateDiagnosticTracking, validateStrategyStructure, validateProfitabilityRegression } from "./guardrails.js";
 import type { Guardrails } from "../../types/config.js";
 import type { StrategyParam, WalkForward } from "@breaker/backtest";
 
@@ -134,12 +134,11 @@ describe("validateWalkForward", () => {
     expect(v[0].reason).toContain("pfRatio=0.40");
   });
 
-  it("detects overfitFlag true (testPF < 1.0)", () => {
-    const wf = mkWalkForward({ overfitFlag: true, pfRatio: 0.6, testPF: 0.9 });
+  it("does not flag when testPF < 1.0 but pfRatio >= 0.6 (not overfit, just bad)", () => {
+    // overfitFlag is now only set when pfRatio < 0.6, so this should not trigger
+    const wf = mkWalkForward({ overfitFlag: false, pfRatio: 0.6, testPF: 0.9, trainPF: 1.5 });
     const v = validateWalkForward(wf);
-    expect(v).toHaveLength(1);
-    expect(v[0].field).toBe("overfitFlag");
-    expect(v[0].reason).toContain("testPF=0.90");
+    expect(v).toEqual([]);
   });
 
   it("includes trainPF in reason message", () => {
@@ -391,5 +390,71 @@ describe("validateStrategyStructure", () => {
 
     const with1d = VALID_STRATEGY_SOURCE.replace(/MS_1H/g, "MS_1D");
     expect(validateStrategyStructure(with1d).some((v) => v.field === "antiRepaint")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateProfitabilityRegression
+// ---------------------------------------------------------------------------
+describe("validateProfitabilityRegression", () => {
+  it("returns empty when PF improved", () => {
+    expect(validateProfitabilityRegression(
+      { profitFactor: 1.5, avgR: -0.10 },
+      { profitFactor: 1.2, avgR: -0.05 },
+    )).toEqual([]);
+  });
+
+  it("returns empty when avgR improved", () => {
+    expect(validateProfitabilityRegression(
+      { profitFactor: 0.8, avgR: 0.10 },
+      { profitFactor: 1.0, avgR: -0.10 },
+    )).toEqual([]);
+  });
+
+  it("returns empty when both improved", () => {
+    expect(validateProfitabilityRegression(
+      { profitFactor: 1.5, avgR: 0.20 },
+      { profitFactor: 1.2, avgR: 0.10 },
+    )).toEqual([]);
+  });
+
+  it("returns empty when values equal (no regression)", () => {
+    expect(validateProfitabilityRegression(
+      { profitFactor: 1.0, avgR: 0.0 },
+      { profitFactor: 1.0, avgR: 0.0 },
+    )).toEqual([]);
+  });
+
+  it("detects regression when both PF AND avgR worsened", () => {
+    const v = validateProfitabilityRegression(
+      { profitFactor: 0.8, avgR: -0.30 },
+      { profitFactor: 1.2, avgR: -0.10 },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0].field).toBe("profitabilityRegression");
+    expect(v[0].reason).toContain("PF");
+    expect(v[0].reason).toContain("avgR");
+  });
+
+  it("handles null metrics (treats as 0)", () => {
+    const v = validateProfitabilityRegression(
+      { profitFactor: null, avgR: null },
+      { profitFactor: 0.5, avgR: 0.1 },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0].field).toBe("profitabilityRegression");
+  });
+
+  it("detects the iter-8 scenario: PF drops, avgR drops, trades increase", () => {
+    // Real case: PF 0.49→0.41, avgR -0.20→-0.24 (trades 113→150 boosted score)
+    const v = validateProfitabilityRegression(
+      { profitFactor: 0.41, avgR: -0.24 },
+      { profitFactor: 0.49, avgR: -0.20 },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0].reason).toContain("0.49");
+    expect(v[0].reason).toContain("0.41");
+    expect(v[0].reason).toContain("-0.200");
+    expect(v[0].reason).toContain("-0.240");
   });
 });

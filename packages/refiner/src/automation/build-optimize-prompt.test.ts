@@ -117,9 +117,18 @@ describe("validateSlugComponents", () => {
     expect(result["Regime Filter"]).toBe("ema");
   });
 
-  it("drops unknown slots", () => {
+  it("recovers valid slug from unknown slot via global search (pass 3)", () => {
+    // "Unknown Slot" doesn't match any slot, but "donchian" is a valid slug in "Entry Signal"
     const result = validateSlugComponents(
       { "Unknown Slot": "donchian" },
+      catalog,
+    );
+    expect(result["Entry Signal"]).toBe("donchian");
+  });
+
+  it("drops truly unresolvable entries", () => {
+    const result = validateSlugComponents(
+      { "Unknown Slot": "not-a-real-slug" },
       catalog,
     );
     expect(result).toEqual({});
@@ -148,6 +157,116 @@ describe("validateSlugComponents", () => {
     );
     expect(result).toEqual({ "Entry Signal": "squeeze" });
   });
+
+  // --- Fuzzy matching tests (regression for variant generation failure) ---
+
+  it("fuzzy-matches abbreviated slot names", () => {
+    // Claude returned "Entry" instead of "Entry Signal", "Regime" instead of "Regime Filter"
+    const result = validateSlugComponents(
+      { "Entry": "donchian", "Regime": "adx" },
+      catalog,
+    );
+    expect(result["Entry Signal"]).toBe("donchian");
+    expect(result["Regime Filter"]).toBe("adx");
+  });
+
+  it("fuzzy-matches compound slugs by prefix", () => {
+    // Claude returned "donchian-breakout" instead of "donchian"
+    const result = validateSlugComponents(
+      { "Entry Signal": "donchian-breakout" },
+      catalog,
+    );
+    expect(result["Entry Signal"]).toBe("donchian");
+  });
+
+  it("fuzzy-matches both abbreviated slot and compound slug", () => {
+    // Reproduces exact scenario from failed run iter 6
+    const result = validateSlugComponents(
+      { "Entry": "donchian-breakout", "Regime": "adx-consolidation-4h" },
+      catalog,
+    );
+    expect(result["Entry Signal"]).toBe("donchian");
+    expect(result["Regime Filter"]).toBe("adx");
+  });
+
+  it("prefers exact match over fuzzy", () => {
+    const result = validateSlugComponents(
+      { "Entry Signal": "donchian", "Entry": "squeeze" },
+      catalog,
+    );
+    // Exact match wins; "Entry" fuzzy won't reassign the same slot
+    expect(result["Entry Signal"]).toBe("donchian");
+  });
+
+  it("matches via substring containment in slugs", () => {
+    // "bb-kc-squeeze-release" contains "squeeze"
+    const result = validateSlugComponents(
+      { "Entry Signal": "bb-kc-squeeze-release" },
+      catalog,
+    );
+    expect(result["Entry Signal"]).toBe("squeeze");
+  });
+
+  it("matches slot aliases (Volume → Confirmation, HTF Regime → Regime Filter)", () => {
+    const extCatalog: ComponentCatalog = {
+      slots: [
+        ...catalog.slots,
+        {
+          slotName: "Confirmation",
+          candidates: [
+            { name: "Volume spike", slug: "vol-spike", description: "Vol > N×SMA" },
+          ],
+        },
+      ],
+    };
+    const result = validateSlugComponents(
+      { "Volume": "vol-sma20-spike", "HTF Regime": "daily-ema200-slope" },
+      extCatalog,
+    );
+    // "Volume" aliases to "Confirmation", "vol-sma20-spike" contains "vol-spike"
+    expect(result["Confirmation"]).toBe("vol-spike");
+    // "HTF Regime" aliases to "Regime Filter", "daily-ema200-slope" contains "ema"
+    expect(result["Regime Filter"]).toBe("ema");
+  });
+
+  it("handles real run2 scenario: fragmented Exit slots", () => {
+    const exitCatalog: ComponentCatalog = {
+      slots: [
+        {
+          slotName: "Entry Signal",
+          candidates: [
+            { name: "Donchian Channel", slug: "donchian", description: "Breakout" },
+            { name: "BB squeeze", slug: "squeeze", description: "BB inside KC" },
+          ],
+        },
+        {
+          slotName: "Exit",
+          candidates: [
+            { name: "ATR trailing stop", slug: "atr-trail", description: "Trail" },
+            { name: "Time-based timeout", slug: "timeout", description: "Timeout" },
+          ],
+        },
+      ],
+    };
+    // Claude splits "Exit" into Stop/Trail/Timeout — all alias to "Exit"
+    // Only one can claim the Exit slot (first match wins)
+    const result = validateSlugComponents(
+      { "Trail": "atr-1h-trail", "Timeout": "timeout-bars", "Stop": "atr-1h-stop" },
+      exitCatalog,
+    );
+    // At least one should resolve to Exit
+    expect(result["Exit"]).toBeDefined();
+    expect(["atr-trail", "timeout"]).toContain(result["Exit"]);
+  });
+
+  it("global search (pass 3) finds slug in any slot when slot name is unknown", () => {
+    const result = validateSlugComponents(
+      { "Momentum Filter": "adx-based-gate" },
+      catalog,
+    );
+    // "adx-based-gate" contains "adx" which is in "Regime Filter"
+    expect(result["Regime Filter"]).toBe("adx");
+  });
 });
 
 describe("formatCatalogForPrompt: slug-based TESTED matching", () => {
@@ -175,6 +294,104 @@ describe("formatCatalogForPrompt: slug-based TESTED matching", () => {
     ];
     const result = formatCatalogForPrompt(catalog, tested);
     expect(result).not.toContain("[TESTED]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Restructure prompt: slug reference near metadata template
+// ---------------------------------------------------------------------------
+
+describe("restructure prompt slug reference", () => {
+  const catalogWithSlots: ComponentCatalog = {
+    slots: [
+      {
+        slotName: "Entry Signal",
+        candidates: [
+          { name: "Donchian Channel", slug: "donchian", description: "Breakout" },
+          { name: "BB squeeze", slug: "squeeze", description: "BB inside KC" },
+        ],
+      },
+      {
+        slotName: "Regime Filter",
+        candidates: [
+          { name: "EMA direction", slug: "ema", description: "Trend" },
+        ],
+      },
+    ],
+  };
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "restructure" as const,
+    iter: 1, maxIter: 1, globalIter: 6,
+    paramHistoryPath: "/fake/ph.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: {
+      profile: "breakout", moduleId: "M1", moduleName: "Breakout",
+      fixedRules: "", restructureLocks: "", varCap: 8,
+      stoppingCriteria: "", signalTF: "15m", regimeTF: "4H",
+      catalog: catalogWithSlots,
+    } as ModuleContext,
+  };
+
+  it("includes slug reference with exact slot names and slugs near metadata template", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: { totalPnl: -800, numTrades: 300, profitFactor: 0.44, maxDrawdownPct: 80, winRate: 54, avgR: -0.07, avgWinR: 0.5, avgLossR: -0.5, maxLossR: -1, expectancy: -2 },
+      tradeAnalysis: null,
+    });
+
+    // Slug reference should appear near the metadata template
+    expect(prompt).toContain('"Entry Signal"');
+    expect(prompt).toContain('`donchian`');
+    expect(prompt).toContain('`squeeze`');
+    expect(prompt).toContain('"Regime Filter"');
+    expect(prompt).toContain('`ema`');
+    // Should have the warning about exact names
+    expect(prompt).toContain("EXACT slot names and slugs required");
+    expect(prompt).toContain("Do NOT abbreviate or modify");
+  });
+
+  it("uses IMPLEMENT template when preSelectedComponents is provided", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: { totalPnl: -800, numTrades: 300, profitFactor: 0.44, maxDrawdownPct: 80, winRate: 54, avgR: -0.07, avgWinR: 0.5, avgLossR: -0.5, maxLossR: -1, expectancy: -2 },
+      tradeAnalysis: null,
+      preSelectedComponents: {
+        "Entry Signal": "squeeze",
+        "Regime Filter": "ema",
+      },
+    });
+
+    // Should show assigned components section
+    expect(prompt).toContain("Assigned Components");
+    expect(prompt).toContain("MUST implement ALL");
+    expect(prompt).toContain("`squeeze`");
+    expect(prompt).toContain("**Entry Signal**");
+    expect(prompt).toContain("**Regime Filter**");
+    // Should say IMPLEMENT, not SELECT
+    expect(prompt).toContain("**IMPLEMENT** the assigned components");
+    // Should NOT have slug reference or selectedComponents in metadata
+    expect(prompt).not.toContain("EXACT slot names and slugs required");
+    expect(prompt).not.toContain('"selectedComponents"');
+    // Catalog should still be visible (for reference)
+    expect(prompt).toContain("Component Catalog");
+  });
+
+  it("falls back to SELECT template when preSelectedComponents is absent", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: { totalPnl: -800, numTrades: 300, profitFactor: 0.44, maxDrawdownPct: 80, winRate: 54, avgR: -0.07, avgWinR: 0.5, avgLossR: -0.5, maxLossR: -1, expectancy: -2 },
+      tradeAnalysis: null,
+    });
+
+    // Legacy path: should have SELECT
+    expect(prompt).toContain("**SELECT** one component per slot");
+    expect(prompt).toContain("EXACT slot names and slugs required");
   });
 });
 
@@ -899,6 +1116,37 @@ describe("P2.1: last iteration result", () => {
     expect(prompt).toContain("dcSlow");
     expect(prompt).toContain("from 55 to 60");
     expect(prompt).toContain("degraded");
+    // Rollback note clarifies that the "to" value is NOT the current value
+    expect(prompt).toContain("ROLLED BACK");
+    expect(prompt).toContain("reverted to 55");
+
+    vi.restoreAllMocks();
+  });
+
+  it("does not show ROLLED BACK note when verdict is improved", () => {
+    vi.spyOn(fs, "readFileSync").mockImplementation((p: any) => {
+      if (String(p).includes("history.json")) {
+        return JSON.stringify({
+          iterations: [{
+            iter: 1,
+            date: "2025-01-01",
+            change: { param: "dcSlow", from: 55, to: 60 },
+            before: { pnl: -100, trades: 77, pf: 0.5 },
+            after: { pnl: -50, trades: 80, pf: 0.8 },
+            verdict: "improved",
+          }],
+          neverWorked: [],
+          exploredRanges: {},
+          pendingHypotheses: [],
+        });
+      }
+      if (String(p).includes("strategy.ts")) return "// strategy source";
+      return "";
+    });
+
+    const prompt = buildOptimizePrompt({ ...baseOpts, metrics: makeMetrics(), tradeAnalysis: null });
+    expect(prompt).toContain("LAST ITERATION RESULT");
+    expect(prompt).not.toContain("ROLLED BACK");
 
     vi.restoreAllMocks();
   });

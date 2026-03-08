@@ -30,7 +30,7 @@ const DEFAULT_PARAMS: SqueezeAdxTrailDcParams = {
   timeoutBars: { value: 48, min: 24, max: 96, step: 4, optimizable: true, description: "Forced exit after N bars to prevent funding bleed" },
 };
 
-export function createDonchianEmaTimeout(
+export function createSqueezeAdxTrailDc(
   paramOverrides?: Partial<Record<keyof SqueezeAdxTrailDcParams, number>>,
 ): Strategy {
   const params: Record<string, StrategyParam> = {};

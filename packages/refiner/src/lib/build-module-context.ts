@@ -25,6 +25,8 @@ export interface CatalogSlot {
   candidates: CatalogCandidate[];
   /** Typical vars consumed by this slot (from KB variable budget table) */
   typicalVars?: string;
+  /** Whether this slot is optional for variant generation (e.g., M1 Entry Timing, Confirmation) */
+  optional?: boolean;
 }
 
 /** Full component catalog for a module, parsed from KB */
@@ -276,12 +278,12 @@ export function extractFixedRules(kbContent: string, sectionNumber: number): str
  * Maps each module to the markdown bold headers that identify its candidate
  * tables in the KB. Order defines the slot display order in prompts.
  */
-const MODULE_SLOT_HEADERS: Record<string, { slotName: string; header: string }[]> = {
+const MODULE_SLOT_HEADERS: Record<string, { slotName: string; header: string; optional?: boolean }[]> = {
   M1: [
     { slotName: "Entry Signal",    header: "Entry signal candidates" },
-    { slotName: "Entry Timing",    header: "Entry timing candidates" },
+    { slotName: "Entry Timing",    header: "Entry timing candidates", optional: true },
     { slotName: "Regime Filter",   header: "Regime filter candidates" },
-    { slotName: "Confirmation",    header: "Optional confirmation filter" },
+    { slotName: "Confirmation",    header: "Optional confirmation filter", optional: true },
     { slotName: "Exit",            header: "Exit candidates" },
   ],
   M2: [
@@ -472,7 +474,7 @@ export function extractComponentCatalog(
     const candidates = extractCandidatesFromTable(sectionContent, def.header);
     if (candidates.length > 0) {
       const typicalVars = matchBudgetKey(def.slotName, budget);
-      slots.push({ slotName: def.slotName, candidates, typicalVars });
+      slots.push({ slotName: def.slotName, candidates, typicalVars, ...(def.optional ? { optional: true } : {}) });
     }
   }
 
@@ -622,8 +624,12 @@ export function buildModuleContext(
   let kbContent = "";
   try {
     kbContent = fs.readFileSync(kbPath, "utf8");
-  } catch {
-    // KB not available — fixedRules will be placeholder
+  } catch (err) {
+    console.warn(`[buildModuleContext] KB not found at ${kbPath}: ${(err as Error).message}`);
+  }
+
+  if (!kbContent) {
+    console.warn(`[buildModuleContext] KB content is empty — catalog will be empty, variant naming will fail`);
   }
 
   const fixedRules = extractFixedRules(kbContent, mapping.kbSection);

@@ -476,6 +476,26 @@ describe("extractComponentCatalog", () => {
     const confSlot = catalog.slots.find((s) => s.slotName === "Confirmation");
     expect(confSlot!.candidates).toHaveLength(2);
   });
+
+  it("marks M1 Entry Timing and Confirmation as optional", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
+    const timingSlot = catalog.slots.find((s) => s.slotName === "Entry Timing");
+    const confSlot = catalog.slots.find((s) => s.slotName === "Confirmation");
+    const entrySlot = catalog.slots.find((s) => s.slotName === "Entry Signal");
+    const exitSlot = catalog.slots.find((s) => s.slotName === "Exit");
+
+    expect(timingSlot!.optional).toBe(true);
+    expect(confSlot!.optional).toBe(true);
+    expect(entrySlot!.optional).toBeUndefined();
+    expect(exitSlot!.optional).toBeUndefined();
+  });
+
+  it("M2 slots are all required (no optional)", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M2");
+    for (const slot of catalog.slots) {
+      expect(slot.optional).toBeUndefined();
+    }
+  });
 });
 
 describe("extractVariableBudget", () => {
@@ -724,5 +744,49 @@ describe("getKbSection", () => {
 
   it("throws for unknown strategy", () => {
     expect(() => getKbSection("unknown")).toThrow(/Unknown strategy profile/);
+  });
+});
+
+describe("buildModuleContext with real KB", () => {
+  // Regression: kbPath must point to monorepo root, not refiner package root.
+  // The orchestrator's cfg.repoRoot is the refiner package root (packages/refiner),
+  // so KB path must be resolved via path.resolve(cfg.repoRoot, "../../docs/knowledge-base.md").
+  const monorepoRoot = path.resolve(__dirname, "../../../..");
+  const kbPath = path.join(monorepoRoot, "docs/knowledge-base.md");
+
+  it("loads non-empty catalog for M1 breakout from real KB", async () => {
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    if (!realFs.existsSync(kbPath)) return; // skip in CI if KB absent
+
+    const realKb = realFs.readFileSync(kbPath, "utf8") as string;
+    vi.mocked(fs.readFileSync).mockReturnValue(realKb);
+
+    const ctx = buildModuleContext(
+      { strategy: "breakout", interval: "15m", criteria: {} },
+      kbPath,
+    );
+
+    expect(ctx.moduleId).toBe("M1");
+    expect(ctx.catalog.slots.length).toBeGreaterThanOrEqual(3);
+
+    const slotNames = ctx.catalog.slots.map((s) => s.slotName);
+    expect(slotNames).toContain("Entry Signal");
+    expect(slotNames).toContain("Regime Filter");
+    expect(slotNames).toContain("Exit");
+  });
+
+  it("warns when KB path is wrong (e.g. refiner package root)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
+
+    const ctx = buildModuleContext(
+      { strategy: "breakout", interval: "15m", criteria: {} },
+      "/nonexistent/docs/knowledge-base.md",
+    );
+
+    expect(ctx.catalog.slots.length).toBe(0);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("KB not found"));
+
+    warnSpy.mockRestore();
   });
 });

@@ -73,21 +73,22 @@ describe("computeWalkForward", () => {
     expect(result.overfitFlag).toBe(true);
   });
 
-  it("flags overfit when trainPF < 1.0", () => {
+  it("does NOT flag overfit when trainPF < 1.0 but pfRatio healthy", () => {
     const baseTime = new Date("2024-01-01").getTime();
     const trades = [
       // Train set (7 trades): 5 small wins, 2 larger losses → trainPF < 1.0
       ...Array.from({ length: 5 }, (_, i) => makeTrade(2, baseTime + i * 86400000)),
       ...Array.from({ length: 2 }, (_, i) => makeTrade(-8, baseTime + (i + 5) * 86400000)),
-      // Test set (3 trades): all winners → testPF high
+      // Test set (3 trades): all winners → testPF high, pfRatio > 0.6
       ...Array.from({ length: 3 }, (_, i) => makeTrade(20, baseTime + (i + 7) * 86400000)),
     ];
     const result = computeWalkForward(trades)!;
     expect(result.trainPF).toBeLessThan(1.0);
-    expect(result.overfitFlag).toBe(true);
+    expect(result.pfRatio).toBeGreaterThan(0.6);
+    expect(result.overfitFlag).toBe(false);
   });
 
-  it("does not flag overfit when trainPF >= 1.0", () => {
+  it("does not flag overfit when trainPF >= 1.0 and pfRatio healthy", () => {
     const baseTime = new Date("2024-01-01").getTime();
     const trades = [
       // Train set (7 trades): healthy PF
@@ -99,6 +100,25 @@ describe("computeWalkForward", () => {
     ];
     const result = computeWalkForward(trades)!;
     expect(result.trainPF).toBeGreaterThanOrEqual(1.0);
+    expect(result.overfitFlag).toBe(false);
+  });
+
+  it("does NOT flag overfit when both PFs < 1.0 but consistent (pfRatio > 0.6)", () => {
+    // Reproduces the scenario from the failed run: both train/test losing but consistent
+    const baseTime = new Date("2024-01-01").getTime();
+    const trades = [
+      // Train (7 trades): slightly losing, PF ~0.85
+      ...Array.from({ length: 4 }, (_, i) => makeTrade(5, baseTime + i * 86400000)),
+      ...Array.from({ length: 3 }, (_, i) => makeTrade(-8, baseTime + (i + 4) * 86400000)),
+      // Test (3 trades): also slightly losing, similar PF → pfRatio near 1.0
+      makeTrade(5, baseTime + 7 * 86400000),
+      makeTrade(-8, baseTime + 8 * 86400000),
+      makeTrade(2, baseTime + 9 * 86400000),
+    ];
+    const result = computeWalkForward(trades)!;
+    expect(result.trainPF).toBeLessThan(1.0);
+    expect(result.testPF).toBeLessThan(1.0);
+    expect(result.pfRatio).toBeGreaterThan(0.6);
     expect(result.overfitFlag).toBe(false);
   });
 

@@ -37,7 +37,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - Arquivos-chave:
   - `variant-switch.ts` — Funcao `switchToNewVariant()`: encapsula generateVariant → rebuild → import → baseline → checkpoint → score
   - `variant-manager.ts` — Registry (variant-registry.json), naming (buildVariantId, SLOT_PRIORITY), lifecycle (active→plateaued→complete→killed)
-  - `variant-generator.ts` — Geracao: prompt com failure history + catalog → Claude retorna slugs → validateSlugComponents() → createVariant()
+  - `variant-generator.ts` — Geracao: pre-seleciona combinacao via `selectNextCombination()` → prompt com componentes atribuidos → Claude implementa → `fixFactoryName()` → `createVariant()`
   - `seed-generator.ts` — Bootstrap: skeleton → optimizeStrategy(restructure) → fixStrategy fallback
   - `build-module-context.ts` — CANDIDATE_SLUGS, STARTING_COMPONENTS (slug-based), extractStartingPoint(), getKbSection(), MODULE_CRITERIA, ComponentCatalog
   - `build-optimize-prompt.ts` — validateSlugComponents() (substitui normalizeToCatalog), formatCatalogForPrompt() mostra slugs em backticks
@@ -63,7 +63,8 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - Before accepting an iteration result, compare `contentHash` of strategy source.
 - During an optimization loop, keep the backtest window fixed; only change in a new round.
 - Walk-forward overfit gate (KB §10.1): `validateWalkForward()` in `guardrails.ts` rejects iterations where `overfitFlag=true` (pfRatio < 0.6, i.e., testPF < 60% of trainPF), even if score improved. Prevents promotion of memorized strategies. Absolute PF < 1.0 is NOT checked by the WF guard — it's enforced by scoring criteria. Conflating "bad strategy" with "overfitting" creates a Catch-22 for losing strategies.
-- Checkpoint save decision uses `effectiveVerdict` (not raw score comparison alone). Guardrail-rejected iterations (WF overfit, free variable count) never save checkpoints, and trigger rollback to last good state.
+- Profitability regression guard: `validateProfitabilityRegression()` in `guardrails.ts` rejects iterations where BOTH PF and avgR worsened vs best checkpoint (prevents trade-count-driven score inflation).
+- Checkpoint save decision uses `effectiveVerdict` (not raw score comparison alone). Guardrail-rejected iterations (WF overfit, free variable count, profitability regression) never save checkpoints, and trigger rollback to last good state.
 - Checkpoint save bakes optimized params into strategy source via `bakeParamDefaults()` — strategy files become self-contained. Stale params (from previous strategy versions) are auto-cleaned from `best-params.json`.
 
 ## Naming (breaker-specific)
@@ -100,5 +101,5 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 
 ## Build and test (breaker-specific)
 - Coverage: `pnpm vitest run --coverage`
-- Tests: `pnpm test` (718 tests across 32 files)
+- Tests: `pnpm test` (785 tests across 34 files)
 - After strategy code changes in restructure phase: `pnpm --filter @breaker/backtest typecheck` then `pnpm --filter @breaker/backtest build`

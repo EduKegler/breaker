@@ -26,10 +26,11 @@ export function computeWalkForward(trades: CompletedTrade[]): WalkForward | null
     ? testPF / trainPF
     : null;
 
-  // Overfit flag: test PF < 60% of train PF, test PF < 1.0, or train PF < 1.0 (KB §10.1)
-  const overfitFlag = pfRatio !== null
-    ? pfRatio < 0.6 || (testPF !== null && testPF < 1.0) || (trainPF !== null && trainPF < 1.0)
-    : false;
+  // Overfit flag: test PF < 60% of train PF (KB §10.1)
+  // Only checks train/test divergence — absolute PF < 1.0 is enforced by scoring criteria,
+  // not the WF guard. Conflating "bad strategy" with "overfitting" creates a Catch-22
+  // where losing strategies can never improve (every iteration gets WF-rejected).
+  const overfitFlag = pfRatio !== null ? pfRatio < 0.6 : false;
 
   const hourConsistency = computeHourConsistency(trainTrades, testTrades);
 

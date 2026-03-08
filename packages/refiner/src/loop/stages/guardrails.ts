@@ -251,6 +251,29 @@ export function validateStrategyStructure(
   return violations;
 }
 
+/**
+ * Validate that both PF and avgR haven't regressed vs the best checkpoint.
+ * When BOTH worsen, the strategy has objectively degraded even if score improved
+ * (e.g., trade count increase boosting sampleConfidence while edge erodes).
+ */
+export function validateProfitabilityRegression(
+  newMetrics: { profitFactor: number | null; avgR: number | null },
+  bestMetrics: { profitFactor: number | null; avgR: number | null },
+): GuardrailViolation[] {
+  const newPF = newMetrics.profitFactor ?? 0;
+  const bestPF = bestMetrics.profitFactor ?? 0;
+  const newAvgR = newMetrics.avgR ?? 0;
+  const bestAvgR = bestMetrics.avgR ?? 0;
+
+  if (newPF < bestPF && newAvgR < bestAvgR) {
+    return [{
+      field: "profitabilityRegression",
+      reason: `Both PF and avgR worsened: PF ${bestPF.toFixed(2)}→${newPF.toFixed(2)}, avgR ${bestAvgR.toFixed(3)}→${newAvgR.toFixed(3)}`,
+    }];
+  }
+  return [];
+}
+
 function extractFieldValue(code: string, field: string): string | null {
   const patterns = [
     new RegExp(`${escapeRegex(field)}\\s*=\\s*([^\\s,)]+)`),
