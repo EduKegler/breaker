@@ -58,6 +58,10 @@ export interface BacktestResult {
  */
 const EIGHT_HOURS_MS = 8 * 3_600_000;
 
+function calculateFundingCost(entryPrice: number, size: number, fundingRate8h: number, barsHeld: number, intervalMs: number): number {
+  return entryPrice * size * fundingRate8h * (barsHeld * intervalMs) / EIGHT_HOURS_MS;
+}
+
 export function runBacktest(
   candles: Candle[],
   strategy: Strategy,
@@ -128,7 +132,7 @@ export function runBacktest(
         if (!positionTracker.isFlat()) {
           const pos = positionTracker.getPosition()!;
           const barsHeld = i - pos.entryBarIndex;
-          const fc = pos.entryPrice * pos.size * fundingRate8h * (barsHeld * intervalMs) / EIGHT_HOURS_MS;
+          const fc = calculateFundingCost(pos.entryPrice, pos.size, fundingRate8h, barsHeld, intervalMs);
           const trade = positionTracker.closePosition(
             fill, i, "signal", pendingExitComment, lastEntryComment, fc,
           );
@@ -142,7 +146,7 @@ export function runBacktest(
         if (!positionTracker.isFlat()) {
           const pos = positionTracker.getPosition()!;
           const barsHeld = i - pos.entryBarIndex;
-          const fc = pos.entryPrice * pos.size * fundingRate8h * (barsHeld * intervalMs) / EIGHT_HOURS_MS;
+          const fc = calculateFundingCost(pos.entryPrice, pos.size, fundingRate8h, barsHeld, intervalMs);
           const trade = handleExitFill(
             positionTracker,
             fill,
@@ -254,7 +258,7 @@ export function runBacktest(
       tag: "eod",
     };
     const barsHeld = (candles.length - 1) - pos.entryBarIndex;
-    const fc = pos.entryPrice * pos.size * fundingRate8h * (barsHeld * intervalMs) / EIGHT_HOURS_MS;
+    const fc = calculateFundingCost(pos.entryPrice, pos.size, fundingRate8h, barsHeld, intervalMs);
     const trade = positionTracker.closePosition(
       fill, candles.length - 1, "eod", "End of data", lastEntryComment, fc,
     );
