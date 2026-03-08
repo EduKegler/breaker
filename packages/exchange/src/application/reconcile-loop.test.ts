@@ -894,57 +894,64 @@ describe("ReconcileLoop", () => {
     expect(snapshots).toHaveLength(0);
   });
 
-  it("calls onApiDown after 3 consecutive errors", async () => {
-    const positionBook = new PositionBook();
-    const hlClient = createMockHlClient({
-      getPositions: vi.fn().mockRejectedValue(new Error("HL API down")),
+  describe("onApiDown (fake timers)", () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("calls onApiDown after 3 consecutive errors", async () => {
+      const positionBook = new PositionBook();
+      const getPositions = vi.fn().mockRejectedValue(new Error("HL API down"));
+      const hlClient = createMockHlClient({ getPositions });
+      const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
+      const onApiDown = vi.fn();
+
+      const loop = new ReconcileLoop({
+        hlClient, positionBook, eventLog, store, walletAddress: "0xtest",
+        intervalMs: 10, onApiDown,
+      });
+
+      // Stop after 4 calls so runAllTimersAsync terminates
+      getPositions.mockImplementation(() => {
+        if (getPositions.mock.calls.length >= 4) loop.stop();
+        return Promise.reject(new Error("HL API down"));
+      });
+
+      const startPromise = loop.start();
+      await vi.runAllTimersAsync();
+      await startPromise;
+
+      // onApiDown should be called exactly once (at 3rd consecutive error)
+      expect(onApiDown).toHaveBeenCalledOnce();
     });
-    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
-    const onApiDown = vi.fn();
 
-    const loop = new ReconcileLoop({
-      hlClient, positionBook, eventLog, store, walletAddress: "0xtest",
-      intervalMs: 10, onApiDown,
-    });
-
-    // start() runs in a loop — run 4 ticks then stop
-    const startPromise = loop.start();
-    await new Promise((r) => setTimeout(r, 80));
-    loop.stop();
-    await startPromise;
-
-    // onApiDown should be called exactly once (at 3rd consecutive error)
-    expect(onApiDown).toHaveBeenCalledOnce();
-  });
-
-  it("resets consecutive errors on success", async () => {
-    const positionBook = new PositionBook();
-    let callCount = 0;
-    const hlClient = createMockHlClient({
-      getPositions: vi.fn().mockImplementation(() => {
+    it("resets consecutive errors on success", async () => {
+      const positionBook = new PositionBook();
+      let callCount = 0;
+      const getPositions = vi.fn().mockImplementation(() => {
         callCount++;
         // Fail twice, succeed, fail twice again — never reaches 3 consecutive
         if (callCount <= 2 || (callCount >= 4 && callCount <= 5)) {
           throw new Error("HL API down");
         }
+        if (callCount >= 6) loop.stop();
         return Promise.resolve([]);
-      }),
+      });
+      const hlClient = createMockHlClient({ getPositions });
+      const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
+      const onApiDown = vi.fn();
+
+      const loop = new ReconcileLoop({
+        hlClient, positionBook, eventLog, store, walletAddress: "0xtest",
+        intervalMs: 10, onApiDown,
+      });
+
+      const startPromise = loop.start();
+      await vi.runAllTimersAsync();
+      await startPromise;
+
+      // Should never reach 3 consecutive because success resets counter
+      expect(onApiDown).not.toHaveBeenCalled();
     });
-    const eventLog = { append: vi.fn().mockResolvedValue(undefined) };
-    const onApiDown = vi.fn();
-
-    const loop = new ReconcileLoop({
-      hlClient, positionBook, eventLog, store, walletAddress: "0xtest",
-      intervalMs: 10, onApiDown,
-    });
-
-    const startPromise = loop.start();
-    await new Promise((r) => setTimeout(r, 120));
-    loop.stop();
-    await startPromise;
-
-    // Should never reach 3 consecutive because success resets counter
-    expect(onApiDown).not.toHaveBeenCalled();
   });
 
   it("syncs trigger order status via getOrderStatus fallback", async () => {
