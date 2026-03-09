@@ -13,7 +13,7 @@ function makePending(overrides: Partial<PendingEntry> = {}): PendingEntry {
     expiresAt: Date.now() + 30 * 60 * 1000,
     signalId: 1,
     leverage: 5,
-    strategyName: "donchian-adx",
+    strategyName: "test-strat",
     comment: "breakout long",
     ...overrides,
   };

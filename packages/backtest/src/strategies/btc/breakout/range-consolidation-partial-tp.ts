@@ -24,15 +24,15 @@ interface RangeConsolidationPartialTpParams {
 
 const DEFAULT_PARAMS: RangeConsolidationPartialTpParams = {
   rangePeriod: {
-    value: 15, min: 10, max: 40, step: 5, optimizable: true,
+    value: 25, min: 10, max: 40, step: 5, optimizable: true,
     description: "Number of 15m bars to define the consolidation range",
   },
   rangeThreshold: {
-    value: 4.0, min: 2.0, max: 8.0, step: 0.5, optimizable: true,
+    value: 3, min: 2.0, max: 8.0, step: 0.5, optimizable: true,
     description: "Max range width as multiple of ATR(14, 15m)",
   },
   consLookback: {
-    value: 6, min: 4, max: 12, step: 2, optimizable: true,
+    value: 10, min: 4, max: 12, step: 2, optimizable: true,
     description: "Number of completed 4H bars for consolidation check",
   },
   consThreshold: {
@@ -40,7 +40,7 @@ const DEFAULT_PARAMS: RangeConsolidationPartialTpParams = {
     description: "4H consolidation range / ATR(14, 4H) threshold",
   },
   volMultiplier: {
-    value: 2.5, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
+    value: 2.25, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
     description: "Volume spike threshold (X * SMA20 volume)",
   },
   atrStopMult: {

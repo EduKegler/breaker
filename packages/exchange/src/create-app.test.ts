@@ -12,8 +12,8 @@ const config: ExchangeConfig = {
   port: 3200,
   gatewayUrl: "http://localhost:3100",
   coins: [
-    { coin: "BTC", leverage: 5, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 200, autoTradingEnabled: true }] },
-    { coin: "ETH", leverage: 3, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 200, autoTradingEnabled: true }] },
+    { coin: "BTC", leverage: 5, strategies: [{ name: "test-strat", interval: "15m", warmupBars: 200, autoTradingEnabled: true, moduleType: "breakout" as const }] },
+    { coin: "ETH", leverage: 3, strategies: [{ name: "test-strat", interval: "15m", warmupBars: 200, autoTradingEnabled: true, moduleType: "breakout" as const }] },
   ],
   dataSource: "binance",
   marginType: "isolated",
@@ -356,7 +356,7 @@ describe("Exchange server", () => {
       take_profits: "[]",
       risk_check_passed: 1,
       risk_check_reason: null,
-      strategy_name: "donchian-adx",
+      strategy_name: "test-strat",
     });
     store.insertOrder({
       signal_id: 1, hl_order_id: "HL-E1", coin: "BTC", side: "buy",
@@ -402,7 +402,7 @@ describe("Exchange server", () => {
       take_profits: JSON.stringify([{ price: 97000, pctOfPosition: 0.5 }]),
       risk_check_passed: 1,
       risk_check_reason: null,
-      strategy_name: "donchian-adx",
+      strategy_name: "test-strat",
     });
 
     const { app } = createApp(deps);
@@ -446,7 +446,7 @@ describe("Exchange server", () => {
     }) as Strategy;
 
     const { app } = createApp(deps);
-    const res = await request(app).get("/strategy-signals?coin=BTC&strategy=donchian-adx");
+    const res = await request(app).get("/strategy-signals?coin=BTC&strategy=test-strat");
 
     expect(res.status).toBe(200);
     expect(res.body.signals).toHaveLength(1);
@@ -562,7 +562,7 @@ describe("Exchange server", () => {
       leverage: null,
       openedAt: new Date().toISOString(),
       signalId: 1,
-      strategyName: "donchian-adx",
+      strategyName: "test-strat",
     });
     // Simulate unrealized PnL from price movement
     deps.positionBook.updatePrice("BTC", 90000); // -50 PnL on 0.01 BTC
@@ -579,7 +579,7 @@ describe("Exchange server", () => {
 
     expect(res.status).toBe(200);
     expect(orchestrator.recordClose).toHaveBeenCalledOnce();
-    expect(orchestrator.recordClose).toHaveBeenCalledWith("BTC:donchian-adx", expect.any(Number));
+    expect(orchestrator.recordClose).toHaveBeenCalledWith("BTC:test-strat", expect.any(Number));
     // PnL should be negative (long at 95000, closed at 90000)
     expect(orchestrator.recordClose.mock.calls[0][1]).toBeLessThan(0);
   });
@@ -728,7 +728,7 @@ describe("Exchange server", () => {
   it("POST /auto-trading propagates toggle to runners", async () => {
     const mockRunner = {
       getCoin: () => "BTC",
-      getStrategyName: () => "donchian-adx",
+      getStrategyName: () => "test-strat",
       setAutoTradingEnabled: vi.fn(),
       getInterval: () => "15m",
       getLastExitLevel: () => null,
@@ -932,7 +932,7 @@ describe("Exchange server", () => {
 
       const mockRunner = {
         getCoin: () => "BTC",
-        getStrategyName: () => "donchian-adx",
+        getStrategyName: () => "test-strat",
         generateManualSignal: (dir: string) => ({
           direction: dir,
           entryPrice: null,
@@ -960,7 +960,7 @@ describe("Exchange server", () => {
 
       const mockRunner = {
         getCoin: () => "BTC",
-        getStrategyName: () => "donchian-adx",
+        getStrategyName: () => "test-strat",
         generateManualSignal: () => null,
       };
       deps.runners = [mockRunner] as any;
@@ -981,7 +981,7 @@ describe("Exchange server", () => {
 
       const mockRunner = {
         getCoin: () => "ETH",
-        getStrategyName: () => "donchian-adx",
+        getStrategyName: () => "test-strat",
         generateManualSignal: () => null,
       };
       deps.runners = [mockRunner] as any;

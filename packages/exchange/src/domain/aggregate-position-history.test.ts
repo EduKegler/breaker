@@ -6,7 +6,7 @@ function row(overrides: Partial<PositionHistoryRow>): PositionHistoryRow {
     signal_id: 1,
     asset: "BTC",
     side: "LONG",
-    strategy_name: "donchian-adx",
+    strategy_name: "test-strat",
     entry_price: 95000,
     created_at: "2024-01-10T10:00:00",
     funding_paid: null,
@@ -43,7 +43,7 @@ describe("aggregatePositionHistory", () => {
     expect(pos.signalId).toBe(1);
     expect(pos.coin).toBe("BTC");
     expect(pos.direction).toBe("LONG");
-    expect(pos.strategy).toBe("donchian-adx");
+    expect(pos.strategy).toBe("test-strat");
     expect(pos.status).toBe("CLOSED");
     expect(pos.size).toBe(0.01);
     expect(pos.entryPrice).toBe(95000);
@@ -59,9 +59,9 @@ describe("aggregatePositionHistory", () => {
 
   it("aggregates a SHORT position closed by TP (positive PnL)", () => {
     const rows: PositionHistoryRow[] = [
-      row({ signal_id: 2, asset: "ETH", side: "SHORT", strategy_name: "keltner-rsi2", created_at: "2024-01-10T12:00:00", order_id: 10, tag: "entry", status: "filled", price: 3000, size: 0.1, order_side: "sell", fill_price: 3000, fill_size: 0.1, fee: 0.3, order_created_at: "2024-01-10T12:00:01", filled_at: "2024-01-10T12:00:02", fill_ts: "2024-01-10T12:00:02" }),
-      row({ signal_id: 2, asset: "ETH", side: "SHORT", strategy_name: "keltner-rsi2", created_at: "2024-01-10T12:00:00", order_id: 11, tag: "tp1", status: "filled", price: 2900, size: 0.1, order_side: "buy", order_type: "limit", fill_price: 2900, fill_size: 0.1, fee: 0.3, order_created_at: "2024-01-10T12:00:03", filled_at: "2024-01-10T12:30:00", fill_ts: "2024-01-10T12:30:00" }),
-      row({ signal_id: 2, asset: "ETH", side: "SHORT", strategy_name: "keltner-rsi2", created_at: "2024-01-10T12:00:00", order_id: 12, tag: "sl", status: "cancelled", price: 3100, size: 0.1, order_side: "buy", order_type: "stop", fill_price: null, fill_size: null, fee: null, fill_ts: null, order_created_at: "2024-01-10T12:00:03", filled_at: null }),
+      row({ signal_id: 2, asset: "ETH", side: "SHORT", strategy_name: "test-strat-mr", created_at: "2024-01-10T12:00:00", order_id: 10, tag: "entry", status: "filled", price: 3000, size: 0.1, order_side: "sell", fill_price: 3000, fill_size: 0.1, fee: 0.3, order_created_at: "2024-01-10T12:00:01", filled_at: "2024-01-10T12:00:02", fill_ts: "2024-01-10T12:00:02" }),
+      row({ signal_id: 2, asset: "ETH", side: "SHORT", strategy_name: "test-strat-mr", created_at: "2024-01-10T12:00:00", order_id: 11, tag: "tp1", status: "filled", price: 2900, size: 0.1, order_side: "buy", order_type: "limit", fill_price: 2900, fill_size: 0.1, fee: 0.3, order_created_at: "2024-01-10T12:00:03", filled_at: "2024-01-10T12:30:00", fill_ts: "2024-01-10T12:30:00" }),
+      row({ signal_id: 2, asset: "ETH", side: "SHORT", strategy_name: "test-strat-mr", created_at: "2024-01-10T12:00:00", order_id: 12, tag: "sl", status: "cancelled", price: 3100, size: 0.1, order_side: "buy", order_type: "stop", fill_price: null, fill_size: null, fee: null, fill_ts: null, order_created_at: "2024-01-10T12:00:03", filled_at: null }),
     ];
 
     const result = aggregatePositionHistory(rows);
@@ -331,8 +331,8 @@ describe("aggregatePositionHistory", () => {
 
   it("applies positive funding_paid (received) to PnL for SHORT positions", () => {
     const rows: PositionHistoryRow[] = [
-      row({ signal_id: 5, asset: "ETH", side: "SHORT", strategy_name: "keltner-rsi2", created_at: "2024-01-10T12:00:00", order_id: 10, tag: "entry", status: "filled", price: 3000, size: 0.1, order_side: "sell", fill_price: 3000, fill_size: 0.1, fee: 0.3, funding_paid: 2.0, order_created_at: "2024-01-10T12:00:01", filled_at: "2024-01-10T12:00:02", fill_ts: "2024-01-10T12:00:02" }),
-      row({ signal_id: 5, asset: "ETH", side: "SHORT", strategy_name: "keltner-rsi2", created_at: "2024-01-10T12:00:00", order_id: 11, tag: "tp1", status: "filled", price: 2900, size: 0.1, order_side: "buy", order_type: "limit", fill_price: 2900, fill_size: 0.1, fee: 0.3, funding_paid: 2.0, order_created_at: "2024-01-10T12:00:03", filled_at: "2024-01-10T12:30:00", fill_ts: "2024-01-10T12:30:00" }),
+      row({ signal_id: 5, asset: "ETH", side: "SHORT", strategy_name: "test-strat-mr", created_at: "2024-01-10T12:00:00", order_id: 10, tag: "entry", status: "filled", price: 3000, size: 0.1, order_side: "sell", fill_price: 3000, fill_size: 0.1, fee: 0.3, funding_paid: 2.0, order_created_at: "2024-01-10T12:00:01", filled_at: "2024-01-10T12:00:02", fill_ts: "2024-01-10T12:00:02" }),
+      row({ signal_id: 5, asset: "ETH", side: "SHORT", strategy_name: "test-strat-mr", created_at: "2024-01-10T12:00:00", order_id: 11, tag: "tp1", status: "filled", price: 2900, size: 0.1, order_side: "buy", order_type: "limit", fill_price: 2900, fill_size: 0.1, fee: 0.3, funding_paid: 2.0, order_created_at: "2024-01-10T12:00:03", filled_at: "2024-01-10T12:30:00", fill_ts: "2024-01-10T12:30:00" }),
     ];
 
     const result = aggregatePositionHistory(rows);

@@ -10,8 +10,8 @@ const config: ExchangeConfig = {
   port: 3200,
   gatewayUrl: "http://localhost:3100",
   coins: [
-    { coin: "BTC", leverage: 5, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 200, autoTradingEnabled: true }] },
-    { coin: "ETH", leverage: 3, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 200, autoTradingEnabled: true }] },
+    { coin: "BTC", leverage: 5, strategies: [{ name: "test-strat", interval: "15m", warmupBars: 200, autoTradingEnabled: true, moduleType: "breakout" as const }] },
+    { coin: "ETH", leverage: 3, strategies: [{ name: "test-strat", interval: "15m", warmupBars: 200, autoTradingEnabled: true, moduleType: "breakout" as const }] },
   ],
   dataSource: "binance",
   marginType: "isolated",

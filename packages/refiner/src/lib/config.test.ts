@@ -29,7 +29,7 @@ describe("loadConfig", () => {
               coin: "BTC",
               dataSource: "binance",
               interval: "15m",
-              strategyFactory: "createDonchianAdx",
+              strategyFactory: "createTestStrategy",
               dateRange: { start: "2025-05-24", end: "2026-02-24" },
             },
           },
@@ -88,7 +88,7 @@ describe("loadConfig", () => {
               coin: "BTC",
               dataSource: "binance",
               interval: "15m",
-              strategyFactory: "createDonchianAdx",
+              strategyFactory: "createTestStrategy",
               dateRange: { start: "2025-05-24", end: "2026-02-24" },
             },
           },
@@ -99,7 +99,7 @@ describe("loadConfig", () => {
     const entry = config.assets.BTC.strategies.breakout;
     expect(entry.coin).toBe("BTC");
     expect(entry.dataSource).toBe("binance");
-    expect(entry.strategyFactory).toBe("createDonchianAdx");
+    expect(entry.strategyFactory).toBe("createTestStrategy");
   });
 
   it("accepts legacy string dateRange format", () => {
@@ -180,7 +180,7 @@ describe("resolveDataConfig (via loadConfig)", () => {
               coin: "BTC",
               dataSource: "binance",
               interval: "15m",
-              strategyFactory: "createDonchianAdx",
+              strategyFactory: "createTestStrategy",
             },
           },
         },
@@ -192,7 +192,7 @@ describe("resolveDataConfig (via loadConfig)", () => {
     expect(dataConfig.coin).toBe("BTC");
     expect(dataConfig.dataSource).toBe("binance");
     expect(dataConfig.interval).toBe("15m");
-    expect(dataConfig.strategyFactory).toBe("createDonchianAdx");
+    expect(dataConfig.strategyFactory).toBe("createTestStrategy");
   });
 
   it("returns defaults for unknown asset", () => {
@@ -202,7 +202,7 @@ describe("resolveDataConfig (via loadConfig)", () => {
     expect(dataConfig.coin).toBe("UNKNOWN");
     expect(dataConfig.dataSource).toBe("binance");
     expect(dataConfig.interval).toBe("15m");
-    expect(dataConfig.strategyFactory).toBe("createDonchianAdx");
+    expect(dataConfig.strategyFactory).toBe("createTestStrategy");
   });
 });
 

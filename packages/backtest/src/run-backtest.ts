@@ -4,7 +4,7 @@ import type { CandleClientOptions } from "./data/fetch-candles.js";
 import { runBacktest, DEFAULT_BACKTEST_CONFIG } from "./engine/engine.js";
 import { computeMetrics } from "./analysis/metrics-calculator.js";
 import { analyzeTradeList } from "./analysis/trade-analysis.js";
-import { createDonchianAdx } from "./strategies/deployed/index.js";
+import type { Strategy } from "./types/strategy.js";
 import path from "node:path";
 import fs from "node:fs";
 import { isMainModule } from "@breaker/kit";
@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   cli.option("--days <n>", "Days to backtest (default: 180, ignored if --start given)");
   cli.option("--source <source>", "Data source: binance|hyperliquid (default: binance)");
   cli.option("--warmup <days>", "Warmup days for indicators (default: 730)");
-  cli.option("--strategy <name>", "Strategy: donchian-adx (default: donchian-adx)");
+  cli.option("--strategy <name>", "Strategy name (matched against deployed barrel exports)");
   cli.option("--cash", "Use cash sizing mode ($100 per trade)");
   cli.option("--limits", "Enable trade limits (use --no-limits to disable)");
 
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   const source = (options.source ?? "binance") as "binance" | "hyperliquid";
   const interval = "15m" as const;
   const WARMUP_DAYS = Number(options.warmup ?? 730);
-  const strategyName = options.strategy ?? "donchian-adx";
+  const strategyName = options.strategy;
   const useCash = options.cash === true;
   const noLimits = options.limits === false;
 
@@ -92,15 +92,19 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Run backtest
-  const strategyFactories: Record<string, () => ReturnType<typeof createDonchianAdx>> = {
-    "donchian-adx": createDonchianAdx,
-  };
-  const factory = strategyFactories[strategyName];
-  if (!factory) {
-    console.error(`Unknown strategy: ${strategyName}. Available: ${Object.keys(strategyFactories).join(", ")}`);
+  // Run backtest — dynamic import from deployed barrel
+  const mod = await import("./strategies/deployed/index.js") as Record<string, unknown>;
+  const factoryKey = strategyName
+    ? Object.keys(mod).find(
+        (k) => typeof mod[k] === "function" && k.toLowerCase().includes(strategyName.replace(/-/g, "")),
+      ) ?? Object.keys(mod).find((k) => typeof mod[k] === "function")
+    : Object.keys(mod).find((k) => typeof mod[k] === "function");
+  if (!factoryKey) {
+    const available = Object.keys(mod).filter((k) => typeof mod[k] === "function");
+    console.error(`No strategy found${strategyName ? `: ${strategyName}` : ""}. Available: ${available.join(", ")}`);
     process.exit(1);
   }
+  const factory = mod[factoryKey] as (overrides?: Record<string, number>) => Strategy;
   const strategy = factory();
   // Calculate warmup bars: candles before the evaluation window
   const warmupBars = candles.findIndex(c => c.t >= startTime);

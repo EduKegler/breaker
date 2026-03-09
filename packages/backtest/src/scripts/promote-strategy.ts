@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -10,9 +10,28 @@ import { bakeParamDefaults } from "../strategies/bake-param-defaults.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export const KNOWN_STRATEGIES: ReadonlyArray<{ name: string; asset: string; category: string }> = [
-  { name: "donchian-adx", asset: "btc", category: "breakout" },
-];
+/**
+ * Auto-discover a strategy's asset and category by scanning the strategies directory.
+ * Looks for `{asset}/{category}/{name}.ts` in the filesystem.
+ */
+export function findStrategy(
+  name: string,
+  strategiesDir: string,
+): { asset: string; category: string } | null {
+  if (!existsSync(strategiesDir)) return null;
+  for (const asset of readdirSync(strategiesDir, { withFileTypes: true })) {
+    if (!asset.isDirectory() || asset.name === "deployed") continue;
+    const assetDir = join(strategiesDir, asset.name);
+    for (const category of readdirSync(assetDir, { withFileTypes: true })) {
+      if (!category.isDirectory() || category.name === "deployed") continue;
+      const candidate = join(assetDir, category.name, `${name}.ts`);
+      if (existsSync(candidate)) {
+        return { asset: asset.name, category: category.name };
+      }
+    }
+  }
+  return null;
+}
 
 /**
  * Rewrite relative imports: add one extra `../` level of depth.
@@ -45,15 +64,9 @@ interface PromoteResult {
  * Try to auto-discover best-params.json from the refiner assets directory.
  * Convention: packages/refiner/assets/{asset}/{category}/checkpoints/best-params.json
  */
-function discoverParamsFile(strategiesDir: string, asset: string, name: string): string | null {
-  // strategiesDir is typically packages/backtest/src/strategies
-  // refiner assets is at packages/refiner/assets/{asset}/{category}/checkpoints/
+function discoverParamsFile(strategiesDir: string, asset: string, category: string): string | null {
   const backtest = join(strategiesDir, "../..");
   const refinerAssets = join(backtest, "../../refiner/assets", asset);
-
-  const category = KNOWN_STRATEGIES.find((s) => s.name === name)?.category;
-  if (!category) return null;
-
   const paramsPath = join(refinerAssets, category, "checkpoints", "best-params.json");
   return existsSync(paramsPath) ? paramsPath : null;
 }
@@ -67,9 +80,9 @@ export function promoteStrategy(
   options: PromoteOptions = {},
 ): PromoteResult {
   const strategiesDir = options.strategiesDir ?? join(__dirname, "../strategies");
-  const known = KNOWN_STRATEGIES.find((s) => s.name === name);
-  const asset = options.asset ?? known?.asset;
-  const category = options.category ?? known?.category;
+  const found = findStrategy(name, strategiesDir);
+  const asset = options.asset ?? found?.asset;
+  const category = options.category ?? found?.category;
 
   if (!asset) {
     return { success: false, error: `Unknown strategy "${name}" — cannot determine asset` };
@@ -93,7 +106,7 @@ export function promoteStrategy(
   // Bake checkpoint params into DEFAULT_PARAMS
   let bakedParams: string[] | undefined;
   let staleParams: string[] | undefined;
-  const paramsFile = options.paramsFile ?? discoverParamsFile(strategiesDir, asset, name);
+  const paramsFile = options.paramsFile ?? discoverParamsFile(strategiesDir, asset, category);
   if (paramsFile) {
     try {
       const params = JSON.parse(readFileSync(paramsFile, "utf-8")) as Record<string, number>;
@@ -114,27 +127,53 @@ export function promoteStrategy(
   return { success: true, hash, bakedParams, staleParams };
 }
 
+/**
+ * List all promotable strategies by scanning the strategies directory.
+ */
+function listStrategies(strategiesDir: string): Array<{ name: string; asset: string; category: string }> {
+  const results: Array<{ name: string; asset: string; category: string }> = [];
+  if (!existsSync(strategiesDir)) return results;
+  for (const asset of readdirSync(strategiesDir, { withFileTypes: true })) {
+    if (!asset.isDirectory() || asset.name === "deployed") continue;
+    const assetDir = join(strategiesDir, asset.name);
+    for (const category of readdirSync(assetDir, { withFileTypes: true })) {
+      if (!category.isDirectory() || category.name === "deployed") continue;
+      const catDir = join(assetDir, category.name);
+      for (const file of readdirSync(catDir, { withFileTypes: true })) {
+        if (!file.isFile() || !file.name.endsWith(".ts")) continue;
+        results.push({ name: file.name.replace(/\.ts$/, ""), asset: asset.name, category: category.name });
+      }
+    }
+  }
+  return results;
+}
+
 function main() {
   const cli = cac("promote");
 
   cli
     .command("[strategy]", "Promote a strategy to deployed/")
-    .option("--all", "Promote all known strategies")
+    .option("--all", "Promote all strategies found in strategies directory")
     .option("--asset <asset>", "Asset for the strategy (btc, sol)")
+    .option("--category <category>", "Category for the strategy (breakout, mean-reversion)")
     .option("--from-checkpoint <path>", "Promote from a refiner checkpoint directory")
-    .action((strategy: string | undefined, options: { all?: boolean; asset?: string; fromCheckpoint?: string }) => {
+    .action((strategy: string | undefined, options: { all?: boolean; asset?: string; category?: string; fromCheckpoint?: string }) => {
+      const strategiesDir = join(__dirname, "../strategies");
       const strategies = options.all
-        ? KNOWN_STRATEGIES.map((s) => ({ name: s.name, asset: s.asset, category: s.category }))
+        ? listStrategies(strategiesDir)
         : strategy
           ? (() => {
-              const known = KNOWN_STRATEGIES.find((s) => s.name === strategy);
-              return [{ name: strategy, asset: options.asset ?? known?.asset ?? "", category: known?.category ?? "" }];
+              const found = findStrategy(strategy, strategiesDir);
+              return [{ name: strategy, asset: options.asset ?? found?.asset ?? "", category: options.category ?? found?.category ?? "" }];
             })()
           : [];
 
       if (strategies.length === 0) {
+        const all = listStrategies(strategiesDir);
         console.error("Usage: pnpm promote <strategy-name> or pnpm promote --all");
-        console.error(`Known strategies: ${KNOWN_STRATEGIES.map((s) => `${s.name} (${s.asset}/${s.category})`).join(", ")}`);
+        if (all.length > 0) {
+          console.error(`Available strategies: ${all.map((s) => `${s.name} (${s.asset}/${s.category})`).join(", ")}`);
+        }
         process.exit(1);
       }
 

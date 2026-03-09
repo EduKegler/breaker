@@ -20,7 +20,7 @@ import { fixStrategy } from "./fix-strategy.js";
 describe("fixStrategy", () => {
   const fixOpts = {
     prompt: "fix prompt text",
-    strategyFile: "/repo/packages/backtest/src/strategies/donchian-adx.ts",
+    strategyFile: "/repo/packages/backtest/src/strategies/test-seed.ts",
     repoRoot: "/repo",
     model: "haiku",
   };

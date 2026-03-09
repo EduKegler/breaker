@@ -81,7 +81,7 @@ Port:      3200
 
 ═══ TRADING ═════════════════════════════════════
 Auto-Trading: ✅ enabled (or ❌ disabled) per strategy
-Coins:     BTC (donchian-adx 15m), ETH (keltner-rsi2 15m)
+Coins:     BTC (strategy-name 15m), SOL (strategy-name 15m)
 
 ═══ POSITIONS ═══════════════════════════════════
 BTC LONG  0.05 @ 85000  PnL: +$125

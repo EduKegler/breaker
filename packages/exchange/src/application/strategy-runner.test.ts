@@ -14,7 +14,7 @@ const config: ExchangeConfig = {
   port: 3200,
   gatewayUrl: "http://localhost:3100",
   coins: [
-    { coin: "BTC", leverage: 5, strategies: [{ name: "donchian-adx", interval: "15m", warmupBars: 5, autoTradingEnabled: true }] },
+    { coin: "BTC", leverage: 5, strategies: [{ name: "test-strat", interval: "15m", warmupBars: 5, autoTradingEnabled: true, moduleType: "breakout" as const }] },
   ],
   dataSource: "binance",
   marginType: "isolated",
@@ -95,7 +95,7 @@ function createDeps(strategy: Strategy, streamer: ReturnType<typeof createMockSt
     warmupBars: 5,
     autoTradingEnabled: true,
     strategy,
-    strategyConfigName: "donchian-adx",
+    strategyConfigName: "test-strat",
     streamer: streamer as unknown as StrategyRunnerDeps["streamer"],
     positionBook,
     eventLog: { append: vi.fn().mockResolvedValue(undefined) },
@@ -797,7 +797,7 @@ describe("StrategyRunner", () => {
       alert_id: "warm-001", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
-      strategy_name: "donchian-adx",
+      strategy_name: "test-strat",
     });
     deps.signalHandlerDeps.store.insertOrder({
       signal_id: 1, hl_order_id: "200", coin: "BTC", side: "sell",
@@ -840,13 +840,13 @@ describe("StrategyRunner", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
-      strategyName: "donchian-adx",
+      strategyName: "test-strat",
     });
     deps.signalHandlerDeps.store.insertSignal({
       alert_id: "warm-002", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 95000, stop_loss: 94000,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
-      strategy_name: "donchian-adx",
+      strategy_name: "test-strat",
     });
     deps.signalHandlerDeps.store.insertOrder({
       signal_id: 1, hl_order_id: "300", coin: "BTC", side: "sell",
@@ -1448,7 +1448,7 @@ describe("StrategyRunner", () => {
         coin: "BTC", hlOrderId: 500, direction: "long", size: 0.01,
         price: 95000, stopLoss: 94000, takeProfits: [{ price: 97000, pctOfPosition: 1 }],
         expiresAt: Date.now() - 1000, signalId: 1, leverage: 5,
-        strategyName: "donchian-adx", comment: "breakout",
+        strategyName: "test-strat", comment: "breakout",
       });
 
       // Insert matching order in SQLite
@@ -1456,7 +1456,7 @@ describe("StrategyRunner", () => {
         alert_id: "gtc-exp-001", source: "strategy-runner", asset: "BTC",
         side: "LONG", entry_price: 95000, stop_loss: 94000,
         take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
-        strategy_name: "donchian-adx",
+        strategy_name: "test-strat",
       });
       deps.signalHandlerDeps.store.insertOrder({
         signal_id: signalId, hl_order_id: "500", coin: "BTC", side: "buy",
@@ -1494,7 +1494,7 @@ describe("StrategyRunner", () => {
         coin: "BTC", hlOrderId: 600, direction: "long", size: 0.01,
         price: 95000, stopLoss: 94000, takeProfits: [],
         expiresAt: Date.now() + 30 * 60 * 1000, signalId: 1, leverage: 5,
-        strategyName: "donchian-adx", comment: "breakout",
+        strategyName: "test-strat", comment: "breakout",
       });
 
       const runner = new StrategyRunner(deps);
@@ -1520,10 +1520,10 @@ describe("StrategyRunner", () => {
         onCandle: () => null,
       };
       const deps = createDeps(strategy, streamer);
-      deps.strategyConfigName = "donchian-adx";
+      deps.strategyConfigName = "test-strat";
 
       const runner = new StrategyRunner(deps);
-      expect(runner.getStrategyName()).toBe("donchian-adx");
+      expect(runner.getStrategyName()).toBe("test-strat");
     });
   });
 
@@ -1542,7 +1542,7 @@ describe("StrategyRunner", () => {
         volSpikeLookbackBars: 4,
         volSpikeCooldownBars: 4,
       });
-      orch.registerModule("BTC:donchian-adx", "breakout");
+      orch.registerModule("BTC:test-strat", "breakout");
       const spy = vi.spyOn(orch, "reportPrice");
       deps.orchestrator = orch;
 
@@ -1572,7 +1572,7 @@ describe("StrategyRunner", () => {
         volSpikeLookbackBars: 1,
         volSpikeCooldownBars: 10,
       });
-      orch.registerModule("BTC:donchian-adx", "breakout");
+      orch.registerModule("BTC:test-strat", "breakout");
       deps.orchestrator = orch;
 
       const runner = new StrategyRunner(deps);
@@ -1610,7 +1610,7 @@ describe("StrategyRunner", () => {
         volSpikeLookbackBars: 4,
         volSpikeCooldownBars: 4,
       });
-      orch.registerModule("BTC:donchian-adx", "breakout");
+      orch.registerModule("BTC:test-strat", "breakout");
       const reportSqueezeSpy = vi.spyOn(orch, "reportSqueeze");
       deps.orchestrator = orch;
 
@@ -1657,7 +1657,7 @@ describe("StrategyRunner", () => {
         volSpikeLookbackBars: 4,
         volSpikeCooldownBars: 4,
       });
-      orch.registerModule("BTC:donchian-adx", "breakout");
+      orch.registerModule("BTC:test-strat", "breakout");
       const reportSqueezeSpy = vi.spyOn(orch, "reportSqueeze");
       deps.orchestrator = orch;
 

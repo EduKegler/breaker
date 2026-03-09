@@ -17,7 +17,6 @@ import {
   computeMetrics,
   analyzeTradeList,
   DEFAULT_BACKTEST_CONFIG,
-  createDonchianAdx,
 } from "@breaker/backtest";
 import type { CandleInterval, DataSource, Strategy } from "@breaker/backtest";
 
@@ -35,9 +34,8 @@ interface ChildInput {
   warmupBars?: number;
 }
 
-const FACTORIES: Record<string, (overrides?: Partial<Record<string, number>>) => Strategy> = {
-  createDonchianAdx,
-};
+// Empty — the orchestrator always provides strategyFilePath for dynamic import.
+const FACTORIES: Record<string, (overrides?: Partial<Record<string, number>>) => Strategy> = {};
 
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];

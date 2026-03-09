@@ -21,7 +21,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "variant-mgr-"));
   strategyDir = path.join(tmpDir, "strategies");
   fs.mkdirSync(strategyDir, { recursive: true });
-  mainStrategyFile = path.join(strategyDir, "donchian-adx.ts");
+  mainStrategyFile = path.join(strategyDir, "test-seed.ts");
   fs.writeFileSync(mainStrategyFile, "// seed strategy code", "utf8");
   checkpointDir = path.join(tmpDir, "checkpoints");
   fs.mkdirSync(checkpointDir, { recursive: true });
@@ -103,7 +103,7 @@ describe("VariantManager", () => {
 
       const active = mgr.getActive();
       expect(active).not.toBeNull();
-      expect(active!.id).toBe("donchian-adx");
+      expect(active!.id).toBe("test-seed");
       expect(active!.status).toBe("active");
       expect(active!.strategyFile).toBe(mainStrategyFile);
       expect(active!.checkpointDir).toBe(checkpointDir);
@@ -131,7 +131,7 @@ describe("VariantManager", () => {
     it("returns active variant", () => {
       const mgr = new VariantManager(tmpDir, mainStrategyFile);
       mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
-      expect(mgr.getActive()!.id).toBe("donchian-adx");
+      expect(mgr.getActive()!.id).toBe("test-seed");
     });
 
     it("returns null when no active variant", () => {
@@ -392,7 +392,7 @@ describe("VariantManager", () => {
       mgr2.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
 
       expect(mgr2.getAll()).toHaveLength(2);
-      expect(mgr2.getAll()[0].id).toBe("donchian-adx");
+      expect(mgr2.getAll()[0].id).toBe("test-seed");
       expect(mgr2.getAll()[0].status).toBe("plateaued");
       expect(mgr2.getAll()[1].id).toBe("squeeze-adx");
       expect(mgr2.getAll()[1].status).toBe("active");
@@ -413,7 +413,7 @@ describe("VariantManager", () => {
       const all = mgr.getAll();
       expect(all).toHaveLength(3);
       expect(all.map(v => v.id)).toEqual([
-        "donchian-adx",
+        "test-seed",
         "squeeze",
         "orb",
       ]);
@@ -425,7 +425,7 @@ describe("VariantManager", () => {
       // Run 1: seed refine → plateau
       const mgr1 = new VariantManager(tmpDir, mainStrategyFile);
       mgr1.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
-      expect(mgr1.getActive()!.id).toBe("donchian-adx");
+      expect(mgr1.getActive()!.id).toBe("test-seed");
       mgr1.updateBest(50, 100, 5);
       mgr1.markPlateaued("noChange>=2", 50, 100, 5, 8);
       mgr1.save();
@@ -455,7 +455,7 @@ describe("VariantManager", () => {
 
       const all = mgr3.getAll();
       expect(all).toHaveLength(3);
-      expect(all[0].id).toBe("donchian-adx");
+      expect(all[0].id).toBe("test-seed");
       expect(all[0].status).toBe("plateaued");
       expect(all[1].id).toBe("squeeze-ma-flat");
       expect(all[1].status).toBe("plateaued");
@@ -478,7 +478,7 @@ describe("buildFailureAnalysis", () => {
 
   it("formats variant history with scores and reasons", () => {
     const variants = [
-      { id: "donchian-adx", components: {}, bestScore: 50, plateauReason: "noChange>=2" },
+      { id: "test-seed", components: {}, bestScore: 50, plateauReason: "noChange>=2" },
       {
         id: "squeeze-adx",
         components: { "Entry Signal": "squeeze", "Regime Filter": "adx" },
@@ -486,7 +486,7 @@ describe("buildFailureAnalysis", () => {
       },
     ];
     const result = buildFailureAnalysis(variants);
-    expect(result).toContain("donchian-adx");
+    expect(result).toContain("test-seed");
     expect(result).toContain("score=50.0");
     expect(result).toContain("noChange>=2");
     expect(result).toContain("squeeze + adx");

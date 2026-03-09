@@ -20,11 +20,11 @@ export const SizingSchema = z.object({
 });
 
 export const CoinStrategySchema = z.object({
-  name: z.enum(["donchian-adx", "keltner-rsi2", "ema-pullback"]),
+  name: z.string().min(1),
   interval: z.enum(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "8h", "12h", "1d"]),
   warmupBars: z.number().int().positive().default(200),
   autoTradingEnabled: z.boolean().default(false),
-  moduleType: z.enum(["breakout", "mean-reversion", "pullback", "trend-following"]).optional(),
+  moduleType: z.enum(["breakout", "mean-reversion", "pullback", "trend-following"]),
 });
 
 export const CoinConfigSchema = z.object({

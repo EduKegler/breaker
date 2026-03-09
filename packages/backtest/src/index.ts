@@ -77,8 +77,9 @@ export { toSymbol } from "./data/to-symbol.js";
 export type { DataSource } from "./data/to-symbol.js";
 export { CandleCache } from "./data/candle-cache.js";
 
-// Strategies (re-export from deployed barrel — working copies may not exist)
-export { createDonchianAdx } from "./strategies/deployed/index.js";
+// Strategies: use @breaker/backtest/deployed sub-path for deployed factories.
+// Root barrel intentionally does not re-export deployed strategies — they are
+// dynamic and may not exist at any given time.
 
 // Strategy utilities
 export { bakeParamDefaults } from "./strategies/bake-param-defaults.js";

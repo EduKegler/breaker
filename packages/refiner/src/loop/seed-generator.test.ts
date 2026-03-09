@@ -38,8 +38,8 @@ describe("kebabToFactory", () => {
     expect(kebabToFactory("donchian-ema-timeout")).toBe("createDonchianEmaTimeout");
   });
 
-  it("converts keltner-rsi2-adx-low-midline → createKeltnerRsi2AdxLowMidline", () => {
-    expect(kebabToFactory("keltner-rsi2-adx-low-midline")).toBe("createKeltnerRsi2AdxLowMidline");
+  it("converts test-mean-reversion → createTestMeanReversion", () => {
+    expect(kebabToFactory("test-mean-reversion")).toBe("createTestMeanReversion");
   });
 
   it("converts supertrend-adx-supertrend → createSupertrendAdxSupertrend", () => {

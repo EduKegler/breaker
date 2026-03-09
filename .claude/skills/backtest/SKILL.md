@@ -1,7 +1,7 @@
 ---
 name: backtest
 description: Run a pure backtest on a strategy and show results. Use when the user says "backtest", "run backtest", "roda backtest", "testa a estrategia", "testa o backtest", or wants to run a single backtest (NOT optimization).
-argument-hint: "[BTC] [--strategy=donchian-adx] [--days=180] [--start=2025-06-01] [--end=2026-01-01]"
+argument-hint: "[BTC] [--strategy=my-strategy] [--days=180] [--start=2025-06-01] [--end=2026-01-01]"
 allowed-tools: "Bash, Read"
 ---
 
@@ -15,7 +15,7 @@ Run a single backtest for a strategy and display results (PF, WR, DD, Avg R, tra
 
 Extract from `$ARGUMENTS`:
 - Positional coin name (BTC, ETH, SOL). Default: BTC.
-- `--strategy`: Strategy name (`donchian-adx` | `keltner-rsi2`). Default: `donchian-adx`.
+- `--strategy`: Strategy name (matched against deployed barrel exports). If omitted, uses the first available deployed strategy.
 - `--days`: Number of days to backtest. Default: 180.
 - `--start` / `--end`: Date range (YYYY-MM-DD). Overrides `--days` if provided.
 - `--source`: Data source (`binance` | `hyperliquid`). Default: `binance`.

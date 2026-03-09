@@ -164,11 +164,11 @@ describe("replayStrategy", () => {
       strategyFactory: () => makeStrategy([5]),
       candles,
       interval: "15m" as CandleInterval,
-      strategyName: "donchian-adx",
+      strategyName: "test-strat",
     });
 
     expect(signals).toHaveLength(1);
-    expect(signals[0].strategyName).toBe("donchian-adx");
+    expect(signals[0].strategyName).toBe("test-strat");
   });
 
   it("uses strategy factory for fresh instance", () => {

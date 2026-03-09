@@ -114,7 +114,7 @@ Live trading dashboard — Vite + React SPA that visualizes exchange positions, 
 ## Key patterns
 - "Tactical Terminal" dark aesthetic: terminal-bg (#0a0a0f), noise overlay via SVG feTurbulence
 - Entry markers: blue (auto) / yellow (manual), "L"/"S" text, size 1
-- Strategy abbreviations: `[B]` donchian-adx, `[MR]` keltner-rsi2, `[PB]` ema-pullback, `[M]` manual — centralized in `strategy-abbreviations.ts`
+- Strategy abbreviations: derived dynamically from `moduleType` (B=breakout, MR=mean-reversion, PB=pullback, TF=trend-following) or from strategy name initials. `[M]` = manual — centralized in `strategy-abbreviations.ts`
 - CandlestickChart is a memo'd orchestrator (~160 lines) that delegates to 4 specialized hooks: `useChartInstance`, `useChartCandles`, `useChartMarkers`, `useChartPriceLines`
 - Smart delta detection via refs: `update()` for incremental WS ticks (O(1)), `setData()` only for full dataset (init, coin switch, load more)
 - Coin switch reuses same chart instance (no `key` remount) — `setData()` + `scrollToRealTime()` handles the transition

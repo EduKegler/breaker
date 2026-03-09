@@ -1,11 +1,10 @@
-import { createDonchianAdx } from "@breaker/backtest";
 import type { Strategy } from "@breaker/backtest";
 
 type StrategyFactory = (paramOverrides?: Partial<Record<string, number>>) => Strategy;
 
-const REGISTRY: Record<string, StrategyFactory> = {
-  createDonchianAdx,
-};
+// Registry is empty — the refiner uses dynamic import via strategyFilePath.
+// Kept for backward compatibility with any code that calls strategyRegistry.get().
+const REGISTRY: Record<string, StrategyFactory> = {};
 
 /**
  * Registry of strategy factories.

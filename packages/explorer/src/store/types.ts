@@ -29,7 +29,7 @@ export interface MarketDataSlice {
   coinReplaySignals: Record<string, ReplaySignal[]>;
   coinPrices: Record<string, PricesEvent>;
   candlesLoading: boolean;
-  /** Strategy keys currently loading replay signals, e.g. "BTC:donchian-adx" */
+  /** Strategy keys currently loading replay signals, e.g. "BTC:strategy-name" */
   loadingStrategies: Set<string>;
 }
 

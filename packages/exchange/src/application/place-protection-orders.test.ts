@@ -56,7 +56,7 @@ function makeInput(store: SqliteStore, overrides: Partial<ProtectionOrdersInput>
     takeProfits: [{ price: 62000, pctOfPosition: 1 }],
     leverage: 5,
     mode: "testnet",
-    strategyName: "donchian-adx",
+    strategyName: "test-strat",
     szDecimals: 5,
     ...overrides,
     // Ensure signalId is not overridden by the spread if it was computed above
@@ -296,7 +296,7 @@ describe("placeProtectionOrders", () => {
       const pos = positionBook.get("BTC")!;
       expect(pos.stopLoss).toBe(59000);
       expect(pos.takeProfits).toEqual([{ price: 62000, pctOfPosition: 1 }]);
-      expect(pos.strategyName).toBe("donchian-adx");
+      expect(pos.strategyName).toBe("test-strat");
     });
   });
 

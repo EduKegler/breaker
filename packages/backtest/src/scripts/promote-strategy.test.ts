@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { rewriteImports, promoteStrategy, KNOWN_STRATEGIES } from "./promote-strategy.js";
+import { rewriteImports, promoteStrategy, findStrategy } from "./promote-strategy.js";
 
 describe("rewriteImports", () => {
   it("rewrites ../../../ imports to ../../../../ (source → deployed depth)", () => {
@@ -45,6 +45,39 @@ import { isMainModule } from "@breaker/kit";`;
     expect(result).toContain(`from "../../../../indicators/donchian.js"`);
     expect(result).toContain(`from "../../../../types/strategy.js"`);
     expect(result).toContain(`from "@breaker/kit"`);
+  });
+});
+
+describe("findStrategy", () => {
+  let tmpDir: string;
+  let strategiesDir: string;
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `find-test-${Date.now()}`);
+    strategiesDir = join(tmpDir, "src/strategies");
+    mkdirSync(join(strategiesDir, "btc", "breakout", "deployed"), { recursive: true });
+    mkdirSync(join(strategiesDir, "sol", "pullback"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("finds strategy by scanning filesystem", () => {
+    writeFileSync(join(strategiesDir, "btc", "breakout", "my-strat.ts"), "export function createMyStrat() {}");
+    const found = findStrategy("my-strat", strategiesDir);
+    expect(found).toEqual({ asset: "btc", category: "breakout" });
+  });
+
+  it("finds strategy in different asset/category", () => {
+    writeFileSync(join(strategiesDir, "sol", "pullback", "sol-strat.ts"), "export function createSolStrat() {}");
+    const found = findStrategy("sol-strat", strategiesDir);
+    expect(found).toEqual({ asset: "sol", category: "pullback" });
+  });
+
+  it("returns null when strategy not found", () => {
+    const found = findStrategy("nonexistent", strategiesDir);
+    expect(found).toBeNull();
   });
 });
 
@@ -130,13 +163,13 @@ export function createTestStrategy() { return {}; }
     expect(result.error).toContain("cannot determine category");
   });
 
-  it("auto-detects asset and category from KNOWN_STRATEGIES", () => {
+  it("auto-detects asset and category from filesystem scan", () => {
     const sourceContent = `import { ema } from "../../../indicators/ema.js";
-export function createDonchianAdx() { return {}; }
+export function createTestStrat() { return {}; }
 `;
-    writeFileSync(join(strategiesDir, "btc", "breakout", "donchian-adx.ts"), sourceContent);
+    writeFileSync(join(strategiesDir, "btc", "breakout", "test-strat.ts"), sourceContent);
 
-    const result = promoteStrategy("donchian-adx", { strategiesDir });
+    const result = promoteStrategy("test-strat", { strategiesDir });
     expect(result.success).toBe(true);
   });
 });
@@ -222,13 +255,5 @@ export function createTestStrat() { return {}; }
 
     expect(result.success).toBe(true);
     expect(result.bakedParams).toBeUndefined();
-  });
-});
-
-describe("KNOWN_STRATEGIES", () => {
-  it("lists the known strategies with assets and categories", () => {
-    expect(KNOWN_STRATEGIES).toEqual([
-      { name: "donchian-adx", asset: "btc", category: "breakout" },
-    ]);
   });
 });

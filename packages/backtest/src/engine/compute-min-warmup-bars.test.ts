@@ -39,19 +39,19 @@ describe("computeMinWarmupBars", () => {
     expect(computeMinWarmupBars(makeStrategy({ "1d": 51 }), "15m")).toBe(5876);
   });
 
-  it("takes max across all timeframes (donchian-adx)", () => {
+  it("takes max across all timeframes (test-strat)", () => {
     const warmup = { source: 52, "1h": 15, "1d": 51 };
     // source=52, 1h=72, 1d=5876 → max=5876
     expect(computeMinWarmupBars(makeStrategy(warmup), "15m")).toBe(5876);
   });
 
-  it("takes max across all timeframes (ema-pullback)", () => {
+  it("takes max across all timeframes (3 TFs incl 4h)", () => {
     const warmup = { source: 22, "1h": 15, "4h": 22 };
     // source=22, 1h=72, 4h=423 → max=423
     expect(computeMinWarmupBars(makeStrategy(warmup), "15m")).toBe(423);
   });
 
-  it("takes max across all timeframes (keltner-rsi2)", () => {
+  it("takes max across all timeframes (2 TFs source + 1h)", () => {
     const warmup = { source: 22, "1h": 15 };
     // source=22, 1h=72 → max=72
     expect(computeMinWarmupBars(makeStrategy(warmup), "15m")).toBe(72);

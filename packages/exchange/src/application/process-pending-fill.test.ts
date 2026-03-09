@@ -80,7 +80,7 @@ describe("processPendingFill", () => {
       alert_id: "gtc-001", source: "strategy-runner", asset: "BTC",
       side: "LONG", entry_price: 60000, stop_loss: 59000,
       take_profits: JSON.stringify([{ price: 62000, pctOfPosition: 1 }]),
-      risk_check_passed: 1, risk_check_reason: null, strategy_name: "donchian-adx",
+      risk_check_passed: 1, risk_check_reason: null, strategy_name: "test-strat",
     });
 
     pendingEntryBook.add({
@@ -88,7 +88,7 @@ describe("processPendingFill", () => {
       price: 60000, stopLoss: 59000,
       takeProfits: [{ price: 62000, pctOfPosition: 1 }],
       expiresAt: Date.now() + 30 * 60 * 1000, signalId, leverage: 5,
-      strategyName: "donchian-adx", comment: "breakout",
+      strategyName: "test-strat", comment: "breakout",
     });
 
     const fill = makeFill({ oid: 200, px: "60000", sz: "0.01" });

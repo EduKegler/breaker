@@ -13,7 +13,7 @@ vi.mock("../lib/config.js", () => ({
       assetClasses: { "crypto-major": { minPF: 1.6 } },
       strategyProfiles: { breakout: {} },
       guardrails: { maxRiskTradeUsd: 25, protectedFields: [] },
-      assets: { BTC: { class: "crypto-major", strategies: { breakout: { coin: "BTC", dataSource: "binance", interval: "15m", strategyFactory: "createDonchianAdx", dateRange: { start: "2025-05-24", end: "2026-02-24" } } } } },
+      assets: { BTC: { class: "crypto-major", strategies: { breakout: { coin: "BTC", dataSource: "binance", interval: "15m", strategyFactory: "createTestStrategy", dateRange: { start: "2025-05-24", end: "2026-02-24" } } } } },
       phases: { refine: { maxIter: 5 }, research: { maxIter: 3 }, restructure: { maxIter: 5 }, maxCycles: 2 },
       scoring: { weights: { pf: 25, avgR: 20, wr: 10, dd: 15, complexity: 10, sampleConfidence: 20 } },
       research: { enabled: true, model: "sonnet", maxSearchesPerIter: 3, timeoutMs: 180000 },
@@ -23,7 +23,7 @@ vi.mock("../lib/config.js", () => ({
       coin: opts?.asset ?? "BTC",
       dataSource: "binance",
       interval: "15m",
-      strategyFactory: "createDonchianAdx",
+      strategyFactory: "createTestStrategy",
     },
     dateRange: {
       startTime: new Date("2025-05-24T00:00:00Z").getTime(),
@@ -37,7 +37,7 @@ vi.mock("../lib/build-strategy-dir.js", () => ({
 }));
 
 vi.mock("../lib/get-strategy-source-path.js", () => ({
-  getStrategySourcePath: vi.fn((_root: string, _factoryName: string, _coin?: string, _strategy?: string) => `${_root}/packages/backtest/src/strategies/btc/breakout/donchian-adx.ts`),
+  getStrategySourcePath: vi.fn((_root: string, _factoryName: string, _coin?: string, _strategy?: string) => `${_root}/packages/backtest/src/strategies/btc/breakout/test-seed.ts`),
   factoryToKebab: vi.fn((name: string) => {
     let n = name.replace(/^create/, "");
     n = n.replace(/([A-Z])/g, (_: string, ch: string) => `-${ch.toLowerCase()}`);
@@ -203,7 +203,7 @@ describe("buildLoopConfig", () => {
     expect(cfg.coin).toBe("BTC");
     expect(cfg.dataSource).toBe("binance");
     expect(cfg.interval).toBe("15m");
-    expect(cfg.strategyFactory).toBe("createDonchianAdx");
+    expect(cfg.strategyFactory).toBe("createTestStrategy");
     expect(cfg.startTime).toBeGreaterThan(0);
     expect(cfg.endTime).toBeGreaterThan(cfg.startTime);
   });

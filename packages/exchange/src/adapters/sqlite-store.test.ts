@@ -60,7 +60,7 @@ describe("SqliteStore", () => {
         take_profits: "[]",
         risk_check_passed: 1,
         risk_check_reason: null,
-        strategy_name: "donchian-adx",
+        strategy_name: "test-strat",
       });
 
       store.updateSignalFunding(sigId, -5.25);
@@ -333,7 +333,7 @@ describe("SqliteStore", () => {
     }
 
     it("returns rows for signals with risk_check_passed=1 and entry filled", () => {
-      insertFullPosition({ alertId: "ph-1", asset: "BTC", side: "LONG", strategyName: "donchian-adx", riskCheckPassed: 1, entryFilled: true });
+      insertFullPosition({ alertId: "ph-1", asset: "BTC", side: "LONG", strategyName: "test-strat", riskCheckPassed: 1, entryFilled: true });
       const rows = store.getPositionHistoryRows(100);
       expect(rows.length).toBeGreaterThan(0);
       expect(rows[0].signal_id).toBe(1);
@@ -368,7 +368,7 @@ describe("SqliteStore", () => {
     });
 
     it("includes fill data via LEFT JOIN", () => {
-      insertFullPosition({ alertId: "ph-fill", asset: "BTC", side: "LONG", strategyName: "ema-pullback", riskCheckPassed: 1, entryFilled: true });
+      insertFullPosition({ alertId: "ph-fill", asset: "BTC", side: "LONG", strategyName: "test-strat-pb", riskCheckPassed: 1, entryFilled: true });
       const rows = store.getPositionHistoryRows(100);
       const entryRow = rows.find((r) => r.tag === "entry");
       expect(entryRow).toBeDefined();
@@ -416,7 +416,7 @@ describe("SqliteStore", () => {
         take_profits: "[]",
         risk_check_passed: 1,
         risk_check_reason: null,
-        strategy_name: "ema-pullback",
+        strategy_name: "test-strat-pb",
       });
 
       if (opts.fundingPaid) {

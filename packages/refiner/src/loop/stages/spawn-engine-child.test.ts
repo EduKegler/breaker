@@ -22,7 +22,7 @@ describe("runEngineChild", () => {
 
     const result = runEngineChild({
       repoRoot: "/repo",
-      factoryName: "createDonchianAdx",
+      factoryName: "createTestStrategy",
       dbPath: "/repo/.cache/candles.db",
       coin: "BTC",
       source: "binance",
@@ -45,7 +45,7 @@ describe("runEngineChild", () => {
 
     runEngineChild({
       repoRoot: "/repo",
-      factoryName: "createDonchianAdx",
+      factoryName: "createTestStrategy",
       paramOverrides: { dcSlow: 40 },
       dbPath: "/db",
       coin: "ETH",
@@ -57,7 +57,7 @@ describe("runEngineChild", () => {
 
     const call = vi.mocked(execaSync).mock.calls[0];
     const input = JSON.parse(call[2]!.input as string);
-    expect(input.factoryName).toBe("createDonchianAdx");
+    expect(input.factoryName).toBe("createTestStrategy");
     expect(input.paramOverrides).toEqual({ dcSlow: 40 });
     expect(input.coin).toBe("ETH");
   });
@@ -68,7 +68,7 @@ describe("runEngineChild", () => {
     expect(() =>
       runEngineChild({
         repoRoot: "/repo",
-        factoryName: "createDonchianAdx",
+        factoryName: "createTestStrategy",
         dbPath: "/db",
         coin: "BTC",
         source: "binance",
@@ -90,7 +90,7 @@ describe("runEngineChild", () => {
 
     const result = runEngineChild({
       repoRoot: "/repo",
-      factoryName: "createDonchianAdx",
+      factoryName: "createTestStrategy",
       dbPath: "/db",
       coin: "BTC",
       source: "binance",
@@ -109,7 +109,7 @@ describe("runEngineChild", () => {
 
     const result = runEngineChild({
       repoRoot: "/repo",
-      factoryName: "createDonchianAdx",
+      factoryName: "createTestStrategy",
       dbPath: "/db",
       coin: "BTC",
       source: "binance",

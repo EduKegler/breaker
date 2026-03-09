@@ -210,7 +210,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-sol-001", source: "strategy-runner", asset: "SOL",
       side: "LONG", entry_price: 85.2, stop_loss: 82.3,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
-      strategy_name: "ema-pullback",
+      strategy_name: "test-strat-pb",
     });
     store.insertOrder({
       signal_id: signalId, hl_order_id: "100", coin: "SOL", side: "buy",
@@ -240,7 +240,7 @@ describe("ReconcileLoop", () => {
       alert_id: "sig-sol-002", source: "strategy-runner", asset: "SOL",
       side: "LONG", entry_price: 85.2, stop_loss: 82.3,
       take_profits: "[]", risk_check_passed: 1, risk_check_reason: null,
-      strategy_name: "ema-pullback",
+      strategy_name: "test-strat-pb",
     });
     store.insertOrder({
       signal_id: signalId, hl_order_id: "100", coin: "SOL", side: "buy",
@@ -1028,7 +1028,7 @@ describe("ReconcileLoop", () => {
       coin: "BTC", hlOrderId: 500, direction: "long", size: 0.01,
       price: 95000, stopLoss: 94000, takeProfits: [{ price: 97000, pctOfPosition: 1 }],
       expiresAt: Date.now() + 30 * 60 * 1000, signalId: 1, leverage: 5,
-      strategyName: "donchian-adx", comment: "breakout",
+      strategyName: "test-strat", comment: "breakout",
     });
 
     const hlPositions: HlPosition[] = [
@@ -1063,7 +1063,7 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 1,
-      strategyName: "donchian-adx",
+      strategyName: "test-strat",
     });
     // Simulate price drop — position has unrealized loss
     positionBook.updatePrice("BTC", 90000);
@@ -1082,7 +1082,7 @@ describe("ReconcileLoop", () => {
 
     // onAutoClose should be called with coin and PnL (unrealizedPnl + cumulativeFunding)
     expect(onAutoClose).toHaveBeenCalledOnce();
-    expect(onAutoClose).toHaveBeenCalledWith("BTC", "donchian-adx", expect.closeTo(-50, 1));
+    expect(onAutoClose).toHaveBeenCalledWith("BTC", "test-strat", expect.closeTo(-50, 1));
   });
 
   it("records PnL including cumulative funding on auto-close", async () => {
@@ -1099,7 +1099,7 @@ describe("ReconcileLoop", () => {
       leverage: null,
       openedAt: "2024-01-01T00:00:00Z",
       signalId: 2,
-      strategyName: "keltner-rsi2",
+      strategyName: "test-strat-mr",
     });
     positionBook.updatePrice("ETH", 3050); // -50 unrealized
     positionBook.updateFunding("ETH", -5);  // -5 funding paid
@@ -1117,7 +1117,7 @@ describe("ReconcileLoop", () => {
     await loop.check();
 
     // PnL = unrealizedPnl (-50) + cumulativeFunding (-5) = -55
-    expect(onAutoClose).toHaveBeenCalledWith("ETH", "keltner-rsi2", expect.closeTo(-55, 1));
+    expect(onAutoClose).toHaveBeenCalledWith("ETH", "test-strat-mr", expect.closeTo(-55, 1));
   });
 
   it("syncs marginCanceled order as cancelled", async () => {

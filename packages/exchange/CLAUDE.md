@@ -56,6 +56,8 @@ src/
 - `.env` — secrets only: `HL_ACCOUNT_ADDRESS`, `HL_PRIVATE_KEY`
 
 ## Key patterns
+- Strategy names are dynamic (`z.string().min(1)` in config schema), not hardcoded enums. `moduleType` is required per strategy
+- `createStrategy(name)` uses `resolveStrategyFactory(name)` which caches the barrel lookup in a Map — avoids O(n) key scan on every `candle:close`
 - HlClient interface (types/hl-client.ts) allows full mocking in tests (no real SDK needed)
 - DryRunHlClient implements HlClient for dry-run mode (logs actions, returns fakes)
 - buildContext/canTrade extracted to @breaker/backtest engine-shared.ts for live=backtest equivalence
@@ -73,7 +75,7 @@ src/
 - `POST /auto-trading` toggle persists to `exchange-config.json` via `persistConfig()` callback — survives daemon restarts
 - When `autoTradingEnabled: false` blocks a strategy-runner signal, an `auto_trading_blocked` event is appended to the NDJSON event log for diagnostics
 - `/quick-signal` delegates SL/TP computation to `strategy.computeLevels(ctx, direction)` via `runner.generateManualSignal()` — produces levels for any direction without checking entry conditions. Falls back to ATR-based SL (no TPs) when strategy lacks `computeLevels` or no runner found
-- `StrategyRunner.getStrategyName()` returns the config identifier (e.g. "keltner-rsi2"), NOT the strategy's display name (e.g. "BTC 15m Mean Reversion — Keltner RSI2")
+- `StrategyRunner.getStrategyName()` returns the config identifier (e.g. "my-strategy"), NOT the strategy's display name
 
 ## Orchestrator (domain/orchestrator.ts)
 - Pure domain object (zero I/O, synchronous except `proposeSignal` Promise)

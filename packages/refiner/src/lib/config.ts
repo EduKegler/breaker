@@ -86,7 +86,7 @@ function resolveDataConfig(
     coin: entry?.coin ?? asset,
     dataSource: entry?.dataSource ?? "binance",
     interval: entry?.interval ?? "15m",
-    strategyFactory: entry?.strategyFactory ?? "createDonchianAdx",
+    strategyFactory: entry?.strategyFactory ?? "createTestStrategy",
   };
 }
 

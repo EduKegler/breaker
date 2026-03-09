@@ -1,6 +1,6 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
-import { CoinStrategySchema, type ExchangeConfig } from "./types/config.js";
+import type { ExchangeConfig } from "./types/config.js";
 import type { SqliteStore } from "./adapters/sqlite-store.js";
 import type { PositionBook } from "./domain/position-book.js";
 import type { HlClient } from "./types/hl-client.js";
@@ -246,7 +246,7 @@ export function createApp(deps: ServerDeps): AppResult {
 
   app.get("/config", (_req, res) => {
     const { mode, coins, guardrails, sizing, dataSource } = deps.config;
-    const availableStrategies = CoinStrategySchema.shape.name.options as unknown as string[];
+    const availableStrategies = coins.flatMap((c) => c.strategies.map((s) => s.name));
     res.json({ mode, coins, guardrails, sizing, dataSource, availableStrategies });
   });
 
@@ -460,7 +460,7 @@ export function createApp(deps: ServerDeps): AppResult {
     const lastCandle = candles[candles.length - 1];
     const price = lastCandle.c;
 
-    const stratName = strategyParam ?? coinCfg.strategies[0]?.name ?? "donchian-adx";
+    const stratName = strategyParam ?? coinCfg.strategies[0]?.name ?? "unknown";
 
     // Delegate SL/TP computation to the strategy artifact via its runner.
     // computeLevels() produces levels for the forced direction without checking

@@ -38,7 +38,7 @@ const stubModuleContext: ModuleContext = {
 describe("optimizeStrategy", () => {
   const baseOpts = {
     prompt: "optimize prompt text",
-    strategyFile: "/repo/packages/backtest/src/strategies/donchian-adx.ts",
+    strategyFile: "/repo/packages/backtest/src/strategies/test-seed.ts",
     repoRoot: "/repo",
     model: "sonnet",
     phase: "refine" as const,
@@ -226,7 +226,7 @@ describe("optimizeStrategy", () => {
     readSpy.mockRestore();
   });
 
-  // --- Fix 6: MODULE_CONSTRAINTS aligned with donchian-adx.ts params ---
+  // --- Fix 6: MODULE_CONSTRAINTS aligned with strategy DEFAULT_PARAMS ---
 
   it("refine: bbKcPeriod clamped to constraint range", async () => {
     vi.mocked(execa).mockResolvedValue({

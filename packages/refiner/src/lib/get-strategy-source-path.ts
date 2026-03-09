@@ -3,7 +3,7 @@ import path from "node:path";
 /**
  * Convert a camelCase factory name to a kebab-case filename.
  * Removes the "create" prefix, then converts camelCase to kebab-case.
- * e.g., "createDonchianAdx" → "donchian-adx"
+ * e.g., "createTestStrategy" → "test-strategy"
  */
 export function factoryToKebab(factoryName: string): string {
   let name = factoryName.replace(/^create/, "");

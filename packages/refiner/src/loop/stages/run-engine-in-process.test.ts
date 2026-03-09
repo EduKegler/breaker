@@ -1,8 +1,20 @@
 import { describe, it, expect } from "vitest";
 
 import { runEngineInProcess } from "./run-engine-in-process.js";
-import { createDonchianAdx } from "@breaker/backtest";
-import type { Candle } from "@breaker/backtest";
+import type { Strategy, StrategyContext, Candle } from "@breaker/backtest";
+
+/** Minimal stub strategy for testing the engine runner — no deployed dependency. */
+function createStubStrategy(paramOverrides?: Partial<Record<string, number>>): Strategy {
+  const period = paramOverrides?.period ?? 20;
+  return {
+    name: "Stub Strategy",
+    params: {
+      period: { value: period, min: 5, max: 50, step: 5, optimizable: true },
+    },
+    requiredWarmup: { source: 50 },
+    onCandle(_ctx: StrategyContext) { return null; },
+  };
+}
 
 function generateCandles(count: number, startPrice = 100, interval = 900000): Candle[] {
   const candles: Candle[] = [];
@@ -30,9 +42,8 @@ function generateCandles(count: number, startPrice = 100, interval = 900000): Ca
 
 describe("runEngineInProcess", () => {
   it("returns metrics, analysis, and trades", () => {
-    // Need enough candles for indicators to warm up
     const candles = generateCandles(2000);
-    const strategy = createDonchianAdx();
+    const strategy = createStubStrategy();
 
     const result = runEngineInProcess({ candles, strategy });
 
@@ -53,7 +64,7 @@ describe("runEngineInProcess", () => {
 
   it("accepts custom backtest config", () => {
     const candles = generateCandles(2000);
-    const strategy = createDonchianAdx();
+    const strategy = createStubStrategy();
 
     const result = runEngineInProcess({
       candles,
@@ -66,13 +77,12 @@ describe("runEngineInProcess", () => {
 
   it("handles strategies with different param overrides", () => {
     const candles = generateCandles(2000);
-    const strategyDefault = createDonchianAdx();
-    const strategyCustom = createDonchianAdx({ dcSlow: 30, dcFast: 10 });
+    const strategyDefault = createStubStrategy();
+    const strategyCustom = createStubStrategy({ period: 30 });
 
     const resultDefault = runEngineInProcess({ candles, strategy: strategyDefault });
     const resultCustom = runEngineInProcess({ candles, strategy: strategyCustom });
 
-    // Both should produce valid results (metrics may differ)
     expect(resultDefault.metrics).toBeDefined();
     expect(resultCustom.metrics).toBeDefined();
   });

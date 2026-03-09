@@ -38,7 +38,7 @@ function makePendingEntry(overrides: Partial<PendingEntry> = {}): PendingEntry {
     expiresAt: Date.now() + 60_000,
     signalId: 1,
     leverage: 5,
-    strategyName: "donchian-adx",
+    strategyName: "test-strat",
     comment: "test",
     ...overrides,
   };

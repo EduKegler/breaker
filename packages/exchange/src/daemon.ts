@@ -3,7 +3,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hyperliquid } from "hyperliquid";
 import { isMainModule } from "@breaker/kit";
-import { createDonchianAdx, createKeltnerRsi2, createEmaPullback } from "@breaker/backtest/deployed";
+import * as deployed from "@breaker/backtest/deployed";
 import { computeMinWarmupBars } from "@breaker/backtest";
 import type { CandleInterval } from "@breaker/backtest";
 import { ExchangeConfigSchema, type ExchangeConfig } from "./types/config.js";
@@ -23,7 +23,7 @@ import { PendingEntryBook } from "./domain/pending-entry-book.js";
 import { resolveOrderStatus } from "./domain/order-status.js";
 import { processPendingFill } from "./application/process-pending-fill.js";
 import { recoverSlTp } from "./domain/recover-sl-tp.js";
-import { Orchestrator, type ModuleType } from "./domain/orchestrator.js";
+import { Orchestrator } from "./domain/orchestrator.js";
 import { StrategyRunner } from "./application/strategy-runner.js";
 import { ReconcileLoop } from "./application/reconcile-loop.js";
 import { resolveHistoricalStatuses } from "./application/resolve-historical-statuses.js";
@@ -47,17 +47,26 @@ function loadConfig(): ExchangeConfig {
   return ExchangeConfigSchema.parse(raw);
 }
 
-function createStrategy(name: string) {
-  switch (name) {
-    case "donchian-adx":
-      return createDonchianAdx();
-    case "keltner-rsi2":
-      return createKeltnerRsi2();
-    case "ema-pullback":
-      return createEmaPullback();
-    default:
-      throw new Error(`Unknown strategy: ${name}`);
+const strategyFactoryCache = new Map<string, () => import("@breaker/backtest").Strategy>();
+
+function resolveStrategyFactory(name: string): () => import("@breaker/backtest").Strategy {
+  const cached = strategyFactoryCache.get(name);
+  if (cached) return cached;
+  const mod = deployed as Record<string, unknown>;
+  const factoryKey = Object.keys(mod).find(
+    (k) => typeof mod[k] === "function" && k.toLowerCase().includes(name.replace(/-/g, "")),
+  );
+  if (!factoryKey) {
+    const available = Object.keys(mod).filter((k) => typeof mod[k] === "function");
+    throw new Error(`Unknown strategy: ${name}. Available: ${available.join(", ")}. Promote strategies to deployed/ first.`);
   }
+  const factory = mod[factoryKey] as () => import("@breaker/backtest").Strategy;
+  strategyFactoryCache.set(name, factory);
+  return factory;
+}
+
+function createStrategy(name: string) {
+  return resolveStrategyFactory(name)();
 }
 
 async function syncPositionsAndBroadcast(deps: {
@@ -254,12 +263,6 @@ async function main() {
   };
 
   // Orchestrator: centralized daily PnL, trade count, signal deconfliction
-  const MODULE_TYPE_FALLBACK: Record<string, ModuleType> = {
-    "donchian-adx": "breakout",
-    "keltner-rsi2": "mean-reversion",
-    "ema-pullback": "pullback",
-  };
-
   const orchestrator = new Orchestrator({
     maxDailyLossR: config.guardrails.maxDailyLossR,
     riskPerTradeUsd: config.sizing.riskPerTradeUsd,
@@ -280,8 +283,7 @@ async function main() {
 
   for (const coinCfg of config.coins) {
     for (const strat of coinCfg.strategies) {
-      const moduleType: ModuleType = strat.moduleType ?? MODULE_TYPE_FALLBACK[strat.name] ?? "breakout";
-      orchestrator.registerModule(`${coinCfg.coin}:${strat.name}`, moduleType);
+      orchestrator.registerModule(`${coinCfg.coin}:${strat.name}`, strat.moduleType);
     }
   }
 
@@ -510,12 +512,13 @@ async function main() {
         for (const stratCfg of coinStrategies) {
           try {
             const interval = stratCfg.interval as CandleInterval;
-            const strategy = createStrategy(stratCfg.name);
+            const factory = resolveStrategyFactory(stratCfg.name);
+            const strategy = factory();
             const minWarmup = computeMinWarmupBars(strategy, interval);
             const replayBars = minWarmup + SIGNAL_WINDOW;
             const candles = await fetchCandlesForReplay(replayDeps, coinCfg.coin, interval, now, replayBars);
             const signals = replayStrategy({
-              strategyFactory: () => createStrategy(stratCfg.name),
+              strategyFactory: factory,
               candles,
               interval,
               strategyName: stratCfg.name,

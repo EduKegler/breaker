@@ -30,7 +30,7 @@ Edit `exchange-config.json` (all non-secret configuration):
 {
   "mode": "testnet",          // "testnet" | "live"
   "asset": "BTC",             // trading pair
-  "strategy": "donchian-adx", // "donchian-adx" | "keltner-rsi2"
+  "strategy": "my-strategy",  // any promoted strategy name
   "interval": "15m",          // candle interval
   "warmupBars": 200,          // historical candles for indicator warmup
   "leverage": 5,

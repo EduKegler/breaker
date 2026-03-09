@@ -99,6 +99,13 @@
           "interval": "15m",
           "strategyFactory": "createKeltnerRsi2",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
+        },
+        "pullback": {
+          "coin": "BTC",
+          "dataSource": "binance",
+          "interval": "15m",
+          "strategyFactory": "createEmaFibRsiResetSwing",
+          "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
         }
       }
     },

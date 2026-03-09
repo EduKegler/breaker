@@ -3,16 +3,16 @@ import path from "node:path";
 import { getStrategySourcePath, factoryToKebab } from "./get-strategy-source-path.js";
 
 describe("factoryToKebab", () => {
-  it("converts createDonchianAdx → donchian-adx", () => {
-    expect(factoryToKebab("createDonchianAdx")).toBe("donchian-adx");
+  it("converts createTestStrategy → test-strategy", () => {
+    expect(factoryToKebab("createTestStrategy")).toBe("test-strategy");
   });
 
-  it("converts createKeltnerRsi2 → keltner-rsi2", () => {
-    expect(factoryToKebab("createKeltnerRsi2")).toBe("keltner-rsi2");
+  it("converts createTestMeanReversion → test-mean-reversion", () => {
+    expect(factoryToKebab("createTestMeanReversion")).toBe("test-mean-reversion");
   });
 
-  it("converts createEmaPullback → ema-pullback", () => {
-    expect(factoryToKebab("createEmaPullback")).toBe("ema-pullback");
+  it("converts createTestPullback → test-pullback", () => {
+    expect(factoryToKebab("createTestPullback")).toBe("test-pullback");
   });
 
   it("handles single-word names", () => {
@@ -21,18 +21,18 @@ describe("factoryToKebab", () => {
 });
 
 describe("getStrategySourcePath", () => {
-  it("maps createDonchianAdx + BTC/breakout to correct path", () => {
-    const result = getStrategySourcePath("/repo/packages/refiner", "createDonchianAdx", "BTC", "breakout");
-    expect(result).toBe(path.join("/repo", "packages", "backtest", "src", "strategies", "btc", "breakout", "donchian-adx.ts"));
+  it("maps createTestStrategy + BTC/breakout to correct path", () => {
+    const result = getStrategySourcePath("/repo/packages/refiner", "createTestStrategy", "BTC", "breakout");
+    expect(result).toBe(path.join("/repo", "packages", "backtest", "src", "strategies", "btc", "breakout", "test-strategy.ts"));
   });
 
-  it("maps createKeltnerRsi2 + BTC/mean-reversion to correct path", () => {
-    const result = getStrategySourcePath("/repo/packages/refiner", "createKeltnerRsi2", "BTC", "mean-reversion");
-    expect(result).toBe(path.join("/repo", "packages", "backtest", "src", "strategies", "btc", "mean-reversion", "keltner-rsi2.ts"));
+  it("maps createTestMeanReversion + BTC/mean-reversion to correct path", () => {
+    const result = getStrategySourcePath("/repo/packages/refiner", "createTestMeanReversion", "BTC", "mean-reversion");
+    expect(result).toBe(path.join("/repo", "packages", "backtest", "src", "strategies", "btc", "mean-reversion", "test-mean-reversion.ts"));
   });
 
   it("lowercases coin for asset directory", () => {
-    const result = getStrategySourcePath("/repo/packages/refiner", "createEmaPullback", "SOL", "pullback");
-    expect(result).toContain(path.join("sol", "pullback", "ema-pullback.ts"));
+    const result = getStrategySourcePath("/repo/packages/refiner", "createTestPullback", "SOL", "pullback");
+    expect(result).toContain(path.join("sol", "pullback", "test-pullback.ts"));
   });
 });

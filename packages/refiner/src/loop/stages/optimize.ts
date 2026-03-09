@@ -52,7 +52,7 @@ interface ParamConstraint {
 const MODULE_CONSTRAINTS: Record<string, Record<string, ParamConstraint>> = {
   M1: {
     // Breakout — 8 var cap, ATR 1H stop, KB §1.6 min mult 3.0
-    // Aligned with donchian-adx.ts DEFAULT_PARAMS
+    // Aligned with strategy DEFAULT_PARAMS
     bbKcPeriod:        { min: 14, max: 30 },
     kcMult:            { min: 1.0, max: 2.5 },
     bbStdDev:          { min: 1.5, max: 2.5 },
