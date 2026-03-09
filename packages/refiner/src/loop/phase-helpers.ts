@@ -87,8 +87,8 @@ export const phaseHelpers = {
    * Thresholds derived from MODULE_CRITERIA (not hardcoded).
    *
    * - Universal: PF < 0.3 → kill immediately (any iter)
-   * - Iter 3: bestPF < minPF × 0.6
-   * - Iter 6: bestPF < minPF × 0.75
+   * - Iter 5: bestPF < minPF × 0.4
+   * - Iter 9: bestPF < minPF × 0.6
    */
   shouldKillVariant(
     bestPFEver: number,
@@ -101,14 +101,14 @@ export const phaseHelpers = {
     const mc = MODULE_CRITERIA[moduleId];
     const minPF = mc?.minPF ?? 1.3;
 
-    // Iter 3 checkpoint
-    if (variantIterCount >= 3 && bestPFEver < minPF * 0.6) {
-      return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.6).toFixed(2)} (60% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
+    // Iter 5 checkpoint
+    if (variantIterCount >= 5 && bestPFEver < minPF * 0.4) {
+      return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.4).toFixed(2)} (40% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
     }
 
-    // Iter 6 checkpoint
-    if (variantIterCount >= 6 && bestPFEver < minPF * 0.75) {
-      return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.75).toFixed(2)} (75% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
+    // Iter 9 checkpoint
+    if (variantIterCount >= 9 && bestPFEver < minPF * 0.6) {
+      return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.6).toFixed(2)} (60% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
     }
 
     return null;

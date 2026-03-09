@@ -1078,6 +1078,7 @@ export async function orchestrate(): Promise<void> {
         claudeDurationMs: promptMetrics.claudeDurationMs,
         maxTurnsUsed: promptMetrics.maxTurns,
         actualTurnsUsed: promptMetrics.actualTurns,
+        verdict: "no_change",
       });
       if (noChangeCount >= cfg.maxNoChange) {
         logWarn(`No-change limit reached — will escalate phase at next iteration.`);
@@ -1756,6 +1757,7 @@ export async function orchestrate(): Promise<void> {
         claudeDurationMs: promptMetrics.claudeDurationMs,
         maxTurnsUsed: promptMetrics.maxTurns,
         actualTurnsUsed: promptMetrics.actualTurns,
+        verdict: effectiveVerdict,
       });
     }
 
@@ -1842,6 +1844,7 @@ export async function orchestrate(): Promise<void> {
       claudeDurationMs: promptMetrics.claudeDurationMs,
       maxTurnsUsed: promptMetrics.maxTurns,
       actualTurnsUsed: promptMetrics.actualTurns,
+      verdict: effectiveVerdict,
     });
   }
 

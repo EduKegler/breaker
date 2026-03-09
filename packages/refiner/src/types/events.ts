@@ -37,4 +37,5 @@ export interface DashboardEvent {
   claudeDurationMs?: number;
   maxTurnsUsed?: number;
   actualTurnsUsed?: number;
+  verdict?: string;
 }

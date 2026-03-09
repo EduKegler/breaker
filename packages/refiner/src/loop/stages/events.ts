@@ -56,6 +56,7 @@ export function emitEvent(opts: {
   claudeDurationMs?: number;
   maxTurnsUsed?: number;
   actualTurnsUsed?: number;
+  verdict?: string;
 }): void {
   const dir = opts.artifactsDir;
   if (!fs.existsSync(dir)) {
@@ -94,6 +95,7 @@ export function emitEvent(opts: {
     ...(opts.claudeDurationMs !== undefined && { claudeDurationMs: opts.claudeDurationMs }),
     ...(opts.maxTurnsUsed !== undefined && { maxTurnsUsed: opts.maxTurnsUsed }),
     ...(opts.actualTurnsUsed !== undefined && { actualTurnsUsed: opts.actualTurnsUsed }),
+    ...(opts.verdict && { verdict: opts.verdict }),
   };
 
   log.info(event, "");

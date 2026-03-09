@@ -30,7 +30,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - **Ciclo (outer loop)**: seed → refine → plateau → gera nova variante inline → refine → plateau → ... ate esgotar `--max-iter`
 - **Outer loop**: quando plateau/kill/budget e detectado, a variante e marcada (`plateaued`/`killed`), nova variante e gerada inline (sem reiniciar o processo), actor xstate e recriado com estado limpo, baseline da nova variante e rodado, e o for-loop continua com iteracoes restantes. Se a geracao falhar (2 tentativas com retry), o loop termina.
 - **Variant switch triggers**: (1) phase escalation (neutralStreak, noChangeCount, wfRejectStreak) → plateaued; (2) early kill (PF < thresholds derivados de MODULE_CRITERIA) → killed; (3) per-variant budget exhausted (default 15 iters) → plateaued.
-- **Early kill progressivo** (`shouldKillVariant` em phase-helpers.ts): PF < 0.3 = kill imediato; iter 3 = PF < minPF×0.6; iter 6 = PF < minPF×0.75. Thresholds derivados de MODULE_CRITERIA, nao hardcoded.
+- **Early kill progressivo** (`shouldKillVariant` em phase-helpers.ts): PF < 0.3 = kill imediato; iter 5 = PF < minPF×0.4; iter 9 = PF < minPF×0.6. Thresholds derivados de MODULE_CRITERIA, nao hardcoded. Relaxados em 2026-03-09 para reduzir churn de variantes (8 switches em 50 iters era excessivo).
 - **Per-variant budget**: `perVariantBudget` em breaker-config.json (default 15). Forca variant switch mesmo sem plateau de phase.
 - **Retry de geracao**: cada call site de `switchToNewVariant` tenta 2x antes de desistir.
 - **Sem promocao automatica**: usuario compara scores manualmente via variant-registry.json e decide qual promover.
@@ -39,7 +39,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
   - `variant-manager.ts` — Registry (variant-registry.json), naming (buildVariantId, SLOT_PRIORITY), lifecycle (active→plateaued→complete→killed)
   - `variant-generator.ts` — Geracao: pre-seleciona combinacao via `selectNextCombination()` → prompt com componentes atribuidos → Claude implementa → `fixFactoryName()` → `createVariant()`
   - `seed-generator.ts` — Bootstrap: skeleton → optimizeStrategy(restructure) → fixStrategy fallback
-  - `build-module-context.ts` — CANDIDATE_SLUGS, STARTING_COMPONENTS (slug-based), extractStartingPoint(), getKbSection(), MODULE_CRITERIA, ComponentCatalog. M1 has "Direction" optional slot (both/long-only/short-only), composite entry signal `squeeze-donchian`, and expanded `partial-tp` exit with dual TP structure
+  - `build-module-context.ts` — CANDIDATE_SLUGS, STARTING_COMPONENTS (slug-based), extractStartingPoint(), getKbSection(), MODULE_CRITERIA, ComponentCatalog. M1 has "Direction" optional slot (both/long-only/short-only) and expanded `partial-tp` exit with dual TP structure. No composite candidates (Novy-Marx 2015 overfitting bias)
   - `build-optimize-prompt.ts` — preSelectedComponents (restructure com componentes atribuídos), validateSlugComponents() com 3-pass fuzzy matching (alias → prefix/substring → global), formatCatalogForPrompt() mostra slugs em backticks
 
 ## Seed auto-bootstrap
