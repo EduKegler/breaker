@@ -31,4 +31,10 @@ export interface DashboardEvent {
   model?: string;
   durationMs?: number;
   escalationReason?: string;
+  promptChars?: number;
+  approxPromptTokens?: number;
+  phase?: string;
+  claudeDurationMs?: number;
+  maxTurnsUsed?: number;
+  actualTurnsUsed?: number;
 }

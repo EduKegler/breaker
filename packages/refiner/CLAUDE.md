@@ -39,7 +39,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
   - `variant-manager.ts` — Registry (variant-registry.json), naming (buildVariantId, SLOT_PRIORITY), lifecycle (active→plateaued→complete→killed)
   - `variant-generator.ts` — Geracao: pre-seleciona combinacao via `selectNextCombination()` → prompt com componentes atribuidos → Claude implementa → `fixFactoryName()` → `createVariant()`
   - `seed-generator.ts` — Bootstrap: skeleton → optimizeStrategy(restructure) → fixStrategy fallback
-  - `build-module-context.ts` — CANDIDATE_SLUGS, STARTING_COMPONENTS (slug-based), extractStartingPoint(), getKbSection(), MODULE_CRITERIA, ComponentCatalog
+  - `build-module-context.ts` — CANDIDATE_SLUGS, STARTING_COMPONENTS (slug-based), extractStartingPoint(), getKbSection(), MODULE_CRITERIA, ComponentCatalog. M1 has "Direction" optional slot (both/long-only/short-only), composite entry signal `squeeze-donchian`, and expanded `partial-tp` exit with dual TP structure
   - `build-optimize-prompt.ts` — preSelectedComponents (restructure com componentes atribuídos), validateSlugComponents() com 3-pass fuzzy matching (alias → prefix/substring → global), formatCatalogForPrompt() mostra slugs em backticks
 
 ## Seed auto-bootstrap
@@ -103,5 +103,5 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 
 ## Build and test (breaker-specific)
 - Coverage: `pnpm vitest run --coverage`
-- Tests: `pnpm test` (785 tests across 34 files)
+- Tests: `pnpm test` (791 tests across 34 files)
 - After strategy code changes in restructure phase: `pnpm --filter @breaker/backtest typecheck` then `pnpm --filter @breaker/backtest build`

@@ -10,13 +10,33 @@ function log(msg: string): void {
 }
 
 /**
+ * Parse the JSON envelope from `--output-format json`.
+ * Returns the text result and num_turns, or falls back to raw stdout.
+ */
+function parseJsonOutput(raw: string): { text: string; numTurns: number } {
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      text: typeof parsed.result === "string" ? parsed.result : raw,
+      numTurns: typeof parsed.num_turns === "number" ? parsed.num_turns : 0,
+    };
+  } catch {
+    // If JSON parse fails, fall back to raw text
+    return { text: raw, numTurns: 0 };
+  }
+}
+
+/**
  * Run Claude CLI as async child process with periodic "still thinking" logs.
  * Replaces the hand-rolled spawn wrappers in optimize.ts and research.ts.
+ *
+ * Uses `--output-format json` to capture structured metadata (num_turns).
+ * The returned `stdout` contains the extracted text result (not the JSON envelope).
  */
 export async function runClaude(
   args: string[],
   opts: { cwd: string; timeoutMs: number; label: string; env?: NodeJS.ProcessEnv; cancelSignal?: AbortSignal },
-): Promise<{ status: number | null; stdout: string; stderr: string }> {
+): Promise<{ status: number | null; stdout: string; stderr: string; durationMs: number; estimatedTurns: number }> {
   const startTime = Date.now();
 
   const ticker = setInterval(() => {
@@ -25,7 +45,7 @@ export async function runClaude(
   }, 60000);
 
   try {
-    const result = await execa("claude", args, {
+    const result = await execa("claude", [...args, "--output-format", "json"], {
       stdin: "ignore",
       timeout: opts.timeoutMs,
       reject: false,
@@ -36,12 +56,19 @@ export async function runClaude(
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
 
+    const durationMs = Date.now() - startTime;
+
+    // Parse JSON envelope to extract text and num_turns
+    const { text, numTurns } = parseJsonOutput(result.stdout);
+
     if (result.isCanceled) {
       log(`  [${opts.label}] CANCELED after ${elapsed}s`);
       return {
         status: null,
-        stdout: result.stdout,
+        stdout: text,
         stderr: result.stderr + "\nKilled: canceled",
+        durationMs,
+        estimatedTurns: numTurns,
       };
     }
 
@@ -49,16 +76,20 @@ export async function runClaude(
       log(`  [${opts.label}] TIMEOUT after ${elapsed}s`);
       return {
         status: null,
-        stdout: result.stdout,
+        stdout: text,
         stderr: result.stderr + "\nKilled: timeout",
+        durationMs,
+        estimatedTurns: numTurns,
       };
     }
 
     log(`  [${opts.label}] Claude finished in ${elapsed}s`);
     return {
       status: result.exitCode ?? null,
-      stdout: result.stdout,
+      stdout: text,
       stderr: result.stderr,
+      durationMs,
+      estimatedTurns: numTurns,
     };
   } finally {
     clearInterval(ticker);

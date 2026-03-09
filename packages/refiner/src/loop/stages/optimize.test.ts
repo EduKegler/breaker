@@ -166,7 +166,7 @@ describe("optimizeStrategy", () => {
       expect.arrayContaining([
         "--model", "sonnet",
         "--dangerously-skip-permissions",
-        "--max-turns", "12",
+        "--max-turns", "8",
         "-p",
       ]),
       expect.objectContaining({ cwd: "/repo" }),

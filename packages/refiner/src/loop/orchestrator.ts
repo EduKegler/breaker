@@ -877,9 +877,14 @@ export async function orchestrate(): Promise<void> {
       message: `phase=${phase}`,
     });
 
-    // ---- Research stage (if in research phase) ----
+    // ---- Research stage (if in research phase, plateau-strong policy) ----
     const researchBriefPath = snap.context.researchBriefPath;
-    if (phase === "research" && cfg.research.enabled && !researchBriefPath) {
+    const finishedVariantCount = variantMgr.getAll().filter(
+      (v) => v.status === "plateaued" || v.status === "killed",
+    ).length;
+    if (phase === "research" && cfg.research.enabled && !researchBriefPath && finishedVariantCount < 2) {
+      logDim(`Skipping research — only ${finishedVariantCount} variant(s) finished (plateau-strong policy: need >=2)`);
+    } else if (phase === "research" && cfg.research.enabled && !researchBriefPath && finishedVariantCount >= 2) {
       log(`${c.blu}🔬 Conducting research...${c.r}`);
       const exhaustedApproaches = (existingHistory.approaches ?? [])
         .filter((a) => a.verdict === "exhausted")
@@ -1013,8 +1018,11 @@ export async function orchestrate(): Promise<void> {
     emitEvent({
       artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
       stage: "OPTIMIZE_START", status: "info",
-      message: `phase=${effectivePhase}`,
+      message: `phase=${effectivePhase} promptChars=${prompt.length}`,
       model: optimizeModel,
+      promptChars: prompt.length,
+      approxPromptTokens: Math.round(prompt.length / 4),
+      phase: effectivePhase,
     });
 
     const optimizeStartMs = Date.now();
@@ -1034,12 +1042,26 @@ export async function orchestrate(): Promise<void> {
 
     const optSummary = optResult.data?.summary;
 
+    // Log prompt metrics for observability
+    const promptMetrics = {
+      promptChars: optResult.data?.promptChars ?? prompt.length,
+      approxTokens: optResult.data?.approxPromptTokens ?? Math.round(prompt.length / 4),
+      claudeDurationMs: optResult.data?.claudeDurationMs ?? 0,
+      maxTurns: optResult.data?.maxTurnsUsed ?? 0,
+      actualTurns: optResult.data?.actualTurnsUsed ?? 0,
+    };
+    logDim(`Prompt: ${promptMetrics.promptChars} chars (~${promptMetrics.approxTokens} tokens) | Claude: ${Math.round(promptMetrics.claudeDurationMs / 1000)}s | turns: ${promptMetrics.actualTurns}/${promptMetrics.maxTurns}`);
+
     if (!optResult.success) {
       logErr(`🤖 Optimization failed: ${optResult.error?.slice(0, 200)}`);
       emitEvent({
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "OPTIMIZE_ERROR", status: "error",
         message: optResult.error?.slice(0, 100) || "unknown",
+        phase: effectivePhase,
+        claudeDurationMs: promptMetrics.claudeDurationMs,
+        maxTurnsUsed: promptMetrics.maxTurns,
+        actualTurnsUsed: promptMetrics.actualTurns,
       });
       continue;
     }
@@ -1052,6 +1074,10 @@ export async function orchestrate(): Promise<void> {
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "NO_CHANGE", status: "info",
         message: optSummary?.slice(0, 200) || "no paramOverrides or file change",
+        phase: effectivePhase,
+        claudeDurationMs: promptMetrics.claudeDurationMs,
+        maxTurnsUsed: promptMetrics.maxTurns,
+        actualTurnsUsed: promptMetrics.actualTurns,
       });
       if (noChangeCount >= cfg.maxNoChange) {
         logWarn(`No-change limit reached — will escalate phase at next iteration.`);
@@ -1626,6 +1652,10 @@ export async function orchestrate(): Promise<void> {
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "VARIANT_SWITCH", status: "info",
         message: `Early kill → variant ${switchResult.variant.id} (baseline score=${switchResult.scoreResult.weighted.toFixed(1)})`,
+        phase: effectivePhase,
+        claudeDurationMs: promptMetrics.claudeDurationMs,
+        maxTurnsUsed: promptMetrics.maxTurns,
+        actualTurnsUsed: promptMetrics.actualTurns,
       });
       continue;
     }
@@ -1722,6 +1752,10 @@ export async function orchestrate(): Promise<void> {
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "ROLLBACK", status: "warn", pnl: currentPnl,
         message: `Rolled back to best (iter ${state.bestIter}, score=${bestScore.toFixed(1)})`,
+        phase: effectivePhase,
+        claudeDurationMs: promptMetrics.claudeDurationMs,
+        maxTurnsUsed: promptMetrics.maxTurns,
+        actualTurnsUsed: promptMetrics.actualTurns,
       });
     }
 
@@ -1804,6 +1838,10 @@ export async function orchestrate(): Promise<void> {
       message: `Optimized (${effectivePhase}). Score=${scoreResult.weighted.toFixed(1)}.`,
       model: optimizeModel,
       durationMs: Date.now() - optimizeStartMs,
+      phase: effectivePhase,
+      claudeDurationMs: promptMetrics.claudeDurationMs,
+      maxTurnsUsed: promptMetrics.maxTurns,
+      actualTurnsUsed: promptMetrics.actualTurns,
     });
   }
 

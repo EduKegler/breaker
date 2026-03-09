@@ -50,6 +50,12 @@ export function emitEvent(opts: {
   model?: string;
   durationMs?: number;
   escalationReason?: string;
+  promptChars?: number;
+  approxPromptTokens?: number;
+  phase?: string;
+  claudeDurationMs?: number;
+  maxTurnsUsed?: number;
+  actualTurnsUsed?: number;
 }): void {
   const dir = opts.artifactsDir;
   if (!fs.existsSync(dir)) {
@@ -82,6 +88,12 @@ export function emitEvent(opts: {
     ...(opts.model && { model: opts.model }),
     ...(opts.durationMs !== undefined && { durationMs: opts.durationMs }),
     ...(opts.escalationReason && { escalationReason: opts.escalationReason }),
+    ...(opts.promptChars !== undefined && { promptChars: opts.promptChars }),
+    ...(opts.approxPromptTokens !== undefined && { approxPromptTokens: opts.approxPromptTokens }),
+    ...(opts.phase && { phase: opts.phase }),
+    ...(opts.claudeDurationMs !== undefined && { claudeDurationMs: opts.claudeDurationMs }),
+    ...(opts.maxTurnsUsed !== undefined && { maxTurnsUsed: opts.maxTurnsUsed }),
+    ...(opts.actualTurnsUsed !== undefined && { actualTurnsUsed: opts.actualTurnsUsed }),
   };
 
   log.info(event, "");

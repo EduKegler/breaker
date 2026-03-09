@@ -78,6 +78,10 @@ export interface FailureContext {
  * The prompt shows slugs to Claude, Claude returns slugs, buildVariantId() joins them.
  */
 export const CANDIDATE_SLUGS: Record<string, string> = {
+  // ── M1 Breakout: Direction Constraint ──
+  "Both": "both",
+  "Long only": "long-only",
+  "Short only": "short-only",
   // ── M1 Breakout: Entry Signal ──
   "Donchian Channel": "donchian",
   "Bollinger Band squeeze release": "squeeze",
@@ -280,6 +284,7 @@ export function extractFixedRules(kbContent: string, sectionNumber: number): str
  */
 const MODULE_SLOT_HEADERS: Record<string, { slotName: string; header: string; optional?: boolean }[]> = {
   M1: [
+    { slotName: "Direction",       header: "Direction constraint candidates", optional: true },
     { slotName: "Entry Signal",    header: "Entry signal candidates" },
     { slotName: "Entry Timing",    header: "Entry timing candidates", optional: true },
     { slotName: "Regime Filter",   header: "Regime filter candidates" },

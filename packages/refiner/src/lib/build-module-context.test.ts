@@ -51,6 +51,14 @@ const SAMPLE_KB = `
 | Timeout | 1 | bars |
 | **Typical total** | **6-8** | Fix regime filter to stay in budget |
 
+**Direction constraint candidates:**
+
+| Approach | How it works | Notes |
+|----------|-------------|-------|
+| Both | Trade both long and short | Default |
+| Long only | Longs only, skip all short signals | Directional filter |
+| Short only | Shorts only, skip all long signals | Directional filter |
+
 **Entry signal candidates:**
 
 | Approach | How it works | Notes |
@@ -87,6 +95,7 @@ const SAMPLE_KB = `
 | Trailing channel (Donchian fast) | Exit on retracement | Period: 5-15 bars | 1 |
 | ATR trailing stop | Stop follows price at N x ATR | N: 1.5-4.0 | 1 |
 | Time-based timeout | Forced exit after N bars | N: 24-96 bars | 1 |
+| Partial TP + trail | TP1 at R:R (partial close), TP2 or trail for remainder | TP1 25-50% at 0.5-2R, trail rest | 2-3 |
 
 ---
 
@@ -389,6 +398,17 @@ describe("extractCandidatesFromTable", () => {
     expect(candidates[2].slug).toBe("orb");
   });
 
+  it("extracts M1 direction constraint candidates with slugs", () => {
+    const candidates = extractCandidatesFromTable(SAMPLE_KB, "Direction constraint candidates");
+    expect(candidates).toHaveLength(3);
+    expect(candidates[0].name).toBe("Both");
+    expect(candidates[0].slug).toBe("both");
+    expect(candidates[1].name).toBe("Long only");
+    expect(candidates[1].slug).toBe("long-only");
+    expect(candidates[2].name).toBe("Short only");
+    expect(candidates[2].slug).toBe("short-only");
+  });
+
   it("extracts descriptions from second column", () => {
     const candidates = extractCandidatesFromTable(SAMPLE_KB, "Entry signal candidates");
     expect(candidates[0].description).toContain("New high/low breakout");
@@ -431,9 +451,10 @@ describe("extractCandidatesFromTable", () => {
 });
 
 describe("extractComponentCatalog", () => {
-  it("extracts all M1 slots", () => {
+  it("extracts all M1 slots including Direction", () => {
     const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
     const slotNames = catalog.slots.map((s) => s.slotName);
+    expect(slotNames).toContain("Direction");
     expect(slotNames).toContain("Entry Signal");
     expect(slotNames).toContain("Entry Timing");
     expect(slotNames).toContain("Regime Filter");
@@ -442,6 +463,9 @@ describe("extractComponentCatalog", () => {
 
   it("extracts correct candidate count per M1 slot", () => {
     const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
+    const dirSlot = catalog.slots.find((s) => s.slotName === "Direction");
+    expect(dirSlot!.candidates).toHaveLength(3);
+
     const entrySlot = catalog.slots.find((s) => s.slotName === "Entry Signal");
     expect(entrySlot!.candidates).toHaveLength(3);
 
@@ -449,7 +473,7 @@ describe("extractComponentCatalog", () => {
     expect(timingSlot!.candidates).toHaveLength(2);
 
     const exitSlot = catalog.slots.find((s) => s.slotName === "Exit");
-    expect(exitSlot!.candidates).toHaveLength(3);
+    expect(exitSlot!.candidates).toHaveLength(4);
   });
 
   it("extracts all M2 slots", () => {
@@ -477,13 +501,15 @@ describe("extractComponentCatalog", () => {
     expect(confSlot!.candidates).toHaveLength(2);
   });
 
-  it("marks M1 Entry Timing and Confirmation as optional", () => {
+  it("marks M1 Direction, Entry Timing and Confirmation as optional", () => {
     const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
+    const dirSlot = catalog.slots.find((s) => s.slotName === "Direction");
     const timingSlot = catalog.slots.find((s) => s.slotName === "Entry Timing");
     const confSlot = catalog.slots.find((s) => s.slotName === "Confirmation");
     const entrySlot = catalog.slots.find((s) => s.slotName === "Entry Signal");
     const exitSlot = catalog.slots.find((s) => s.slotName === "Exit");
 
+    expect(dirSlot!.optional).toBe(true);
     expect(timingSlot!.optional).toBe(true);
     expect(confSlot!.optional).toBe(true);
     expect(entrySlot!.optional).toBeUndefined();
@@ -685,6 +711,16 @@ describe("candidateToSlug", () => {
     expect(candidateToSlug("Keltner Channels")).toBe("keltner");
   });
 
+  it("maps direction constraint candidates to slugs", () => {
+    expect(candidateToSlug("Both")).toBe("both");
+    expect(candidateToSlug("Long only")).toBe("long-only");
+    expect(candidateToSlug("Short only")).toBe("short-only");
+  });
+
+  it("maps partial-tp candidate to slug", () => {
+    expect(candidateToSlug("Partial TP + trail")).toBe("partial-tp");
+  });
+
   it("falls back to kebab-case for unknown names", () => {
     expect(candidateToSlug("My Custom Indicator")).toBe("my-custom-indicator");
   });
@@ -694,7 +730,7 @@ describe("CANDIDATE_SLUGS covers all KB candidates", () => {
   const kbPath = path.resolve(__dirname, "../../../../docs/knowledge-base.md");
 
   const moduleSlots = [
-    { id: "M1", num: 3, headers: ["Entry signal candidates", "Entry timing candidates", "Regime filter candidates", "Optional confirmation filter", "Exit candidates"] },
+    { id: "M1", num: 3, headers: ["Direction constraint candidates", "Entry signal candidates", "Entry timing candidates", "Regime filter candidates", "Optional confirmation filter", "Exit candidates"] },
     { id: "M2", num: 4, headers: ["Band/channel candidates", "Exhaustion confirmation candidates", "Regime filter candidates", "Exit candidates"] },
     { id: "M3", num: 5, headers: ["Trend confirmation candidates", "Pullback zone candidates", "Pullback confirmation candidates", "Exit candidates"] },
     { id: "M4", num: 6, headers: ["Entry signal candidates", "Regime filter candidates", "Trailing exit candidates"] },

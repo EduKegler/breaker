@@ -668,6 +668,7 @@ describe("buildOptimizePrompt structural diagnostics", () => {
   it("includes failed restructure attempts in the prompt", () => {
     const prompt = buildOptimizePrompt({
       ...baseOpts,
+      phase: "restructure",
       metrics: makeMetrics(),
       tradeAnalysis: null,
       failedRestructures: [
@@ -1458,6 +1459,7 @@ describe("P3.2: failed restructure diagnosis", () => {
   it("includes diagnosis in failed restructure section", () => {
     const prompt = buildOptimizePrompt({
       ...baseOpts,
+      phase: "restructure",
       metrics: makeMetrics(),
       tradeAnalysis: null,
       failedRestructures: [
@@ -1472,6 +1474,7 @@ describe("P3.2: failed restructure diagnosis", () => {
   it("shows failure without diagnosis when not provided", () => {
     const prompt = buildOptimizePrompt({
       ...baseOpts,
+      phase: "restructure",
       metrics: makeMetrics(),
       tradeAnalysis: null,
       failedRestructures: [

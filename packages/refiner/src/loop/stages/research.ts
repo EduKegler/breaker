@@ -260,8 +260,9 @@ CRITICAL:
     const result = await runClaude(
       [
         "--model", model,
+        "--effort", "high",
         "--dangerously-skip-permissions",
-        "--allowedTools", "WebSearch,mcp__context7__resolve-library-id,mcp__context7__query-docs,Read,Write",
+        "--allowedTools", "WebSearch,Read,Write",
         "-p", prompt,
       ],
       { cwd: repoRoot, timeoutMs, label: "research", cancelSignal },

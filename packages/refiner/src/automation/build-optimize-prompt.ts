@@ -102,7 +102,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const paramsSection = buildStrategyParamsSection(strategyParams, paramOverrides, moduleContext.varCap);
 
   // Trade analysis
-  const tradeAnalysisSection = tradeAnalysis ? buildTradeAnalysisSection(tradeAnalysis) : "";
+  const tradeAnalysisSection = tradeAnalysis ? buildTradeAnalysisSection(tradeAnalysis, phase === "refine" && iter > 5) : "";
 
   // Parameter history
   let paramHistory: ParameterHistory | null = null;
@@ -159,34 +159,8 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
     opts.preSelectedComponents,
   );
 
-  return `TypeScript strategy optimization loop — iteration ${iter}/${maxIter}.
-${phaseHeader}
-${rollbackSection}${lastIterationSection}
-## CONTEXT
-- Asset: ${asset} | Module: ${moduleContext.moduleName} (${moduleContext.moduleId})
-- Strategy profile: \`${moduleContext.profile}\`
-- Signal TF: ${moduleContext.signalTF} | Regime TF: ${moduleContext.regimeTF}
-- Strategy source: \`${strategySourcePath}\`
-- Backtest engine: @breaker/backtest (in-process, ~2s per iteration)
-- Objective: optimize for Hyperliquid perps
-
-${moduleContextBlock}${moduleCriteriaSection}${stretchSection}
-## STOPPING CRITERIA (${moduleContext.moduleId})
-${moduleContext.stoppingCriteria}
-
-## UNMET CRITERIA
-${unmetCriteria.length ? unmetCriteria.join("\n") : "All criteria met!"}
-${diagnosticGuide}## LAST BACKTEST METRICS
-PnL: ${pnlStr} | Trades: ${tradesStr} | PF: ${pfStr} | DD: ${ddStr} | WR: ${wrStr} | AvgR: ${avgRStr}
-Avg Win: ${metrics.avgWinR != null ? `${metrics.avgWinR.toFixed(2)}R` : "N/A"} | Avg Loss: ${metrics.avgLossR != null ? `${metrics.avgLossR.toFixed(2)}R` : "N/A"} | Max Loss: ${metrics.maxLossR != null ? `${metrics.maxLossR.toFixed(2)}R` : "N/A"} | Expectancy: ${metrics.expectancy != null ? `${metrics.expectancy.toFixed(3)}R/trade` : "N/A"}${metrics.avgWinR != null && metrics.avgLossR != null && Math.abs(metrics.avgLossR) > 0 ? `\nR:R ratio: ${(metrics.avgWinR / Math.abs(metrics.avgLossR)).toFixed(2)} (${metrics.avgWinR / Math.abs(metrics.avgLossR) < 1.2 ? "⚠️ near-symmetric — breakout/trend strategies need R:R > 1.5" : "OK"})` : ""}
-
-${scoringSection}${scoreDeltaSection}${walkForwardSection}
-${designChecklistSection}${paramsSection}
-${kbConstraintsBlock}${overfitSection}${tradeAnalysisSection}
-${filterSimsSection}${exploredSpaceEnriched || exploredSpaceSection}${coreParamsSection}${pendingHypothesesSection}${approachHistorySection}${researchSection}${failedRestructuresSection}
-${phaseTask}
-
-## STRATEGY INTERFACE REFERENCE
+  // Strategy interface reference — only needed for restructure/research (Claude edits .ts files)
+  const strategyInterfaceReference = `## STRATEGY INTERFACE REFERENCE
 \`\`\`typescript
 interface StrategyParam {
   value: number;
@@ -223,7 +197,35 @@ interface Strategy {
 }
 \`\`\`
 
-## OPTIMIZATION RULES
+`;
+
+  return `TypeScript strategy optimization loop — iteration ${iter}/${maxIter}.
+${phaseHeader}
+${rollbackSection}${lastIterationSection}
+## CONTEXT
+- Asset: ${asset} | Module: ${moduleContext.moduleName} (${moduleContext.moduleId})
+- Strategy profile: \`${moduleContext.profile}\`
+- Signal TF: ${moduleContext.signalTF} | Regime TF: ${moduleContext.regimeTF}
+- Strategy source: \`${strategySourcePath}\`
+- Backtest engine: @breaker/backtest (in-process, ~2s per iteration)
+- Objective: optimize for Hyperliquid perps
+
+${moduleContextBlock}${moduleCriteriaSection}${stretchSection}
+## STOPPING CRITERIA (${moduleContext.moduleId})
+${moduleContext.stoppingCriteria}
+
+## UNMET CRITERIA
+${unmetCriteria.length ? unmetCriteria.join("\n") : "All criteria met!"}
+${diagnosticGuide}## LAST BACKTEST METRICS
+PnL: ${pnlStr} | Trades: ${tradesStr} | PF: ${pfStr} | DD: ${ddStr} | WR: ${wrStr} | AvgR: ${avgRStr}
+Avg Win: ${metrics.avgWinR != null ? `${metrics.avgWinR.toFixed(2)}R` : "N/A"} | Avg Loss: ${metrics.avgLossR != null ? `${metrics.avgLossR.toFixed(2)}R` : "N/A"} | Max Loss: ${metrics.maxLossR != null ? `${metrics.maxLossR.toFixed(2)}R` : "N/A"} | Expectancy: ${metrics.expectancy != null ? `${metrics.expectancy.toFixed(3)}R/trade` : "N/A"}${metrics.avgWinR != null && metrics.avgLossR != null && Math.abs(metrics.avgLossR) > 0 ? `\nR:R ratio: ${(metrics.avgWinR / Math.abs(metrics.avgLossR)).toFixed(2)} (${metrics.avgWinR / Math.abs(metrics.avgLossR) < 1.2 ? "⚠️ near-symmetric — breakout/trend strategies need R:R > 1.5" : "OK"})` : ""}
+
+${scoringSection}${scoreDeltaSection}${walkForwardSection}
+${designChecklistSection}${paramsSection}
+${kbConstraintsBlock}${overfitSection}${tradeAnalysisSection}
+${(phase !== "refine" || iter <= 3) ? filterSimsSection : ""}${exploredSpaceEnriched || exploredSpaceSection}${coreParamsSection}${pendingHypothesesSection}${approachHistorySection}${phase !== "refine" ? researchSection : ""}${phase !== "refine" ? failedRestructuresSection : ""}
+${phaseTask}
+${phase !== "refine" ? strategyInterfaceReference : ""}## OPTIMIZATION RULES
 - **1 change per iteration** (refine phase): change ONE param value. Restructure can make larger changes.
 - **Variable cap: ${moduleContext.varCap}** — current optimizable params must not exceed this. Adding a param requires dropping another.
 - **Core parameters first**: sweep core parameter ranges before secondary params.
@@ -416,40 +418,24 @@ function buildPhaseTask(
   if (phase === "refine") {
     return `## TASK (phase: REFINE)
 
-0. **DIAGNOSTIC** (REQUIRED):
-   - Classify: PARAMETRIC vs STRUCTURAL
-   - If STRUCTURAL: recommend "escalate to research" in phaseRecommendation
-   - Check: does current param count exceed var cap (${moduleContext.varCap})? If yes, must DROP a param.
-
-1. **Check previous prediction**: read "Next steps if fails" from last iteration.
-2. **Analyze** — form hypotheses. Consider:
-   - Which stopping criteria are unmet and by how much?
-   - Which direction (long/short) is dragging performance?
-   - Which session has worst performance?
-   - Is the issue WR (too few wins) or R:R (wins too small)?
-3. **Rank hypotheses**:
-   | # | Hypothesis | Est. ΔTrades | Est. ΔPnL | Confidence | Reversibility |
-   Sort by impact. Apply ONLY #1.
-4. **Verify rule compliance**: does the proposed change violate any fixed rule? If yes, reject it.
-5. **Output param change** as JSON to stdout:
+1. **Analyze** — identify the weakest metric vs stopping criteria.
+   Consider: which direction (long/short) drags performance? Is the issue WR or R:R?
+   Var cap: ${moduleContext.varCap}. If current param count exceeds it, DROP a param.
+2. **Choose 1 param change** — pick the single change with highest expected impact.
+   Output as JSON to stdout:
 \`\`\`json
 { "paramOverrides": { "paramName": newValue } }
 \`\`\`
-   Only change ONE param per iteration in refine phase.
-   Value MUST be within the param's [min, max] range.
-6. **Write metadata** to \`${metadataPath}\`:
+   Only change ONE param per iteration. Value MUST be within the param's [min, max] range.
+3. **Write metadata** to \`${metadataPath}\`:
 \`\`\`json
 {
   "changeApplied": { "param": "...", "from": ..., "to": ..., "scale": "parametric", "description": "..." },
-  "hypotheses": [{"rank": 1, "hypothesis": "...", "confidence": "High", "applied": true}],
-  "diagnostic": { "type": "parametric", "rootCause": "..." },
-  "expectedResult": { "metric": "PnL", "direction": "up", "estimate": "+10-15%" },
-  "nextSteps": [{"condition": "PnL < 180", "action": "revert change"}],
-  "ruleCompliance": "All fixed rules satisfied"
+  "hypotheses": [{"rank": 1, "hypothesis": "...", "confidence": "High", "applied": true}, {"rank": 2, "hypothesis": "...", "confidence": "Medium", "applied": false}]
 }
 \`\`\`
    Do NOT edit \`${paramHistoryPath}\`.
-7. **Output summary** as the LAST line of your response:
+4. **Output summary** as the LAST line of your response:
    \`SUMMARY: <one-line description of what you did and why, max 150 chars>\``;
   }
 
@@ -1081,13 +1067,23 @@ function buildResearchSection(researchBriefPath?: string): string {
   }
 }
 
-function buildTradeAnalysisSection(ta: TradeAnalysis): string {
+function buildTradeAnalysisSection(ta: TradeAnalysis, compact?: boolean): string {
   const exitLines = (ta.byExitType ?? [])
     .map((e) => `  ${e.signal.padEnd(18)}: ${String(e.count).padStart(3)}t | WR=${String(e.winRate).padStart(5)}% | PnL=${e.pnl >= 0 ? "+" : ""}${e.pnl} USD`)
     .join("\n") || "  (no data)";
 
   // Structural diagnostics derived from trade data
   const diagnostics = buildStructuralDiagnostics(ta);
+
+  const sessionBlock = !compact && ta.bySession ? `By session:\n${(["Asia", "London", "NY", "Off-peak"] as SessionName[]).map((s) => {
+  const ss = ta.bySession![s];
+  return `  ${s.padEnd(9)}: ${String(ss.count).padStart(3)}t | WR=${String(ss.winRate).padStart(5)}% | PF=${String(ss.profitFactor).padStart(5)} | PnL=${ss.pnl >= 0 ? "+" : ""}${ss.pnl} USD`;
+}).join("\n")}\n` : "";
+
+  const dayOfWeekBlock = !compact ? `\nBy day of week:\n${Object.entries(ta.byDayOfWeek ?? {})
+  .sort((a, b) => b[1].pnl - a[1].pnl)
+  .map(([day, stats]) => `  ${day.padEnd(4)}: ${String(stats.count).padStart(3)}t | PnL=${stats.pnl >= 0 ? "+" : ""}${stats.pnl.toFixed(2)} USD`)
+  .join("\n") || "  (no data)"}\n` : "";
 
   return `## TRADE ANALYSIS
 By exit type:
@@ -1100,17 +1096,7 @@ ${Object.entries(ta.byDirection)
   .map(([d, v]) => `  ${d}: ${v.count}t, PnL=${v.pnl >= 0 ? "+" : ""}${v.pnl}, WR=${v.winRate}%, PF=${v.profitFactor ?? "?"}`)
   .join("\n")}
 
-${ta.bySession ? `By session:\n${(["Asia", "London", "NY", "Off-peak"] as SessionName[]).map((s) => {
-  const ss = ta.bySession![s];
-  return `  ${s.padEnd(9)}: ${String(ss.count).padStart(3)}t | WR=${String(ss.winRate).padStart(5)}% | PF=${String(ss.profitFactor).padStart(5)} | PnL=${ss.pnl >= 0 ? "+" : ""}${ss.pnl} USD`;
-}).join("\n")}` : ""}
-
-By day of week:
-${Object.entries(ta.byDayOfWeek ?? {})
-  .sort((a, b) => b[1].pnl - a[1].pnl)
-  .map(([day, stats]) => `  ${day.padEnd(4)}: ${String(stats.count).padStart(3)}t | PnL=${stats.pnl >= 0 ? "+" : ""}${stats.pnl.toFixed(2)} USD`)
-  .join("\n") || "  (no data)"}
-
+${sessionBlock}${dayOfWeekBlock}
 Best trades: ${ta.best3TradesPnl.join(", ")} USD | Worst: ${ta.worst3TradesPnl.join(", ")} USD
 ${diagnostics}`;
 }

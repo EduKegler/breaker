@@ -80,6 +80,16 @@ describe("buildVariantId", () => {
     expect(id1).toBe(id2);
     expect(id1).toBe("donchian-ema-timeout");
   });
+
+  it("Direction slot sorts before Entry Signal (priority 0)", () => {
+    const id = buildVariantId({
+      "Exit": "partial-tp",
+      "Entry Signal": "squeeze",
+      "Regime Filter": "adx",
+      "Direction": "short-only",
+    });
+    expect(id).toBe("short-only-squeeze-adx-partial-tp");
+  });
 });
 
 // ---------------------------------------------------------------------------

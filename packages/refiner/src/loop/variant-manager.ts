@@ -25,6 +25,8 @@ import type { ComponentCatalog, CatalogSlot } from "../lib/build-module-context.
  * Lower numbers come first. Unknown slots get priority 99.
  */
 const SLOT_PRIORITY: Record<string, number> = {
+  // M1 direction constraint (before entry)
+  "Direction": 0,
   // M1 + M4
   "Entry Signal": 1,
   "Entry Timing": 2,

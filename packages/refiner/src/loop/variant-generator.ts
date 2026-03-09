@@ -99,12 +99,19 @@ export async function generateVariant(opts: GenerateVariantOpts): Promise<Varian
     globalIter, kbPath, seedStrategyFile, cancelSignal,
   } = opts;
 
-  // ---- Optional research ----
+  // ---- Optional research (plateau-strong policy) ----
   let researchBriefPath: string | undefined;
 
-  if (cfg.research.enabled) {
+  // Research policy: plateau-strong — only run when >=2 variants have been
+  // plateaued or killed, indicating the KB catalog alone isn't sufficient.
+  const allVariants = variantManager.getAll();
+  const finishedVariants = allVariants.filter(
+    (v) => v.status === "plateaued" || v.status === "killed",
+  );
+  const shouldResearch = cfg.research.enabled && finishedVariants.length >= 2;
+
+  if (shouldResearch) {
     log("\x1b[34m\x1b[1mRunning research before variant generation...\x1b[0m");
-    const allVariants = variantManager.getAll();
     const exhaustedApproaches = allVariants.map((v) => v.id);
 
     const failedRestructures: RestructureFailure[] = allVariants
@@ -150,10 +157,11 @@ export async function generateVariant(opts: GenerateVariantOpts): Promise<Varian
     } else {
       log(`\x1b[33mResearch failed (non-blocking): ${researchResult.error}\x1b[0m`);
     }
+  } else if (cfg.research.enabled) {
+    log(`\x1b[2mSkipping research — only ${finishedVariants.length} variant(s) finished (need >=2)\x1b[0m`);
   }
 
   // ---- Pre-select next component combination ----
-  const allVariants = variantManager.getAll();
   const testedIds = new Set(allVariants.map((v) => v.id));
 
   const preSelectedComponents = selectNextCombination(moduleContext.catalog, testedIds);

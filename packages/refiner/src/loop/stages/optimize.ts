@@ -20,6 +20,16 @@ interface OptimizeResult {
   validationWarnings?: string[];
   /** Claude's SUMMARY line — always extracted when available */
   summary?: string;
+  /** Prompt size in characters */
+  promptChars?: number;
+  /** Approximate prompt tokens (chars / 4) */
+  approxPromptTokens?: number;
+  /** Claude call duration in ms */
+  claudeDurationMs?: number;
+  /** Max turns used for this call */
+  maxTurnsUsed?: number;
+  /** Estimated actual turns consumed (from CLI output markers) */
+  actualTurnsUsed?: number;
 }
 
 /**
@@ -260,13 +270,20 @@ export async function optimizeStrategy(opts: {
 
   try {
     const beforeContent = fs.readFileSync(strategyFile, "utf8");
-    const maxTurns = phase === "restructure" ? 25 : 12;
+    const maxTurns = phase === "restructure" ? 25 : 8;
     log(`  [optimize] phase: ${phase}, model: ${model}, max-turns: ${maxTurns}, module: ${moduleContext.moduleId}`);
 
+    const promptChars = prompt.length;
+    const approxPromptTokens = Math.round(promptChars / 4);
+
     const result = await runClaude(
-      ["--model", model, "--dangerously-skip-permissions", "--max-turns", String(maxTurns), "-p", prompt],
+      ["--model", model, "--effort", "high", "--dangerously-skip-permissions", "--max-turns", String(maxTurns), "-p", prompt],
       { cwd: repoRoot, timeoutMs, label: "optimize", cancelSignal },
     );
+
+    const claudeDurationMs = result.durationMs;
+    const actualTurnsUsed = result.estimatedTurns;
+    const metrics = { promptChars, approxPromptTokens, claudeDurationMs, maxTurnsUsed: maxTurns, actualTurnsUsed };
 
     if (result.status !== 0) {
       if (result.stdout) log(`  [optimize] stdout (last 500): ${result.stdout.slice(-500)}`);
@@ -291,6 +308,7 @@ export async function optimizeStrategy(opts: {
         data: {
           changed: false,
           summary: extractSummary(result.stdout),
+          ...metrics,
         },
       };
     }
@@ -313,6 +331,7 @@ export async function optimizeStrategy(opts: {
           data: {
             changed: false,
             summary: extractSummary(result.stdout),
+            ...metrics,
           },
         };
       }
@@ -366,6 +385,7 @@ export async function optimizeStrategy(opts: {
           paramOverrides: valid,
           validationWarnings: warnings.length > 0 ? warnings : undefined,
           summary: extractSummary(result.stdout),
+          ...metrics,
         },
       };
     }
@@ -380,6 +400,7 @@ export async function optimizeStrategy(opts: {
         data: {
           changed: false,
           summary: extractSummary(result.stdout),
+          ...metrics,
         },
       };
     }
@@ -434,7 +455,7 @@ export async function optimizeStrategy(opts: {
 
     return {
       success: true,
-      data: { changed: true, diff, changeScale: changeScale ?? "structural", summary: extractSummary(result.stdout) },
+      data: { changed: true, diff, changeScale: changeScale ?? "structural", summary: extractSummary(result.stdout), ...metrics },
     };
   } catch (err) {
     return {

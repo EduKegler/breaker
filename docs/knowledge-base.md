@@ -50,6 +50,8 @@
 
 **Less is more.** Simple strategies with few variables outperform complex ones out of sample. Each added rule improves the backtest but likely worsens real results. Bailey & Lopez de Prado (2016): the probability of backtest overfitting increases with the number of strategies tested on the same data. ([source](https://blog.traderspost.io/article/simple-trading-strategies-effectiveness), [source](https://www.quantifiedstrategies.com/simple-vs-complex-trading-strategies/), [Bailey 2016](https://www.davidhbailey.com/dhbpapers/overfit-tools-at.pdf))
 
+**Confluence is NOT free alpha.** Trading blogs claim "3-4 independent confirming signals = sweet spot." Academic evidence says the opposite. Novy-Marx (2015, NBER 21329): combining the best k out of n candidate signals yields overfitting bias almost as large as selecting the single best of n^k individual signals. Combining 3 signals from 5 candidates has overfit risk comparable to testing 125 individual signals. Bailey & Lopez de Prado (2021, Oxford Significance): computational search for optimal combinations almost certainly renders results statistically overfitted. **Implication for BREAKER:** each module slot says "pick one" for a reason — stacking entry signals, regime filters, or confirmations eats the var budget AND multiplies overfit risk. Each candidate within a slot can internally use multiple techniques (e.g. squeeze candidate may use Donchian levels for breakout definition), but the catalog does NOT create separate "composite" candidates from combinations of existing ones — that is data snooping. ([Novy-Marx 2015](https://www.nber.org/papers/w21329), [Bailey & Lopez de Prado 2021](https://academic.oup.com/book/39874))
+
 **Multiple simple strategies > one complex strategy.** Run separate modules for each market regime. Each module is simple on its own; sophistication comes from the combination. ([source](https://blog.traderspost.io/article/simple-trading-strategies-effectiveness))
 
 **Knowing when NOT to trade is as important as trading.** Fewer trades, more selective = better results.
@@ -322,12 +324,20 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 | Confirmation filter (optional) | 0-1 | RSI threshold |
 | **Typical total** | **6-8** | Fix regime filter and session lookback to stay in budget. Add partial/trail only by dropping another component |
 
+**Direction constraint candidates (optional — default is Both):**
+
+| Approach | How it works | Notes |
+|----------|-------------|-------|
+| Both | Trade both long and short breakouts | Default. No direction filter applied |
+| Long only | Skip all short signals, only take longs | Use when short breakouts have structural negative edge (e.g. crypto uptrend bias) |
+| Short only | Skip all long signals, only take shorts | Use when long breakouts have structural negative edge. The deployed donchian-adx strategy uses short-only with PF 1.16 |
+
 **Entry signal candidates:**
 
 | Approach | How it works | Breakout level definition | Notes |
 |----------|-------------|--------------------------|-------|
 | Donchian Channel | New high/low breakout above/below N-period channel | High: highest high of last N bars. Low: lowest low of last N bars | Classic, simple. Inspired by Turtle Traders (deliberate deviation: we require close, they didn't). [QuantifiedStrategies](https://www.quantifiedstrategies.com/how-we-built-a-bitcoin-trend-following-strategy-using-chatgpt/): Donchian + low ADX on BTC daily positive results (details paywalled) |
-| Bollinger Band squeeze release | BB contracts inside KC, then expands. Enter on expansion direction | Upper: BB upper band at squeeze release. Lower: BB lower band. Squeeze = BB inside KC | Compression -> explosion detector |
+| Bollinger Band squeeze release | BB contracts inside KC, then expands. Enter on expansion direction | Upper: BB upper band at squeeze release. Lower: BB lower band. Squeeze = BB inside KC | Compression -> explosion detector. Implementation may use Donchian levels instead of BB bands for breakout level — structural choice within this candidate, not a separate entry |
 | Opening Range Breakout (ORB) | Define high/low of first N minutes of a session, trade the break | High/low of first 5/15/30 min after session open ([Investopedia](https://www.investopedia.com/terms/o/opening-range.asp)) | Define opens by **local timezone** (London: 08:00 GMT/BST; NY: 09:30 ET), convert to UTC dynamically. Do NOT hardcode UTC |
 | Range breakout | Define range from recent N bars, enter on break | High/low of range. Range = N bars where (high - low) / ATR < threshold | ATR-normalized width to mechanize "what is a range" |
 | Volatility expansion | ATR or std dev spikes above threshold | N/A (confirmation, not a level) | Detects explosion itself. Complement to other entries |
@@ -361,7 +371,7 @@ BREAKER can explore any combination fitting the breakout archetype (compression 
 | Trailing channel (Donchian fast) | Exit on retracement to opposite channel | Period: 5-15 bars | 1 |
 | ATR trailing stop | Stop follows price at N x ATR distance | N: 1.5-4.0 | 1 |
 | Time-based timeout | Forced exit after N bars | N: 24-96 bars (6-24h on 15m) | 1 |
-| Partial TP + trail | Partial profit at R:R, trail rest | 25-75% at R:R 0.5-2.0 | 1-2 |
+| Partial TP + trail | Dual TP structure: TP1 at R:R (partial close 25-50%), TP2 at higher R:R (partial close 25-50%), ATR trail for remainder. Deployed donchian-adx uses TP1@1R 40%, TP2@tpRR 50%, trail 10%. `pctOfPosition` is a fraction 0-1, NOT percentage | TP1: 0.5-1.5R, TP2: 1.5-3.0R, trail: ATR×1.5-4.0 | 2-3 |
 
 ---
 
