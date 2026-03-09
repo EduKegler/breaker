@@ -1,34 +1,31 @@
 import type { Candle } from "../../../types/candle.js";
 import type { Strategy, StrategyContext, StrategyParam, Signal } from "../../../types/strategy.js";
-import { ema as emaIndicator } from "../../../indicators/ema.js";
+import { adx as adxIndicator } from "../../../indicators/adx.js";
 import { sma } from "../../../indicators/sma.js";
 import { atr } from "../../../indicators/atr.js";
 
 const MS_1H = 3_600_000;
 const MS_4H = 14_400_000;
 
-interface ExpansionEmaAtrTrailParams {
-  expansionMult: StrategyParam;
-  lookbackBars: StrategyParam;
-  emaPeriod: StrategyParam;
+interface OrbAdxPartialTpParams {
+  orbMinutes: StrategyParam;
+  adxThreshold: StrategyParam;
   volMultiplier: StrategyParam;
   atrStopMult: StrategyParam;
+  partialPct: StrategyParam;
+  partialRR: StrategyParam;
   atrTrailMult: StrategyParam;
   timeoutBars: StrategyParam;
 }
 
-const DEFAULT_PARAMS: ExpansionEmaAtrTrailParams = {
-  expansionMult: {
-    value: 1.3, min: 1.0, max: 2.5, step: 0.1, optimizable: true,
-    description: "ATR expansion threshold: current ATR(14,15m) > X * SMA(ATR,20)",
+const DEFAULT_PARAMS: OrbAdxPartialTpParams = {
+  orbMinutes: {
+    value: 30, min: 15, max: 60, step: 15, optimizable: true,
+    description: "ORB formation period in minutes (multiples of 15)",
   },
-  lookbackBars: {
-    value: 8, min: 3, max: 12, step: 1, optimizable: true,
-    description: "Bars for breakout reference level (highest high / lowest low)",
-  },
-  emaPeriod: {
-    value: 50, min: 20, max: 100, step: 10, optimizable: true,
-    description: "EMA period on 4H for trend regime direction filter",
+  adxThreshold: {
+    value: 20, min: 15, max: 50, step: 5, optimizable: true,
+    description: "ADX(14) 4H threshold — entry only when ADX < threshold (consolidation)",
   },
   volMultiplier: {
     value: 2.5, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
@@ -38,9 +35,17 @@ const DEFAULT_PARAMS: ExpansionEmaAtrTrailParams = {
     value: 3.0, min: 3.0, max: 6.0, step: 0.5, optimizable: true,
     description: "ATR(14) 1H initial stop multiplier (KB §1.6 >= 3.0)",
   },
+  partialPct: {
+    value: 0.5, min: 0.3, max: 0.7, step: 0.1, optimizable: true,
+    description: "Fraction of position to close at TP1 (0-1)",
+  },
+  partialRR: {
+    value: 1.5, min: 1.0, max: 3.0, step: 0.5, optimizable: true,
+    description: "R:R target for partial TP (multiple of stop distance)",
+  },
   atrTrailMult: {
-    value: 3.0, min: 2.0, max: 5.0, step: 0.5, optimizable: true,
-    description: "ATR(14) 1H trailing stop multiplier — tracks highest/lowest since entry",
+    value: 3.5, min: 2.0, max: 5.0, step: 0.5, optimizable: true,
+    description: "ATR(14) 1H trailing stop multiplier for remainder",
   },
   timeoutBars: {
     value: 48, min: 24, max: 96, step: 4, optimizable: true,
@@ -48,22 +53,35 @@ const DEFAULT_PARAMS: ExpansionEmaAtrTrailParams = {
   },
 };
 
-export function createExpansionEmaAtrTrail(
-  paramOverrides?: Partial<Record<keyof ExpansionEmaAtrTrailParams, number>>,
+function getSessionOpen(t: number): "london" | "ny" | null {
+  const d = new Date(t);
+  const h = d.getUTCHours();
+  const m = d.getUTCMinutes();
+  if (h === 8 && m === 0) return "london";
+  if (h === 13 && m === 30) return "ny";
+  return null;
+}
+
+export function createOrbAdxPartialTp(
+  paramOverrides?: Partial<Record<keyof OrbAdxPartialTpParams, number>>,
 ): Strategy {
   const params: Record<string, StrategyParam> = {};
   for (const [key, defaultParam] of Object.entries(DEFAULT_PARAMS)) {
-    const override = paramOverrides?.[key as keyof ExpansionEmaAtrTrailParams];
+    const override = paramOverrides?.[key as keyof OrbAdxPartialTpParams];
     params[key] = { ...defaultParam, value: override ?? defaultParam.value };
   }
 
   let volSmaCache: number[] | null = null;
-  let atr15mCache: number[] | null = null;
-  let atrSmaCache: number[] | null = null;
   let htfAtrCache1h: number[] | null = null;
-  let htf4hEmaCache: number[] | null = null;
   let htf1hCandles: Candle[] | null = null;
   let htf4hCandles: Candle[] | null = null;
+  let htf4hAdxCache: { adx: number[]; diPlus: number[]; diMinus: number[] } | null = null;
+
+  // ORB bar-by-bar state
+  let orbHigh = NaN;
+  let orbLow = NaN;
+  let orbBarsLeft = 0;
+  let orbArmed = false;
 
   function findAtr1h(currentT: number, htfRef: Candle[], htfAtr: number[]): number {
     for (let j = htfRef.length - 1; j >= 0; j--) {
@@ -74,56 +92,49 @@ export function createExpansionEmaAtrTrail(
     return NaN;
   }
 
-  function findLast4hIdx(currentT: number, htfRef: Candle[]): number {
-    for (let j = htfRef.length - 1; j >= 0; j--) {
-      if (htfRef[j].t + MS_4H <= currentT) {
-        return j;
-      }
-    }
-    return -1;
-  }
-
   return {
-    name: "BTC 15m Breakout — Expansion EMA ATR-Trail",
+    name: "BTC 15m Breakout — ORB ADX Partial-TP",
     params,
     requiredTimeframes: ["1h", "4h"],
     requiredWarmup: { source: 50, "1h": 15, "4h": 30 },
 
     init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
       volSmaCache = sma(candles.map(c => c.v), 20);
-      atr15mCache = atr(candles, 14);
-      atrSmaCache = sma(atr15mCache, 20);
       htf1hCandles = higherTimeframes["1h"] ?? [];
       htf4hCandles = higherTimeframes["4h"] ?? [];
       htfAtrCache1h = htf1hCandles.length > 0 ? atr(htf1hCandles, 14) : null;
-      if (htf4hCandles.length > 0) {
-        htf4hEmaCache = emaIndicator(htf4hCandles.map(c => c.c), params.emaPeriod.value);
-      }
+      htf4hAdxCache = htf4hCandles.length > 0 ? adxIndicator(htf4hCandles, 14) : null;
+      orbHigh = NaN;
+      orbLow = NaN;
+      orbBarsLeft = 0;
+      orbArmed = false;
     },
 
     onCandle(ctx: StrategyContext): Signal | null {
       const { candles, index, currentCandle, higherTimeframes } = ctx;
-      if (index < 35) return null;
+      if (index < 20) return null;
 
-      // --- 15m ATR expansion detection ---
-      const atr15m = atr15mCache ?? atr(candles, 14);
-      const atrSma20 = atrSmaCache ?? sma(atr15m, 20);
-      const currentAtr = atr15m[index];
-      const avgAtr = atrSma20[index];
-      if (isNaN(currentAtr) || isNaN(avgAtr) || avgAtr <= 0) return null;
+      const orbBarsCount = Math.max(1, Math.round(params.orbMinutes.value / 15));
 
-      const expMult = params.expansionMult.value;
-      const expansionLevel = expMult * avgAtr;
-
-      // --- Breakout level: highest high / lowest low of last N bars ---
-      const lb = params.lookbackBars.value;
-      let highestHigh = -Infinity;
-      let lowestLow = Infinity;
-      for (let k = index - lb; k < index; k++) {
-        if (k < 0) continue;
-        if (candles[k].h > highestHigh) highestHigh = candles[k].h;
-        if (candles[k].l < lowestLow) lowestLow = candles[k].l;
+      // --- ORB state update ---
+      const session = getSessionOpen(currentCandle.t);
+      if (session) {
+        orbHigh = currentCandle.h;
+        orbLow = currentCandle.l;
+        orbBarsLeft = orbBarsCount - 1;
+        orbArmed = orbBarsLeft === 0;
+        return null; // never enter on session-open bar
       }
+
+      if (orbBarsLeft > 0) {
+        orbHigh = Math.max(orbHigh, currentCandle.h);
+        orbLow = Math.min(orbLow, currentCandle.l);
+        orbBarsLeft--;
+        if (orbBarsLeft === 0) orbArmed = true;
+        return null; // still forming
+      }
+
+      if (!orbArmed || isNaN(orbHigh) || isNaN(orbLow)) return null;
 
       // --- HTF: 1H ATR (anti-repaint) ---
       const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
@@ -132,16 +143,18 @@ export function createExpansionEmaAtrTrail(
       const atr1h = findAtr1h(currentCandle.t, htf1hRef, htfAtr1h);
       if (isNaN(atr1h)) return null;
 
-      // --- HTF: 4H EMA regime (anti-repaint) ---
+      // --- HTF: 4H ADX (anti-repaint) ---
       const htf4hRef = htf4hCandles ?? higherTimeframes["4h"];
-      if (!htf4hRef || htf4hRef.length < 30) return null;
-      const ema4h = htf4hEmaCache ?? emaIndicator(htf4hRef.map(c => c.c), params.emaPeriod.value);
-      const last4hIdx = findLast4hIdx(currentCandle.t, htf4hRef);
-      if (last4hIdx < 0) return null;
-
-      const emaValue = ema4h[last4hIdx];
-      const htf4hClose = htf4hRef[last4hIdx].c;
-      if (isNaN(emaValue)) return null;
+      if (!htf4hRef || htf4hRef.length < 28) return null;
+      const htfAdx = htf4hAdxCache ?? adxIndicator(htf4hRef, 14);
+      let adx4h = NaN;
+      for (let j = htf4hRef.length - 1; j >= 0; j--) {
+        if (htf4hRef[j].t + MS_4H <= currentCandle.t && !isNaN(htfAdx.adx[j])) {
+          adx4h = htfAdx.adx[j];
+          break;
+        }
+      }
+      if (isNaN(adx4h)) return null;
 
       // --- Volume SMA(20) ---
       const volSma = volSmaCache ?? sma(candles.slice(0, index + 1).map(c => c.v), 20);
@@ -152,47 +165,49 @@ export function createExpansionEmaAtrTrail(
       const close = currentCandle.c;
       const stopMult = params.atrStopMult.value;
       const stopDist = atr1h * stopMult;
+      const adxThresh = params.adxThreshold.value;
 
       // --- Diagnostics ---
-      ctx.indicator("atr15m", currentAtr);
-      ctx.indicator("avgAtr20", avgAtr);
-      ctx.indicator("expansionRatio", currentAtr / avgAtr);
-      ctx.indicator("ema4h", emaValue);
-      ctx.indicator("htf4hClose", htf4hClose);
+      ctx.indicator("orbHigh", orbHigh);
+      ctx.indicator("orbLow", orbLow);
       ctx.indicator("atr1h", atr1h);
+      ctx.indicator("adx4h", adx4h);
       ctx.indicator("volAvg20", volAvg20);
-      ctx.indicator("highestHigh", highestHigh);
-      ctx.indicator("lowestLow", lowestLow);
+      ctx.indicator("close", close);
 
-      // --- LONG: expansion + close above N-bar high + EMA bullish + volume ---
-      const longExpansion = ctx.track("L:atr_expansion", currentAtr > expansionLevel, currentAtr, expansionLevel);
-      const longBreakout = ctx.track("L:close_above_high", close > highestHigh, close, highestHigh);
-      const longEma = ctx.track("L:ema_regime", htf4hClose > emaValue, htf4hClose, emaValue);
+      // --- LONG: close above orbHigh + ADX < threshold + volume spike ---
+      const longBreakout = ctx.track("L:close_above_orb", close > orbHigh, close, orbHigh);
+      const longAdx = ctx.track("L:adx_consolidation", adx4h < adxThresh, adx4h, adxThresh);
       const longVol = ctx.track("L:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
 
-      if (longExpansion && longBreakout && longEma && longVol) {
+      if (longBreakout && longAdx && longVol) {
+        const sl = close - stopDist;
+        const tpPrice = close + params.partialRR.value * stopDist;
+        orbArmed = false;
         return {
           direction: "long",
           entryPrice: null,
-          stopLoss: close - stopDist,
-          takeProfits: [],
-          comment: "Expansion breakout long",
+          stopLoss: sl,
+          takeProfits: [{ price: tpPrice, pctOfPosition: params.partialPct.value }],
+          comment: "ORB breakout long",
         };
       }
 
-      // --- SHORT: expansion + close below N-bar low + EMA bearish + volume ---
-      const shortExpansion = ctx.track("S:atr_expansion", currentAtr > expansionLevel, currentAtr, expansionLevel);
-      const shortBreakout = ctx.track("S:close_below_low", close < lowestLow, close, lowestLow);
-      const shortEma = ctx.track("S:ema_regime", htf4hClose < emaValue, htf4hClose, emaValue);
+      // --- SHORT: close below orbLow + ADX < threshold + volume spike ---
+      const shortBreakout = ctx.track("S:close_below_orb", close < orbLow, close, orbLow);
+      const shortAdx = ctx.track("S:adx_consolidation", adx4h < adxThresh, adx4h, adxThresh);
       const shortVol = ctx.track("S:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
 
-      if (shortExpansion && shortBreakout && shortEma && shortVol) {
+      if (shortBreakout && shortAdx && shortVol) {
+        const sl = close + stopDist;
+        const tpPrice = close - params.partialRR.value * stopDist;
+        orbArmed = false;
         return {
           direction: "short",
           entryPrice: null,
-          stopLoss: close + stopDist,
-          takeProfits: [],
-          comment: "Expansion breakout short",
+          stopLoss: sl,
+          takeProfits: [{ price: tpPrice, pctOfPosition: params.partialPct.value }],
+          comment: "ORB breakout short",
         };
       }
 
@@ -209,7 +224,7 @@ export function createExpansionEmaAtrTrail(
         return { exit: true, comment: "Timeout" };
       }
 
-      // ATR trailing stop
+      // ATR trailing stop for remainder after partial TP
       const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
       if (!htf1hRef || htf1hRef.length < 15) return null;
       const htfAtr = htfAtrCache1h ?? atr(htf1hRef, 14);
@@ -281,9 +296,13 @@ export function createExpansionEmaAtrTrail(
       const close = currentCandle.c;
 
       if (direction === "long") {
-        return { stopLoss: close - stopDist, takeProfits: [] };
+        const sl = close - stopDist;
+        const tpPrice = close + params.partialRR.value * stopDist;
+        return { stopLoss: sl, takeProfits: [{ price: tpPrice, pctOfPosition: params.partialPct.value }] };
       } else {
-        return { stopLoss: close + stopDist, takeProfits: [] };
+        const sl = close + stopDist;
+        const tpPrice = close - params.partialRR.value * stopDist;
+        return { stopLoss: sl, takeProfits: [{ price: tpPrice, pctOfPosition: params.partialPct.value }] };
       }
     },
   };

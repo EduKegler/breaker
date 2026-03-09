@@ -23,7 +23,7 @@ const DEFAULT_PARAMS: ExpansionEmaAtrTrailParams = {
     description: "ATR expansion threshold: current ATR(14,15m) > X * SMA(ATR,20)",
   },
   lookbackBars: {
-    value: 8, min: 3, max: 12, step: 1, optimizable: true,
+    value: 5, min: 3, max: 12, step: 1, optimizable: true,
     description: "Bars for breakout reference level (highest high / lowest low)",
   },
   emaPeriod: {
@@ -31,7 +31,7 @@ const DEFAULT_PARAMS: ExpansionEmaAtrTrailParams = {
     description: "EMA period on 4H for trend regime direction filter",
   },
   volMultiplier: {
-    value: 2.5, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
+    value: 2, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
     description: "Volume spike threshold (X * SMA20 volume)",
   },
   atrStopMult: {

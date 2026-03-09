@@ -1,37 +1,37 @@
 import type { Candle } from "../../../types/candle.js";
 import type { Strategy, StrategyContext, StrategyParam, Signal } from "../../../types/strategy.js";
-import { ema as emaIndicator } from "../../../indicators/ema.js";
+import { donchian } from "../../../indicators/donchian.js";
 import { sma } from "../../../indicators/sma.js";
 import { atr } from "../../../indicators/atr.js";
 
 const MS_1H = 3_600_000;
 const MS_4H = 14_400_000;
 
-interface ExpansionEmaAtrTrailParams {
-  expansionMult: StrategyParam;
-  lookbackBars: StrategyParam;
-  emaPeriod: StrategyParam;
+interface DonchianConsolidationAtrTrailParams {
+  donchianPeriod: StrategyParam;
+  consolidationLookback: StrategyParam;
+  consolidationAtrThreshold: StrategyParam;
   volMultiplier: StrategyParam;
   atrStopMult: StrategyParam;
   atrTrailMult: StrategyParam;
   timeoutBars: StrategyParam;
 }
 
-const DEFAULT_PARAMS: ExpansionEmaAtrTrailParams = {
-  expansionMult: {
-    value: 1.3, min: 1.0, max: 2.5, step: 0.1, optimizable: true,
-    description: "ATR expansion threshold: current ATR(14,15m) > X * SMA(ATR,20)",
+const DEFAULT_PARAMS: DonchianConsolidationAtrTrailParams = {
+  donchianPeriod: {
+    value: 20, min: 10, max: 30, step: 2, optimizable: true,
+    description: "Donchian channel period for breakout detection",
   },
-  lookbackBars: {
-    value: 8, min: 3, max: 12, step: 1, optimizable: true,
-    description: "Bars for breakout reference level (highest high / lowest low)",
+  consolidationLookback: {
+    value: 6, min: 3, max: 12, step: 1, optimizable: true,
+    description: "4H bars to measure consolidation range",
   },
-  emaPeriod: {
-    value: 50, min: 20, max: 100, step: 10, optimizable: true,
-    description: "EMA period on 4H for trend regime direction filter",
+  consolidationAtrThreshold: {
+    value: 2.5, min: 1.0, max: 4.0, step: 0.5, optimizable: true,
+    description: "Max 4H range as multiple of ATR(14,4H) for consolidation",
   },
   volMultiplier: {
-    value: 2.5, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
+    value: 1.5, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
     description: "Volume spike threshold (X * SMA20 volume)",
   },
   atrStopMult: {
@@ -39,29 +39,28 @@ const DEFAULT_PARAMS: ExpansionEmaAtrTrailParams = {
     description: "ATR(14) 1H initial stop multiplier (KB §1.6 >= 3.0)",
   },
   atrTrailMult: {
-    value: 3.0, min: 2.0, max: 5.0, step: 0.5, optimizable: true,
-    description: "ATR(14) 1H trailing stop multiplier — tracks highest/lowest since entry",
+    value: 5, min: 2.0, max: 5.0, step: 0.5, optimizable: true,
+    description: "ATR(14) 1H trailing stop multiplier",
   },
   timeoutBars: {
-    value: 48, min: 24, max: 96, step: 4, optimizable: true,
+    value: 72, min: 24, max: 96, step: 4, optimizable: true,
     description: "Forced exit after N bars to prevent funding bleed",
   },
 };
 
-export function createExpansionEmaAtrTrail(
-  paramOverrides?: Partial<Record<keyof ExpansionEmaAtrTrailParams, number>>,
+export function createDonchianConsolidationAtrTrail(
+  paramOverrides?: Partial<Record<keyof DonchianConsolidationAtrTrailParams, number>>,
 ): Strategy {
   const params: Record<string, StrategyParam> = {};
   for (const [key, defaultParam] of Object.entries(DEFAULT_PARAMS)) {
-    const override = paramOverrides?.[key as keyof ExpansionEmaAtrTrailParams];
+    const override = paramOverrides?.[key as keyof DonchianConsolidationAtrTrailParams];
     params[key] = { ...defaultParam, value: override ?? defaultParam.value };
   }
 
+  let donchianCache: { upper: number[]; lower: number[] } | null = null;
   let volSmaCache: number[] | null = null;
-  let atr15mCache: number[] | null = null;
-  let atrSmaCache: number[] | null = null;
   let htfAtrCache1h: number[] | null = null;
-  let htf4hEmaCache: number[] | null = null;
+  let htfAtrCache4h: number[] | null = null;
   let htf1hCandles: Candle[] | null = null;
   let htf4hCandles: Candle[] | null = null;
 
@@ -74,76 +73,68 @@ export function createExpansionEmaAtrTrail(
     return NaN;
   }
 
-  function findLast4hIdx(currentT: number, htfRef: Candle[]): number {
-    for (let j = htfRef.length - 1; j >= 0; j--) {
-      if (htfRef[j].t + MS_4H <= currentT) {
-        return j;
-      }
-    }
-    return -1;
-  }
-
   return {
-    name: "BTC 15m Breakout — Expansion EMA ATR-Trail",
+    name: "BTC 15m Breakout — Donchian Consolidation ATR Trail",
     params,
     requiredTimeframes: ["1h", "4h"],
     requiredWarmup: { source: 50, "1h": 15, "4h": 30 },
 
     init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
+      donchianCache = donchian(candles, params.donchianPeriod.value);
       volSmaCache = sma(candles.map(c => c.v), 20);
-      atr15mCache = atr(candles, 14);
-      atrSmaCache = sma(atr15mCache, 20);
       htf1hCandles = higherTimeframes["1h"] ?? [];
       htf4hCandles = higherTimeframes["4h"] ?? [];
       htfAtrCache1h = htf1hCandles.length > 0 ? atr(htf1hCandles, 14) : null;
-      if (htf4hCandles.length > 0) {
-        htf4hEmaCache = emaIndicator(htf4hCandles.map(c => c.c), params.emaPeriod.value);
-      }
+      htfAtrCache4h = htf4hCandles.length > 0 ? atr(htf4hCandles, 14) : null;
     },
 
     onCandle(ctx: StrategyContext): Signal | null {
       const { candles, index, currentCandle, higherTimeframes } = ctx;
-      if (index < 35) return null;
+      const period = params.donchianPeriod.value;
+      if (index < period + 14) return null;
 
-      // --- 15m ATR expansion detection ---
-      const atr15m = atr15mCache ?? atr(candles, 14);
-      const atrSma20 = atrSmaCache ?? sma(atr15m, 20);
-      const currentAtr = atr15m[index];
-      const avgAtr = atrSma20[index];
-      if (isNaN(currentAtr) || isNaN(avgAtr) || avgAtr <= 0) return null;
+      // Donchian Channel on 15m
+      const dc = donchianCache ?? donchian(candles.slice(0, index + 1), period);
+      const dcUpper = dc.upper[index - 1]; // previous bar's upper (breakout level)
+      const dcLower = dc.lower[index - 1]; // previous bar's lower (breakout level)
+      if (isNaN(dcUpper) || isNaN(dcLower)) return null;
 
-      const expMult = params.expansionMult.value;
-      const expansionLevel = expMult * avgAtr;
-
-      // --- Breakout level: highest high / lowest low of last N bars ---
-      const lb = params.lookbackBars.value;
-      let highestHigh = -Infinity;
-      let lowestLow = Infinity;
-      for (let k = index - lb; k < index; k++) {
-        if (k < 0) continue;
-        if (candles[k].h > highestHigh) highestHigh = candles[k].h;
-        if (candles[k].l < lowestLow) lowestLow = candles[k].l;
-      }
-
-      // --- HTF: 1H ATR (anti-repaint) ---
+      // 1H ATR — only completed bars (anti-repaint)
       const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
       if (!htf1hRef || htf1hRef.length < 15) return null;
       const htfAtr1h = htfAtrCache1h ?? atr(htf1hRef, 14);
       const atr1h = findAtr1h(currentCandle.t, htf1hRef, htfAtr1h);
       if (isNaN(atr1h)) return null;
 
-      // --- HTF: 4H EMA regime (anti-repaint) ---
+      // 4H consolidation regime (anti-repaint)
       const htf4hRef = htf4hCandles ?? higherTimeframes["4h"];
-      if (!htf4hRef || htf4hRef.length < 30) return null;
-      const ema4h = htf4hEmaCache ?? emaIndicator(htf4hRef.map(c => c.c), params.emaPeriod.value);
-      const last4hIdx = findLast4hIdx(currentCandle.t, htf4hRef);
-      if (last4hIdx < 0) return null;
+      if (!htf4hRef || htf4hRef.length < 20) return null;
+      const htfAtr4h = htfAtrCache4h ?? atr(htf4hRef, 14);
+      const consLookback = params.consolidationLookback.value;
+      const consThreshold = params.consolidationAtrThreshold.value;
 
-      const emaValue = ema4h[last4hIdx];
-      const htf4hClose = htf4hRef[last4hIdx].c;
-      if (isNaN(emaValue)) return null;
+      let last4hIdx = -1;
+      for (let j = htf4hRef.length - 1; j >= 0; j--) {
+        if (htf4hRef[j].t + MS_4H <= currentCandle.t) {
+          last4hIdx = j;
+          break;
+        }
+      }
+      if (last4hIdx < consLookback) return null;
 
-      // --- Volume SMA(20) ---
+      const atr4h = htfAtr4h[last4hIdx];
+      if (isNaN(atr4h)) return null;
+
+      let rangeHigh4h = -Infinity;
+      let rangeLow4h = Infinity;
+      for (let j = last4hIdx - consLookback + 1; j <= last4hIdx; j++) {
+        rangeHigh4h = Math.max(rangeHigh4h, htf4hRef[j].h);
+        rangeLow4h = Math.min(rangeLow4h, htf4hRef[j].l);
+      }
+      const htfRange = rangeHigh4h - rangeLow4h;
+      const consThresholdAbs = consThreshold * atr4h;
+
+      // Volume SMA(20)
       const volSma = volSmaCache ?? sma(candles.slice(0, index + 1).map(c => c.v), 20);
       const volAvg20 = volSma[index];
       const volMult = params.volMultiplier.value;
@@ -153,46 +144,45 @@ export function createExpansionEmaAtrTrail(
       const stopMult = params.atrStopMult.value;
       const stopDist = atr1h * stopMult;
 
-      // --- Diagnostics ---
-      ctx.indicator("atr15m", currentAtr);
-      ctx.indicator("avgAtr20", avgAtr);
-      ctx.indicator("expansionRatio", currentAtr / avgAtr);
-      ctx.indicator("ema4h", emaValue);
-      ctx.indicator("htf4hClose", htf4hClose);
+      // Diagnostics
+      ctx.indicator("dcUpper", dcUpper);
+      ctx.indicator("dcLower", dcLower);
+      ctx.indicator("close", close);
       ctx.indicator("atr1h", atr1h);
+      ctx.indicator("atr4h", atr4h);
+      ctx.indicator("htfRange4h", htfRange);
+      ctx.indicator("consThresholdAbs", consThresholdAbs);
       ctx.indicator("volAvg20", volAvg20);
-      ctx.indicator("highestHigh", highestHigh);
-      ctx.indicator("lowestLow", lowestLow);
 
-      // --- LONG: expansion + close above N-bar high + EMA bullish + volume ---
-      const longExpansion = ctx.track("L:atr_expansion", currentAtr > expansionLevel, currentAtr, expansionLevel);
-      const longBreakout = ctx.track("L:close_above_high", close > highestHigh, close, highestHigh);
-      const longEma = ctx.track("L:ema_regime", htf4hClose > emaValue, htf4hClose, emaValue);
+      // LONG: close above Donchian upper + 4H consolidation + volume spike
+      const longBreakout = ctx.track("L:close_above_dc", close > dcUpper, close, dcUpper);
+      const longConsol = ctx.track("L:4h_consolidation", htfRange < consThresholdAbs, htfRange, consThresholdAbs);
       const longVol = ctx.track("L:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
 
-      if (longExpansion && longBreakout && longEma && longVol) {
+      if (longBreakout && longConsol && longVol) {
+        const sl = close - stopDist;
         return {
           direction: "long",
           entryPrice: null,
-          stopLoss: close - stopDist,
+          stopLoss: sl,
           takeProfits: [],
-          comment: "Expansion breakout long",
+          comment: "Donchian breakout long",
         };
       }
 
-      // --- SHORT: expansion + close below N-bar low + EMA bearish + volume ---
-      const shortExpansion = ctx.track("S:atr_expansion", currentAtr > expansionLevel, currentAtr, expansionLevel);
-      const shortBreakout = ctx.track("S:close_below_low", close < lowestLow, close, lowestLow);
-      const shortEma = ctx.track("S:ema_regime", htf4hClose < emaValue, htf4hClose, emaValue);
+      // SHORT: close below Donchian lower + 4H consolidation + volume spike
+      const shortBreakout = ctx.track("S:close_below_dc", close < dcLower, close, dcLower);
+      const shortConsol = ctx.track("S:4h_consolidation", htfRange < consThresholdAbs, htfRange, consThresholdAbs);
       const shortVol = ctx.track("S:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
 
-      if (shortExpansion && shortBreakout && shortEma && shortVol) {
+      if (shortBreakout && shortConsol && shortVol) {
+        const sl = close + stopDist;
         return {
           direction: "short",
           entryPrice: null,
-          stopLoss: close + stopDist,
+          stopLoss: sl,
           takeProfits: [],
-          comment: "Expansion breakout short",
+          comment: "Donchian breakout short",
         };
       }
 
@@ -200,7 +190,7 @@ export function createExpansionEmaAtrTrail(
     },
 
     shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
-      const { candles, index, currentCandle, positionDirection, positionEntryPrice, positionEntryBarIndex, higherTimeframes } = ctx;
+      const { index, currentCandle, candles, positionDirection, positionEntryBarIndex, positionEntryPrice, higherTimeframes } = ctx;
       if (!positionDirection || positionEntryBarIndex === null || positionEntryPrice === null) return null;
 
       // Timeout first (mandatory)
@@ -242,7 +232,7 @@ export function createExpansionEmaAtrTrail(
     },
 
     getExitLevel(ctx: StrategyContext): number | null {
-      const { candles, index, currentCandle, positionDirection, positionEntryPrice, positionEntryBarIndex, higherTimeframes } = ctx;
+      const { index, currentCandle, candles, positionDirection, positionEntryBarIndex, positionEntryPrice, higherTimeframes } = ctx;
       if (!positionDirection || positionEntryBarIndex === null || positionEntryPrice === null) return null;
 
       const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];

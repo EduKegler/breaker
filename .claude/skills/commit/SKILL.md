@@ -28,7 +28,19 @@ pnpm build && pnpm test
 
 If build or unit tests fail, show the errors and STOP. Do not commit broken code.
 
-### 3. Verify .md files
+### 3. Simplify
+
+Review all changed code (`git diff`) for:
+
+- **Reuse**: duplicated logic that could use an existing helper or be extracted into one
+- **Quality**: unclear naming, unnecessary complexity, missing edge cases
+- **Efficiency**: redundant operations, unnecessary allocations, overly verbose patterns
+
+If issues are found, **fix them** (using Edit tool) and re-run `pnpm build && pnpm test` to ensure nothing broke. Show the user what was simplified.
+
+If the code is already clean, skip this step silently.
+
+### 4. Verify .md files
 
 Read the git diff and check if the following files need updates:
 
@@ -38,7 +50,7 @@ Read the git diff and check if the following files need updates:
 
 If any .md needs updating, **update it before committing** (using Edit tool). Show the user what was changed.
 
-### 4. Generate commit message
+### 5. Generate commit message
 
 Analyze all changes (`git diff --staged` + `git diff`) and generate a message following **Conventional Commits**:
 
@@ -55,7 +67,7 @@ If `$ARGUMENTS` contains a message, use it as the base for the commit message.
 
 **NEVER include Co-Authored-By or any AI attribution** (global rule).
 
-### 5. Stage, Commit & Push
+### 6. Stage, Commit & Push
 
 - `git add` relevant files explicitly (do NOT use `git add -A` — avoid committing secrets like .env)
 - `git commit` with the generated message (use HEREDOC format)
