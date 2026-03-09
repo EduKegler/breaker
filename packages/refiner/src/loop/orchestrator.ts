@@ -20,8 +20,7 @@ import { createActor } from "xstate";
 
 import { isMainModule, backoffDelay } from "@breaker/kit";
 import { sendWhatsApp as sendWhatsAppWithRetry } from "@breaker/alerts";
-import { getStrategySourcePath, factoryToKebab } from "../lib/get-strategy-source-path.js";
-import { strategyRegistry } from "../lib/strategy-registry.js";
+import { getStrategySourcePath } from "../lib/get-strategy-source-path.js";
 import { loadCandles } from "../lib/candle-loader.js";
 import { lock } from "../lib/lock.js";
 import { classifyError } from "./classify-error.js";
@@ -316,21 +315,14 @@ export async function orchestrate(): Promise<void> {
     logDim(`Using seed strategy: ${seedFilename}`);
   }
 
-  // Resolve strategy factory — dynamic import when active strategy differs from config's deployed factory
-  const configSeedFilename = factoryToKebab(cfg.strategyFactory) + ".ts";
-  const activeFilename = path.basename(cfg.strategyFile);
-  const needsDynamicFactory = esmCacheStale || activeFilename !== configSeedFilename;
-
-  if (needsDynamicFactory) {
+  // Resolve strategy factory — always via dynamic import (no static registry)
+  {
     const distPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");
     const mod = await import(distPath) as Record<string, unknown>;
     const factoryKey = Object.keys(mod).find(k => typeof mod[k] === "function" && k.startsWith("create"));
     if (!factoryKey) throw new Error(`No create* factory found in ${distPath}`);
     factory = mod[factoryKey] as StrategyFactory;
-    logDim(`Factory resolved via dynamic import: ${factoryKey} (${activeFilename})`);
-  } else {
-    factory = strategyRegistry.get(cfg.strategyFactory);
-    logDim(`Factory resolved from registry: ${cfg.strategyFactory}`);
+    logDim(`Factory resolved via dynamic import: ${factoryKey} (${path.basename(cfg.strategyFile)})`);
   }
 
   // Load initial param overrides from checkpoint (need strategy to compute warmup)
