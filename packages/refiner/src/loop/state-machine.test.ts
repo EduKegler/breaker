@@ -620,10 +620,10 @@ describe("state-machine: WF_REJECT and wfRejectStreak", () => {
     expect(actor.getSnapshot().context.wfRejectStreak).toBe(2);
   });
 
-  it("escalates refine -> research when wfRejectStreak >= 2", () => {
-    const actor = startActor({ wfRejectStreak: 2, maxCycles: 2 });
+  it("does NOT escalate refine on wfRejectStreak alone (WF overfit ≠ plateau)", () => {
+    const actor = startActor({ wfRejectStreak: 5, maxCycles: 2 });
     actor.send({ type: "ESCALATE" });
-    expect(actor.getSnapshot().value).toBe("research");
+    expect(actor.getSnapshot().value).toBe("refine");
   });
 
   it("does NOT escalate when wfRejectStreak < 2 and other counters low", () => {
@@ -651,7 +651,7 @@ describe("state-machine: WF_REJECT and wfRejectStreak", () => {
     expect(actor.getSnapshot().context.wfRejectStreak).toBe(0);
   });
 
-  it("B1 scenario: 3 consecutive WF rejections trigger escalation", () => {
+  it("consecutive WF rejections do NOT trigger escalation (WF overfit ≠ plateau)", () => {
     const actor = startActor({ maxCycles: 2 });
 
     // Simulate 3 iterations where Claude makes changes but WF rejects
@@ -667,10 +667,10 @@ describe("state-machine: WF_REJECT and wfRejectStreak", () => {
     expect(actor.getSnapshot().context.noChangeCount).toBe(0); // CHANGE_APPLIED resets this
     expect(actor.getSnapshot().context.neutralStreak).toBe(0); // degraded verdict resets this
 
-    // Without the fix, ESCALATE would fail (noChangeCount=0, neutralStreak=0)
-    // With the fix, wfRejectStreak=3 >= 2 triggers escalation
+    // WF rejects alone should NOT escalate — the optimizer is still making changes,
+    // it just needs to learn to regularize instead of overfit
     actor.send({ type: "ESCALATE" });
-    expect(actor.getSnapshot().value).toBe("research");
+    expect(actor.getSnapshot().value).toBe("refine");
   });
 });
 

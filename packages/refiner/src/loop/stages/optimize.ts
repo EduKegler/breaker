@@ -275,6 +275,9 @@ export async function optimizeStrategy(opts: {
 
     const promptChars = prompt.length;
     const approxPromptTokens = Math.round(promptChars / 4);
+    if (promptChars > 40_000) {
+      log(`  [optimize] ⚠ large prompt: ${promptChars} chars (~${approxPromptTokens} tokens) — may cause slow reasoning`);
+    }
 
     const result = await runClaude(
       ["--model", model, "--effort", "high", "--dangerously-skip-permissions", "--max-turns", String(maxTurns), "-p", prompt],

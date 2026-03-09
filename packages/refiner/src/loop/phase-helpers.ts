@@ -16,10 +16,10 @@ export const phaseHelpers = {
    */
   shouldEscalate(state: IterationState, _cfg: LoopConfig): boolean {
     if (state.currentPhase === "refine") {
-      return state.neutralStreak >= 3 || state.noChangeCount >= 2 || (state.wfRejectStreak ?? 0) >= 2;
+      return state.neutralStreak >= 3 || state.noChangeCount >= 2;
     }
     if (state.currentPhase === "research" || state.currentPhase === "restructure") {
-      return state.noChangeCount >= 2 || (state.wfRejectStreak ?? 0) >= 2;
+      return state.noChangeCount >= 2;
     }
     return false;
   },
@@ -89,6 +89,7 @@ export const phaseHelpers = {
    * - Universal: PF < 0.3 → kill immediately (any iter)
    * - Iter 5: bestPF < minPF × 0.4
    * - Iter 9: bestPF < minPF × 0.6
+   * - Iter 12: bestPF < minPF × 0.8
    */
   shouldKillVariant(
     bestPFEver: number,
@@ -109,6 +110,11 @@ export const phaseHelpers = {
     // Iter 9 checkpoint
     if (variantIterCount >= 9 && bestPFEver < minPF * 0.6) {
       return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.6).toFixed(2)} (60% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
+    }
+
+    // Iter 12 checkpoint — late-stage gate, variant must be near target
+    if (variantIterCount >= 12 && bestPFEver < minPF * 0.8) {
+      return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.8).toFixed(2)} (80% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
     }
 
     return null;

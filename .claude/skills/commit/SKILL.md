@@ -30,15 +30,7 @@ If build or unit tests fail, show the errors and STOP. Do not commit broken code
 
 ### 3. Simplify
 
-Review all changed code (`git diff`) for:
-
-- **Reuse**: duplicated logic that could use an existing helper or be extracted into one
-- **Quality**: unclear naming, unnecessary complexity, missing edge cases
-- **Efficiency**: redundant operations, unnecessary allocations, overly verbose patterns
-
-If issues are found, **fix them** (using Edit tool) and re-run `pnpm build && pnpm test` to ensure nothing broke. Show the user what was simplified.
-
-If the code is already clean, skip this step silently.
+Run `/simplify` to review changed code for reuse, quality, and efficiency issues, and fix any found.
 
 ### 4. Verify .md files
 

@@ -289,6 +289,12 @@ export class VariantManager {
     if (active) active.iterationsUsed++;
   }
 
+  /** Reset iterations counter for the active variant (new CLI run = fresh budget). */
+  resetBudget(): void {
+    const active = this.getActive();
+    if (active) active.iterationsUsed = 0;
+  }
+
   /** Return all variants. */
   getAll(): readonly VariantInfo[] {
     return this.registry.variants;

@@ -233,6 +233,7 @@ ${phase !== "refine" ? strategyInterfaceReference : ""}## OPTIMIZATION RULES
 - **FORBIDDEN: day-of-week filters**. No dayofweek conditions.
 - **FORBIDDEN: hour-of-day filters**. Use adaptive volume/volatility filters instead of time gates.
 - **Axis exhaustion**: a core param is EXHAUSTED when every value has been tested OR when directionally exhausted (3+ consecutive degradations).
+- **Pass when exhausted**: if all core params are exhausted and no secondary param change has positive expected value, output \`{ "paramOverrides": {} }\` to signal no change. Do NOT force a change just to change something — a no-op is better than noise.
 - **Directional bias**: if one direction PF < 0.5, diagnosis is STRUCTURAL.
 - **Next steps are conditionals**: use format "if [metric X] then [action Y]".
 - **FORBIDDEN: category change**. Strategy archetype (${moduleContext.profile}) MUST NOT change without RESTRUCTURE approval.
@@ -421,8 +422,12 @@ function buildPhaseTask(
 1. **Analyze** — identify the weakest metric vs stopping criteria.
    Consider: which direction (long/short) drags performance? Is the issue WR or R:R?
    Var cap: ${moduleContext.varCap}. If current param count exceeds it, DROP a param.
-2. **Choose 1 param change** — pick the single change with highest expected impact.
-   Output as JSON to stdout:
+2. **Choose 1 param change OR pass** — pick the single change with highest expected impact.
+   If all core params are exhausted and no change has positive expected value, output empty overrides:
+\`\`\`json
+{ "paramOverrides": {} }
+\`\`\`
+   Otherwise, output the change:
 \`\`\`json
 { "paramOverrides": { "paramName": newValue } }
 \`\`\`
@@ -1478,13 +1483,20 @@ function buildExploredSpaceSection(
   return lines.join("\n") + "\n\n";
 }
 
+const MAX_PENDING_HYPOTHESES = 5;
+
 function buildPendingHypothesesSection(paramHistory: ParameterHistory | null): string {
   if (!paramHistory) return "";
   const pending = (paramHistory.pendingHypotheses ?? []).filter((h) => !h.expired);
   if (!pending.length) return "";
 
+  // Keep only the most recent hypotheses to bound prompt size
+  const recent = pending.slice(-MAX_PENDING_HYPOTHESES);
+  const dropped = pending.length - recent.length;
+
   const lines = ["## PENDING HYPOTHESES FROM PREVIOUS ITERATIONS"];
-  for (const h of pending) {
+  if (dropped > 0) lines.push(`(${dropped} older hypotheses omitted)`);
+  for (const h of recent) {
     const cond = h.condition ? ` (condition: ${h.condition})` : "";
     lines.push(`- iter ${h.iter} rank#${h.rank}: ${h.hypothesis}${cond}`);
   }

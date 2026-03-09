@@ -22,8 +22,8 @@ describe("shouldEscalate", () => {
     expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "refine", noChangeCount: 2 }), stubCfg)).toBe(true);
   });
 
-  it("escalates refine on wfRejectStreak >= 2", () => {
-    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "refine", wfRejectStreak: 2 }), stubCfg)).toBe(true);
+  it("does NOT escalate refine on wfRejectStreak alone (WF overfit ≠ plateau)", () => {
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "refine", wfRejectStreak: 5 }), stubCfg)).toBe(false);
   });
 
   it("does not escalate refine when all counters below threshold", () => {
@@ -34,16 +34,16 @@ describe("shouldEscalate", () => {
     expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "research", noChangeCount: 2 }), stubCfg)).toBe(true);
   });
 
-  it("escalates research on wfRejectStreak >= 2", () => {
-    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "research", wfRejectStreak: 2 }), stubCfg)).toBe(true);
+  it("does NOT escalate research on wfRejectStreak alone", () => {
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "research", wfRejectStreak: 5 }), stubCfg)).toBe(false);
   });
 
   it("does not escalate research when only neutralStreak is high", () => {
     expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "research", neutralStreak: 10, noChangeCount: 0, wfRejectStreak: 0 }), stubCfg)).toBe(false);
   });
 
-  it("escalates restructure on wfRejectStreak >= 2", () => {
-    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "restructure", wfRejectStreak: 2 }), stubCfg)).toBe(true);
+  it("does NOT escalate restructure on wfRejectStreak alone", () => {
+    expect(phaseHelpers.shouldEscalate(makeState({ currentPhase: "restructure", wfRejectStreak: 5 }), stubCfg)).toBe(false);
   });
 
   it("escalates restructure on noChangeCount >= 2", () => {
@@ -124,12 +124,27 @@ describe("shouldKillVariant", () => {
     expect(phaseHelpers.shouldKillVariant(0.8, 9, "M1")).toBeNull();
   });
 
+  it("kills at iter 12 when PF < 80% of M1 minPF", () => {
+    // M1 minPF=1.3, 80% = 1.04; PF=0.86 fails (the squeeze-ema-atr-trail scenario)
+    const reason = phaseHelpers.shouldKillVariant(0.86, 12, "M1");
+    expect(reason).not.toBeNull();
+    expect(reason).toContain("80%");
+    expect(reason).toContain("1.04");
+  });
+
+  it("survives at iter 12 when PF >= 80%", () => {
+    // M1 minPF=1.3, 80% = 1.04; PF=1.1 passes
+    expect(phaseHelpers.shouldKillVariant(1.1, 12, "M1")).toBeNull();
+  });
+
   it("uses M4 thresholds correctly", () => {
-    // M4 minPF=1.4: iter5 = 0.56, iter9 = 0.84
+    // M4 minPF=1.4: iter5 = 0.56, iter9 = 0.84, iter12 = 1.12
     expect(phaseHelpers.shouldKillVariant(0.5, 5, "M4")).not.toBeNull();
     expect(phaseHelpers.shouldKillVariant(0.6, 5, "M4")).toBeNull();
     expect(phaseHelpers.shouldKillVariant(0.8, 9, "M4")).not.toBeNull();
     expect(phaseHelpers.shouldKillVariant(0.9, 9, "M4")).toBeNull();
+    expect(phaseHelpers.shouldKillVariant(1.0, 12, "M4")).not.toBeNull();
+    expect(phaseHelpers.shouldKillVariant(1.15, 12, "M4")).toBeNull();
   });
 
   it("falls back to minPF=1.3 for unknown moduleId", () => {

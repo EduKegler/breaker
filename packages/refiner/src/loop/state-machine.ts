@@ -104,7 +104,7 @@ export const breakerMachine = setup({
     isInitialRestructure: ({ context }) => context.initialPhase === "restructure",
 
     shouldEscalateRefine: ({ context }) =>
-      (context.neutralStreak >= 3 || context.noChangeCount >= 2 || context.wfRejectStreak >= 2) &&
+      (context.neutralStreak >= 3 || context.noChangeCount >= 2) &&
       context.phaseCycles < context.maxCycles,
 
     shouldEscalateResearchOrRestructure: ({ context }) =>

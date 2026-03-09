@@ -288,6 +288,12 @@ export async function orchestrate(): Promise<void> {
   let needsVariantGeneration = false;
 
   const activeVariant = variantMgr.getActive();
+  if (activeVariant) {
+    // Reset budget counter — each CLI run gives the active variant a fresh budget.
+    // Without this, iterationsUsed from the previous run triggers immediate "Budget exhausted".
+    variantMgr.resetBudget();
+    variantMgr.save();
+  }
   if (activeVariant && activeVariant.id !== path.basename(seedStrategyFile, ".ts")) {
     // Non-seed variant: override cfg paths
     cfg.strategyFile = activeVariant.strategyFile;
@@ -621,6 +627,8 @@ export async function orchestrate(): Promise<void> {
   let pendingVerdictOverride: { verdict: string; note: string } | undefined;
   let failedRestructures: RestructureFailure[] = [];
   let bestPFEver = initialMetrics.profitFactor ?? 0;
+  /** Fingerprints of full param sets seen in this variant's lifetime. Detects historical repeats. */
+  let seenParamFingerprints = new Set<string>();
 
   // ============================================================
   // OPTIMIZE-FIRST LOOP
@@ -752,6 +760,7 @@ export async function orchestrate(): Promise<void> {
       lastContentHash = undefined;
       pendingVerdictOverride = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
+      seenParamFingerprints = new Set<string>();
 
       state.bestScore = switchResult.scoreResult.weighted;
       state.bestPnl = switchResult.pnl;
@@ -842,6 +851,7 @@ export async function orchestrate(): Promise<void> {
       lastContentHash = undefined;
       pendingVerdictOverride = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
+      seenParamFingerprints = new Set<string>();
 
       state.bestScore = switchResult.scoreResult.weighted;
       state.bestPnl = switchResult.pnl;
@@ -1136,6 +1146,17 @@ export async function orchestrate(): Promise<void> {
         }
         continue;
       }
+
+      // Detect historical repeat: same full param set as a previous iteration
+      const fingerprint = JSON.stringify(Object.entries(afterValues).sort(([a], [b]) => a.localeCompare(b)));
+      if (seenParamFingerprints.has(fingerprint)) {
+        logWarn(`⏸ Historical repeat — params identical to a previous iteration, skipping backtest`);
+        actor.send({ type: "NO_CHANGE" });
+        const noChangeCount = actor.getSnapshot().context.noChangeCount;
+        logWarn(`  (noChangeCount=${noChangeCount}/${cfg.maxNoChange})`);
+        continue;
+      }
+      seenParamFingerprints.add(fingerprint);
 
       // 1b: Log which params changed with before→after
       for (const [k, v] of Object.entries(optResult.data.paramOverrides!)) {
@@ -1630,6 +1651,7 @@ export async function orchestrate(): Promise<void> {
       lastContentHash = undefined;
       pendingVerdictOverride = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
+      seenParamFingerprints = new Set<string>();
 
       state.bestScore = switchResult.scoreResult.weighted;
       state.bestPnl = switchResult.pnl;

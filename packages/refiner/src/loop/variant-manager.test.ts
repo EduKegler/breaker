@@ -307,6 +307,28 @@ describe("VariantManager", () => {
     });
   });
 
+  describe("resetBudget", () => {
+    it("zeroes iterationsUsed for active variant", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+
+      mgr.incrementIterations();
+      mgr.incrementIterations();
+      expect(mgr.getActive()!.iterationsUsed).toBe(2);
+
+      mgr.resetBudget();
+      expect(mgr.getActive()!.iterationsUsed).toBe(0);
+    });
+
+    it("is no-op when no active variant", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+
+      expect(() => mgr.resetBudget()).not.toThrow();
+    });
+  });
+
   describe("getBest", () => {
     it("returns variant with highest score among non-active", () => {
       const mgr = new VariantManager(tmpDir, mainStrategyFile);

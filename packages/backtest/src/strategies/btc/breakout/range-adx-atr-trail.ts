@@ -8,22 +8,23 @@ import { atr } from "../../../indicators/atr.js";
 const MS_1H = 3_600_000;
 const MS_4H = 14_400_000;
 
-interface DonchianAdxTimeoutParams {
-  donchianPeriod: StrategyParam;
+interface RangeAdxAtrTrailParams {
+  rangePeriod: StrategyParam;
   adxThreshold: StrategyParam;
   volMultiplier: StrategyParam;
   atrStopMult: StrategyParam;
+  atrTrailMult: StrategyParam;
   timeoutBars: StrategyParam;
 }
 
-const DEFAULT_PARAMS: DonchianAdxTimeoutParams = {
-  donchianPeriod: {
-    value: 20, min: 10, max: 30, step: 2, optimizable: true,
-    description: "Donchian channel period for breakout detection",
+const DEFAULT_PARAMS: RangeAdxAtrTrailParams = {
+  rangePeriod: {
+    value: 20, min: 10, max: 40, step: 2, optimizable: true,
+    description: "Range lookback period (N bars high/low for breakout levels)",
   },
   adxThreshold: {
-    value: 20, min: 15, max: 50, step: 5, optimizable: true,
-    description: "Max ADX(14) 4H for consolidation regime (lower = stricter filter)",
+    value: 25, min: 15, max: 35, step: 5, optimizable: true,
+    description: "ADX(14) 4H minimum for trending regime (higher = stricter)",
   },
   volMultiplier: {
     value: 1.5, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
@@ -33,18 +34,22 @@ const DEFAULT_PARAMS: DonchianAdxTimeoutParams = {
     value: 3.0, min: 3.0, max: 6.0, step: 0.5, optimizable: true,
     description: "ATR(14) 1H initial stop multiplier (KB >= 3.0)",
   },
+  atrTrailMult: {
+    value: 2.5, min: 2.0, max: 5.0, step: 0.5, optimizable: true,
+    description: "ATR(14) 1H trailing stop multiplier (follows price at N x ATR distance)",
+  },
   timeoutBars: {
-    value: 48, min: 24, max: 96, step: 4, optimizable: true,
+    value: 64, min: 24, max: 96, step: 4, optimizable: true,
     description: "Forced exit after N bars to prevent funding bleed",
   },
 };
 
-export function createDonchianAdxTimeout(
-  paramOverrides?: Partial<Record<keyof DonchianAdxTimeoutParams, number>>,
+export function createRangeAdxAtrTrail(
+  paramOverrides?: Partial<Record<keyof RangeAdxAtrTrailParams, number>>,
 ): Strategy {
   const params: Record<string, StrategyParam> = {};
   for (const [key, defaultParam] of Object.entries(DEFAULT_PARAMS)) {
-    const override = paramOverrides?.[key as keyof DonchianAdxTimeoutParams];
+    const override = paramOverrides?.[key as keyof RangeAdxAtrTrailParams];
     params[key] = { ...defaultParam, value: override ?? defaultParam.value };
   }
 
@@ -74,13 +79,13 @@ export function createDonchianAdxTimeout(
   }
 
   return {
-    name: "BTC 15m Breakout — Donchian ADX Timeout",
+    name: "BTC 15m Breakout — Range ADX ATR-Trail",
     params,
     requiredTimeframes: ["1h", "4h"],
     requiredWarmup: { source: 50, "1h": 15, "4h": 30 },
 
     init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
-      dcCache = donchian(candles, params.donchianPeriod.value);
+      dcCache = donchian(candles, params.rangePeriod.value);
       volSmaCache = sma(candles.map(c => c.v), 20);
       htf1hCandles = higherTimeframes["1h"] ?? [];
       htf4hCandles = higherTimeframes["4h"] ?? [];
@@ -90,14 +95,14 @@ export function createDonchianAdxTimeout(
 
     onCandle(ctx: StrategyContext): Signal | null {
       const { candles, index, currentCandle, higherTimeframes } = ctx;
-      const period = params.donchianPeriod.value;
-      if (index < period + 20) return null;
+      const period = params.rangePeriod.value;
+      if (index < period + 5) return null;
 
-      // Donchian Channel on 15m (previous bar's levels = breakout reference)
+      // Range levels from previous bar (candle close confirmation — Rule 4)
       const dc = dcCache ?? donchian(candles.slice(0, index + 1), period);
-      const dcUpper = dc.upper[index - 1];
-      const dcLower = dc.lower[index - 1];
-      if (isNaN(dcUpper) || isNaN(dcLower)) return null;
+      const rangeHigh = dc.upper[index - 1];
+      const rangeLow = dc.lower[index - 1];
+      if (isNaN(rangeHigh) || isNaN(rangeLow)) return null;
 
       // 1H ATR — only completed bars (anti-repaint)
       const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
@@ -115,7 +120,7 @@ export function createDonchianAdxTimeout(
 
       const adxThresh = params.adxThreshold.value;
 
-      // Volume SMA(20)
+      // Volume SMA(20) — Rule 3
       const volSma = volSmaCache ?? sma(candles.slice(0, index + 1).map(c => c.v), 20);
       const volAvg20 = volSma[index];
       const volMult = params.volMultiplier.value;
@@ -126,16 +131,16 @@ export function createDonchianAdxTimeout(
       const stopDist = atr1h * stopMult;
 
       // Diagnostics
-      ctx.indicator("dcUpper", dcUpper);
-      ctx.indicator("dcLower", dcLower);
+      ctx.indicator("rangeHigh", rangeHigh);
+      ctx.indicator("rangeLow", rangeLow);
       ctx.indicator("close", close);
       ctx.indicator("atr1h", atr1h);
       ctx.indicator("adx4h", adx4h);
       ctx.indicator("volAvg20", volAvg20);
 
-      // LONG: close above Donchian upper + low ADX (consolidation) + volume spike
-      const longBreakout = ctx.track("L:close_above_dc", close > dcUpper, close, dcUpper);
-      const longAdx = ctx.track("L:adx_consolidation", adx4h < adxThresh, adx4h, adxThresh);
+      // LONG: close above range high + ADX trending + volume spike
+      const longBreakout = ctx.track("L:close_above_range", close > rangeHigh, close, rangeHigh);
+      const longAdx = ctx.track("L:adx_trending", adx4h > adxThresh, adx4h, adxThresh);
       const longVol = ctx.track("L:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
 
       if (longBreakout && longAdx && longVol) {
@@ -144,13 +149,13 @@ export function createDonchianAdxTimeout(
           entryPrice: null,
           stopLoss: close - stopDist,
           takeProfits: [],
-          comment: "Donchian breakout long (ADX consolidation)",
+          comment: "Range breakout long (ADX trending)",
         };
       }
 
-      // SHORT: close below Donchian lower + low ADX (consolidation) + volume spike
-      const shortBreakout = ctx.track("S:close_below_dc", close < dcLower, close, dcLower);
-      const shortAdx = ctx.track("S:adx_consolidation", adx4h < adxThresh, adx4h, adxThresh);
+      // SHORT: close below range low + ADX trending + volume spike
+      const shortBreakout = ctx.track("S:close_below_range", close < rangeLow, close, rangeLow);
+      const shortAdx = ctx.track("S:adx_trending", adx4h > adxThresh, adx4h, adxThresh);
       const shortVol = ctx.track("S:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
 
       if (shortBreakout && shortAdx && shortVol) {
@@ -159,7 +164,7 @@ export function createDonchianAdxTimeout(
           entryPrice: null,
           stopLoss: close + stopDist,
           takeProfits: [],
-          comment: "Donchian breakout short (ADX consolidation)",
+          comment: "Range breakout short (ADX trending)",
         };
       }
 
@@ -167,16 +172,72 @@ export function createDonchianAdxTimeout(
     },
 
     shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
-      const { index, positionDirection, positionEntryBarIndex } = ctx;
-      if (!positionDirection || positionEntryBarIndex === null) return null;
+      const { candles, index, currentCandle, positionDirection, positionEntryPrice, positionEntryBarIndex, higherTimeframes } = ctx;
+      if (!positionDirection || positionEntryBarIndex === null || positionEntryPrice === null) return null;
 
-      // Timeout first (mandatory)
+      // Timeout first (mandatory — Rule 5)
       const barsInTrade = index - positionEntryBarIndex;
       if (barsInTrade >= params.timeoutBars.value) {
         return { exit: true, comment: "Timeout" };
       }
 
+      // ATR trailing stop
+      const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
+      if (!htf1hRef || htf1hRef.length < 15) return null;
+      const htfAtr = htfAtrCache1h ?? atr(htf1hRef, 14);
+      const atr1h = findAtr1h(currentCandle.t, htf1hRef, htfAtr);
+      if (isNaN(atr1h)) return null;
+
+      const trailDist = params.atrTrailMult.value * atr1h;
+
+      if (positionDirection === "long") {
+        let highestHigh = positionEntryPrice;
+        for (let k = positionEntryBarIndex; k <= index; k++) {
+          if (candles[k].h > highestHigh) highestHigh = candles[k].h;
+        }
+        const trailStop = highestHigh - trailDist;
+        if (currentCandle.c < trailStop) {
+          return { exit: true, comment: "ATR Trail" };
+        }
+      } else {
+        let lowestLow = positionEntryPrice;
+        for (let k = positionEntryBarIndex; k <= index; k++) {
+          if (candles[k].l < lowestLow) lowestLow = candles[k].l;
+        }
+        const trailStop = lowestLow + trailDist;
+        if (currentCandle.c > trailStop) {
+          return { exit: true, comment: "ATR Trail" };
+        }
+      }
+
       return null;
+    },
+
+    getExitLevel(ctx: StrategyContext): number | null {
+      const { candles, index, currentCandle, positionDirection, positionEntryPrice, positionEntryBarIndex, higherTimeframes } = ctx;
+      if (!positionDirection || positionEntryBarIndex === null || positionEntryPrice === null) return null;
+
+      const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
+      if (!htf1hRef || htf1hRef.length < 15) return null;
+      const htfAtr = htfAtrCache1h ?? atr(htf1hRef, 14);
+      const atr1h = findAtr1h(currentCandle.t, htf1hRef, htfAtr);
+      if (isNaN(atr1h)) return null;
+
+      const trailDist = params.atrTrailMult.value * atr1h;
+
+      if (positionDirection === "long") {
+        let highestHigh = positionEntryPrice;
+        for (let k = positionEntryBarIndex; k <= index; k++) {
+          if (candles[k].h > highestHigh) highestHigh = candles[k].h;
+        }
+        return highestHigh - trailDist;
+      } else {
+        let lowestLow = positionEntryPrice;
+        for (let k = positionEntryBarIndex; k <= index; k++) {
+          if (candles[k].l < lowestLow) lowestLow = candles[k].l;
+        }
+        return lowestLow + trailDist;
+      }
     },
 
     computeLevels(ctx: StrategyContext, direction: "long" | "short") {
