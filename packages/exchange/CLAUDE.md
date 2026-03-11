@@ -83,22 +83,22 @@ src/
 - `proposeSignal()` buffers signals for 50ms to deconflict same-bar, same-coin signals: same direction → highest priority wins; opposite direction → both rejected
 - Module types and priority: breakout(4) > pullback(3) > mean-reversion(2) > trend-following(1)
 - Heartbeat in daemon.ts (30s interval) evaluates `shouldForceClose()` to force close positions between candle closes
-- Gate 6: Squeeze — `reportSqueeze(coin, active, barTs)` fed by StrategyRunner (computes BB(20,2)/KC(20,20,1.5)/detectSqueeze(4) on each candle close), GLOBAL gate (any coin squeezed → all entries blocked), dedup by barTs per coin, day reset does NOT clear squeeze state, logs `squeeze_detected`/`squeeze_released` transitions
+- Gate 6: Squeeze — `reportSqueeze(coin, active, barTs)` fed by StrategyRunner (computes BB(20,2)/KC(20,20,1.5)/detectSqueeze(4) on each candle close), GLOBAL gate (any coin squeezed → all entries blocked), dedup by barTs per coin, day reset does NOT clear squeeze state, logs `squeeze_detected`/`squeeze_released` transitions. **Only 15m runners report squeeze** (KB §7.1) — non-15m runners (e.g. M4 4H) skip `reportSqueezeState()` entirely
 - Decision callback persists every decision to EventLog NDJSON (type: `orchestrator_*`)
 - Orchestrator is **optional** in `StrategyRunnerDeps` → existing tests don't break
 - `seedDailyPnl(pnl)` initializes orchestrator from SQLite on daemon startup — prevents stale dailyPnl after restarts
 - `handleSignal` sanity-checks `dailyLossOverride` against SQL: if divergence > 2× maxDailyLoss, falls back to DB value (prevents phantom blocks from corrupted in-memory state)
 
 ## GTC/ALO Maker Entries (PendingEntryBook)
-- Strategies with `entryPrice !== null` (M1 Donchian, M2 Keltner) use GTC ALO (post-only) limit orders instead of IOC
+- Entry order type is determined by `moduleType`: breakout/trend-following → always IOC (momentum), mean-reversion/pullback → GTC when entryPrice set. Without moduleType (API signals), falls back to entryPrice-based logic
 - ALO = Add Liquidity Only (`{ limit: { tif: "Alo" } }`): rejected if it would cross spread, guarantees maker fee (0.015% vs 0.045% taker)
 - `PendingEntryBook`: in-memory Map<coin, PendingEntry> tracking resting GTC orders awaiting fill
-- Three fill detection paths: (a) WS onFill real-time via `processPendingFill`, (b) reconcile-loop fallback (HL position exists but no local position), (c) strategy-runner timeout (2 bars expiry)
+- Three fill detection paths: (a) WS onFill real-time via `processPendingFill`, (b) reconcile-loop fallback (HL position exists but no local position), (c) strategy-runner timeout (2 × interval dynamic expiry via `intervalToMs`)
 - `handle-signal.ts` bifurcates: `entryType === "ioc"` → immediate IOC flow, `entryType === "gtc"` → ALO placement → resting or immediate fill
 - `place-protection-orders.ts`: extracted SL/TP logic shared by both IOC and GTC flows
 - Guard: `pendingEntryBook.has(coin)` blocks new signals while a GTC order is resting
 - Daily PnL is centralized: all runners report via `recordClose()`, any runner reads via `getDailyPnl()`
-- `moduleType` field in CoinStrategySchema (optional) overrides the fallback map in daemon.ts
+- `moduleType` field in CoinStrategySchema (required) flows from config → daemon → StrategyRunner → handleSignal → signalToIntent. `ModuleType` canonical type lives in `types/config.ts`
 
 ## Funding rate tracking
 - HL `getClearinghouseState()` (already called by reconcile loop) returns `cumFunding.sinceOpen` — cumulative USDC funding since position open (negative=paid, positive=received). Zero extra API calls needed

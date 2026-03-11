@@ -359,6 +359,7 @@ async function main() {
         signalHandlerDeps,
         eventLog,
         orchestrator,
+        moduleType: strat.moduleType,
         onStaleData: ({ lastCandleAt, silentMs }) => {
           const lastAt = lastCandleAt > 0 ? new Date(lastCandleAt).toISOString() : "never";
           const silentMin = Math.round(silentMs / 60_000);

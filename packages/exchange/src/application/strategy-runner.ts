@@ -12,6 +12,7 @@ import type { CandleStreamer } from "../adapters/candle-streamer.js";
 import type { ExchangeConfig } from "../types/config.js";
 import type { PositionBook } from "../domain/position-book.js";
 import { handleSignal, type SignalHandlerDeps } from "./handle-signal.js";
+import type { ModuleType } from "../types/config.js";
 import type { EventLog } from "../adapters/event-log.js";
 import type { Orchestrator } from "../domain/orchestrator.js";
 import { truncatePrice } from "@breaker/kit";
@@ -33,6 +34,7 @@ export interface StrategyRunnerDeps {
   signalHandlerDeps: SignalHandlerDeps;
   eventLog: EventLog;
   orchestrator?: Orchestrator;
+  moduleType?: ModuleType;
   onNewCandle?: (candle: Candle) => void;
   onStaleData?: (info: { lastCandleAt: number; silentMs: number }) => void;
 }
@@ -657,6 +659,8 @@ export class StrategyRunner {
         autoTradingEnabled: this.deps.autoTradingEnabled,
         strategyName: this.deps.strategyConfigName,
         dailyLossOverride: this.deps.orchestrator?.getDailyPnl(),
+        moduleType: this.deps.moduleType,
+        interval: this.deps.interval,
       },
       this.deps.signalHandlerDeps,
     );
@@ -683,6 +687,8 @@ export class StrategyRunner {
 
   private reportSqueezeState(candles: Candle[], barTs: number): void {
     if (!this.deps.orchestrator) return;
+    // KB §7.1: squeeze detection uses 15m candles only
+    if (this.deps.interval !== "15m") return;
     if (candles.length < 20) return;
 
     const closes = candles.map((c) => c.c);

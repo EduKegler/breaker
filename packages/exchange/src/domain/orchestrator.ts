@@ -1,4 +1,5 @@
-export type ModuleType = "breakout" | "pullback" | "mean-reversion" | "trend-following";
+export type { ModuleType } from "../types/config.js";
+import type { ModuleType } from "../types/config.js";
 
 export interface OrchestratorConfig {
   maxDailyLossR: number;

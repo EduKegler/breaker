@@ -95,6 +95,82 @@ describe("signalToIntent", () => {
     expect(intent.notionalUsd).toBe(0);
   });
 
+  it("uses ioc for breakout moduleType even with entryPrice", () => {
+    const signal: Signal = {
+      direction: "long",
+      entryPrice: 100,
+      stopLoss: 95,
+      takeProfits: [],
+      comment: "Donchian breakout",
+    };
+
+    const intent = signalToIntent(signal, 100, "BTC", sizing, "breakout");
+
+    expect(intent.entryType).toBe("ioc");
+  });
+
+  it("uses ioc for trend-following moduleType even with entryPrice", () => {
+    const signal: Signal = {
+      direction: "long",
+      entryPrice: 100,
+      stopLoss: 95,
+      takeProfits: [],
+      comment: "Trend entry",
+    };
+
+    const intent = signalToIntent(signal, 100, "BTC", sizing, "trend-following");
+
+    expect(intent.entryType).toBe("ioc");
+  });
+
+  it("uses gtc for mean-reversion moduleType with entryPrice", () => {
+    const signal: Signal = {
+      direction: "long",
+      entryPrice: 100,
+      stopLoss: 95,
+      takeProfits: [],
+      comment: "Keltner entry",
+    };
+
+    const intent = signalToIntent(signal, 100, "BTC", sizing, "mean-reversion");
+
+    expect(intent.entryType).toBe("gtc");
+  });
+
+  it("uses gtc for pullback moduleType with entryPrice", () => {
+    const signal: Signal = {
+      direction: "long",
+      entryPrice: 100,
+      stopLoss: 95,
+      takeProfits: [],
+      comment: "Pullback entry",
+    };
+
+    const intent = signalToIntent(signal, 100, "BTC", sizing, "pullback");
+
+    expect(intent.entryType).toBe("gtc");
+  });
+
+  it("falls back to entryPrice-based logic when moduleType is undefined", () => {
+    const withEntry: Signal = {
+      direction: "long",
+      entryPrice: 100,
+      stopLoss: 95,
+      takeProfits: [],
+      comment: "With entry",
+    };
+    const withoutEntry: Signal = {
+      direction: "long",
+      entryPrice: null,
+      stopLoss: 90,
+      takeProfits: [],
+      comment: "Without entry",
+    };
+
+    expect(signalToIntent(withEntry, 100, "BTC", sizing).entryType).toBe("gtc");
+    expect(signalToIntent(withoutEntry, 95, "BTC", sizing).entryType).toBe("ioc");
+  });
+
   it("returns zero size when stopDist is zero in risk mode", () => {
     const signal: Signal = {
       direction: "long",

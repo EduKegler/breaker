@@ -1669,6 +1669,34 @@ describe("StrategyRunner", () => {
 
       expect(reportSqueezeSpy).not.toHaveBeenCalled();
     });
+
+    it("does not call reportSqueeze when interval is not 15m (KB §7.1)", async () => {
+      const candles = Array.from({ length: 25 }, (_, i) => makeCandle(i));
+      const streamer = createMockStreamer(candles);
+      const strategy = createTestStrategy();
+      const deps = createDeps(strategy, streamer);
+      deps.interval = "4h";
+
+      const orch = new Orchestrator({
+        maxDailyLossR: 2,
+        riskPerTradeUsd: 10,
+        maxTradesPerDay: 5,
+        volSpikeThresholdPct: 100,
+        volSpikeLookbackBars: 4,
+        volSpikeCooldownBars: 4,
+      });
+      orch.registerModule("BTC:test-strat", "breakout");
+      const reportSqueezeSpy = vi.spyOn(orch, "reportSqueeze");
+      deps.orchestrator = orch;
+
+      const runner = new StrategyRunner(deps);
+      await runner.warmup();
+
+      streamer.addCandle(makeCandle(25));
+      await runner.tick();
+
+      expect(reportSqueezeSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe("off-by-one guard (candle N+1 already in array)", () => {

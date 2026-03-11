@@ -52,3 +52,4 @@ export type Sizing = z.infer<typeof SizingSchema>;
 export type CoinStrategy = z.infer<typeof CoinStrategySchema>;
 export type CoinConfig = z.infer<typeof CoinConfigSchema>;
 export type ExchangeConfig = z.infer<typeof ExchangeConfigSchema>;
+export type ModuleType = CoinStrategy["moduleType"];

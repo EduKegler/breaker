@@ -7,5 +7,5 @@ export interface ExecutionConfig {
 export const DEFAULT_EXECUTION: ExecutionConfig = {
   slippageBps: 10,
   commissionPct: 0.045,
-  fundingRate8h: 0.0004,
+  fundingRate8h: 0.0006,
 };

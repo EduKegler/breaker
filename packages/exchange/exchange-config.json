@@ -25,7 +25,7 @@
     },
     {
       "coin": "SOL",
-      "leverage": 5,
+      "leverage": 3,
       "strategies": [
         {
           "name": "ema-pullback",
@@ -45,7 +45,7 @@
     "maxOpenPositions": 1,
     "maxDailyLossR": 2,
     "maxTradesPerDay": 5,
-    "cooldownBars": 4,
+    "cooldownBars": 2,
     "volSpikeThresholdPct": 1.5,
     "volSpikeLookbackBars": 4,
     "volSpikeCooldownBars": 4

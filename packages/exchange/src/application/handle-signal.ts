@@ -1,5 +1,6 @@
 import type { Signal } from "@breaker/backtest";
 import { signalToIntent, type OrderIntent } from "../domain/signal-to-intent.js";
+import type { ModuleType } from "../types/config.js";
 import { checkRisk, type RiskCheckInput } from "../domain/check-risk.js";
 import { placeProtectionOrders } from "./place-protection-orders.js";
 import type { ExchangeConfig } from "../types/config.js";
@@ -9,6 +10,7 @@ import type { EventLog } from "../adapters/event-log.js";
 import type { AlertsClient } from "../types/alerts-client.js";
 import type { PositionBook } from "../domain/position-book.js";
 import type { PendingEntryBook } from "../domain/pending-entry-book.js";
+import { intervalToMs } from "@breaker/backtest";
 import { randomUUID } from "node:crypto";
 import { truncateSize, truncatePrice } from "@breaker/kit";
 import { logger } from "../lib/logger.js";
@@ -38,6 +40,10 @@ export interface HandleSignalInput {
   /** When provided, overrides store.getTodayRealizedPnl() for the risk check.
    *  Strategy-runner passes the orchestrator's in-memory daily PnL here. */
   dailyLossOverride?: number;
+  /** Module type determines entry order type: breakout/trend-following → IOC, others → GTC when entryPrice set */
+  moduleType?: ModuleType;
+  /** Candle interval for this strategy — used for dynamic GTC expiry (2 × interval) */
+  interval?: import("@breaker/backtest").CandleInterval;
 }
 
 interface HandleSignalResult {
@@ -135,7 +141,7 @@ async function handleSignalInner(
 
   // Convert signal to order intent, then truncate to exchange precision.
   // This ensures values stored in positionBook/SQLite match what the exchange receives.
-  const intent = signalToIntent(signal, currentPrice, coin, config.sizing);
+  const intent = signalToIntent(signal, currentPrice, coin, config.sizing, input.moduleType);
   const szDecimals = hlClient.getSzDecimals(coin);
   intent.size = truncateSize(intent.size, szDecimals);
   intent.entryPrice = truncatePrice(intent.entryPrice);
@@ -320,8 +326,7 @@ async function handleGtcEntry(
     data: { signalId, alertId, coin, hlOrderId: gtcResult.orderId, price: intent.entryPrice, size: intent.size },
   });
 
-  // 2 bars × 15min = 30min timeout
-  const expiresAt = Date.now() + 30 * 60 * 1000;
+  const expiresAt = Date.now() + 2 * intervalToMs(input.interval ?? "15m");
 
   pendingEntryBook?.add({
     coin,

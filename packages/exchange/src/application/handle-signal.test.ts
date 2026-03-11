@@ -852,6 +852,69 @@ describe("handleSignal — GTC path", () => {
     expect(deps.hlClient.placeStopOrder).not.toHaveBeenCalled();
   });
 
+  it("sets GTC expiry to 2 × interval (default 15m = 30min)", async () => {
+    const { PendingEntryBook } = await import("../domain/pending-entry-book.js");
+    const pendingEntryBook = new PendingEntryBook();
+    deps.pendingEntryBook = pendingEntryBook;
+
+    (deps.hlClient.placeGtcEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "201", status: "resting", filledSize: 0, avgPrice: 0,
+    });
+
+    const before = Date.now();
+    await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-expiry-15m" }),
+      deps,
+    );
+
+    const pending = pendingEntryBook.get("BTC")!;
+    // 2 × 15min = 30min = 1_800_000ms
+    expect(pending.expiresAt).toBeGreaterThanOrEqual(before + 1_800_000);
+    expect(pending.expiresAt).toBeLessThanOrEqual(before + 1_800_000 + 100);
+  });
+
+  it("sets GTC expiry to 2 × 4h = 8h when interval is 4h", async () => {
+    const { PendingEntryBook } = await import("../domain/pending-entry-book.js");
+    const pendingEntryBook = new PendingEntryBook();
+    deps.pendingEntryBook = pendingEntryBook;
+
+    (deps.hlClient.placeGtcEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "202", status: "resting", filledSize: 0, avgPrice: 0,
+    });
+
+    const before = Date.now();
+    await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-expiry-4h", interval: "4h" }),
+      deps,
+    );
+
+    const pending = pendingEntryBook.get("BTC")!;
+    // 2 × 4h = 8h = 28_800_000ms
+    expect(pending.expiresAt).toBeGreaterThanOrEqual(before + 28_800_000);
+    expect(pending.expiresAt).toBeLessThanOrEqual(before + 28_800_000 + 100);
+  });
+
+  it("sets GTC expiry to 2 × 5m = 10m when interval is 5m", async () => {
+    const { PendingEntryBook } = await import("../domain/pending-entry-book.js");
+    const pendingEntryBook = new PendingEntryBook();
+    deps.pendingEntryBook = pendingEntryBook;
+
+    (deps.hlClient.placeGtcEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "203", status: "resting", filledSize: 0, avgPrice: 0,
+    });
+
+    const before = Date.now();
+    await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-expiry-5m", interval: "5m" }),
+      deps,
+    );
+
+    const pending = pendingEntryBook.get("BTC")!;
+    // 2 × 5m = 10m = 600_000ms
+    expect(pending.expiresAt).toBeGreaterThanOrEqual(before + 600_000);
+    expect(pending.expiresAt).toBeLessThanOrEqual(before + 600_000 + 100);
+  });
+
   it("blocks new signal when pending GTC exists for same coin", async () => {
     const { PendingEntryBook } = await import("../domain/pending-entry-book.js");
     const pendingEntryBook = new PendingEntryBook();
@@ -873,6 +936,44 @@ describe("handleSignal — GTC path", () => {
 
     expect(second.success).toBe(false);
     expect(second.reason).toBe("Position already open/pending");
+  });
+
+  it("uses IOC path for breakout moduleType even with entryPrice", async () => {
+    const result = await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-breakout-001", moduleType: "breakout" }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    // Should use IOC path, not GTC
+    expect(deps.hlClient.placeEntryOrder).toHaveBeenCalledOnce();
+    expect(deps.hlClient.placeGtcEntryOrder).not.toHaveBeenCalled();
+  });
+
+  it("uses IOC path for trend-following moduleType even with entryPrice", async () => {
+    const result = await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-tf-001", moduleType: "trend-following" }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    expect(deps.hlClient.placeEntryOrder).toHaveBeenCalledOnce();
+    expect(deps.hlClient.placeGtcEntryOrder).not.toHaveBeenCalled();
+  });
+
+  it("uses GTC path for mean-reversion moduleType with entryPrice", async () => {
+    (deps.hlClient.placeGtcEntryOrder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      orderId: "42", status: "filled", filledSize: 0.01, avgPrice: 60000,
+    });
+
+    const result = await handleSignal(
+      createInput({ signal: gtcSignal, currentPrice: 60000, alertId: "gtc-mr-001", moduleType: "mean-reversion" }),
+      deps,
+    );
+
+    expect(result.success).toBe(true);
+    expect(deps.hlClient.placeGtcEntryOrder).toHaveBeenCalledOnce();
+    expect(deps.hlClient.placeEntryOrder).not.toHaveBeenCalled();
   });
 
   it("returns failure when placeGtcEntryOrder throws", async () => {

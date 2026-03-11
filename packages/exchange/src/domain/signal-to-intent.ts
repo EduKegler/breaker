@@ -1,5 +1,5 @@
 import type { Signal } from "@breaker/backtest";
-import type { Sizing } from "../types/config.js";
+import type { Sizing, ModuleType } from "../types/config.js";
 
 export interface OrderIntent {
   coin: string;
@@ -19,6 +19,7 @@ export function signalToIntent(
   currentPrice: number,
   coin: string,
   sizing: Sizing,
+  moduleType?: ModuleType,
 ): OrderIntent {
   const entryPrice = signal.entryPrice ?? currentPrice;
   const stopDist = Math.abs(entryPrice - signal.stopLoss);
@@ -43,6 +44,9 @@ export function signalToIntent(
     direction: signal.direction,
     notionalUsd,
     comment: signal.comment,
-    entryType: signal.entryPrice !== null ? "gtc" : "ioc",
+    entryType:
+      moduleType === "breakout" || moduleType === "trend-following"
+        ? "ioc"
+        : signal.entryPrice !== null ? "gtc" : "ioc",
   };
 }

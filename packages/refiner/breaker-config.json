@@ -90,14 +90,14 @@
           "coin": "BTC",
           "dataSource": "binance",
           "interval": "15m",
-          "strategyFactory": "createDonchianAdx",
+          "strategyFactory": "createDonchianEmaTimeout",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
         },
         "mean-reversion": {
           "coin": "BTC",
           "dataSource": "binance",
           "interval": "15m",
-          "strategyFactory": "createKeltnerRsi2",
+          "strategyFactory": "createKeltnerRsi2AdxLowMidline",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
         },
         "pullback": {
@@ -106,6 +106,13 @@
           "interval": "15m",
           "strategyFactory": "createEmaFibRsiResetSwing",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
+        },
+        "trend-following": {
+          "coin": "BTC",
+          "dataSource": "binance",
+          "interval": "4h",
+          "strategyFactory": "createSupertrendAdxSupertrend",
+          "dateRange": { "start": "2024-01-01", "end": "2026-02-24" }
         }
       }
     },
@@ -116,7 +123,7 @@
           "coin": "SOL",
           "dataSource": "binance",
           "interval": "15m",
-          "strategyFactory": "createDonchianAdx",
+          "strategyFactory": "createDonchianEmaTimeout",
           "dateRange": { "start": "2025-05-24", "end": "2026-02-24" }
         }
       }
