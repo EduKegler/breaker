@@ -7,3 +7,10 @@ describe("switchToNewVariant", () => {
     expect(typeof mod.switchToNewVariant).toBe("function");
   });
 });
+
+describe("switchToExistingVariant", () => {
+  it("exports switchToExistingVariant function", async () => {
+    const mod = await import("./variant-switch.js");
+    expect(typeof mod.switchToExistingVariant).toBe("function");
+  });
+});

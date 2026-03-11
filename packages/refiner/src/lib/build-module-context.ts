@@ -80,8 +80,8 @@ export interface FailureContext {
 export const CANDIDATE_SLUGS: Record<string, string> = {
   // ── M1 Breakout: Direction Constraint ──
   "Both": "both",
-  "Long only": "long-only",
-  "Short only": "short-only",
+  "Long only": "long",
+  "Short only": "short",
   // ── M1 Breakout: Entry Signal ──
   "Donchian Channel": "donchian",
   "Bollinger Band squeeze release": "squeeze",
@@ -94,6 +94,7 @@ export const CANDIDATE_SLUGS: Record<string, string> = {
   "Retest entry": "retest",
   // ── M1 Breakout: Regime Filter ──
   "EMA direction": "ema",
+  "EMA direction + slope": "ema-slope",
   "Daily EMA": "ema",
   "ADX threshold": "adx",
   "4H consolidation": "consolidation",
@@ -284,7 +285,7 @@ export function extractFixedRules(kbContent: string, sectionNumber: number): str
  */
 const MODULE_SLOT_HEADERS: Record<string, { slotName: string; header: string; optional?: boolean }[]> = {
   M1: [
-    { slotName: "Direction",       header: "Direction constraint candidates", optional: true },
+    { slotName: "Direction",       header: "Direction constraint candidates" },
     { slotName: "Entry Signal",    header: "Entry signal candidates" },
     { slotName: "Entry Timing",    header: "Entry timing candidates", optional: true },
     { slotName: "Regime Filter",   header: "Regime filter candidates" },
@@ -496,6 +497,7 @@ export function extractComponentCatalog(
  */
 const STARTING_COMPONENTS: Record<string, Record<string, string>> = {
   M1: {
+    "Direction": "both",
     "Entry Signal": "donchian",
     "Regime Filter": "ema",
     "Exit": "timeout",

@@ -1489,6 +1489,157 @@ describe("P3.2: failed restructure diagnosis", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Repeat feedback in prompt
+// ---------------------------------------------------------------------------
+
+describe("buildOptimizePrompt: rejectedRepeats", () => {
+  function makeModuleContext(): ModuleContext {
+    return {
+      profile: "breakout", moduleId: "M1", moduleName: "Breakout",
+      fixedRules: "1. test rule", restructureLocks: "", varCap: 8,
+      stoppingCriteria: "- Trades >= 50", signalTF: "15m", regimeTF: "4H",
+      catalog: { slots: [] },
+    };
+  }
+
+  function makeMetrics(): Metrics {
+    return {
+      totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: 5,
+      winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5,
+    };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 5, maxIter: 20, globalIter: 10,
+    paramHistoryPath: "/fake/ph.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: makeModuleContext(),
+  };
+
+  it("includes repeat warning when rejectedRepeats is non-empty", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      rejectedRepeats: [
+        "adxThreshold 25→20 (historical repeat)",
+        "adxThreshold 25→20 (historical repeat)",
+      ],
+    });
+    expect(prompt).toContain("REPEAT ALERT");
+    expect(prompt).toContain("adxThreshold 25→20");
+    expect(prompt).toContain("MUST try different");
+  });
+
+  it("does NOT include repeat warning when rejectedRepeats is empty", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      rejectedRepeats: [],
+    });
+    expect(prompt).not.toContain("REPEAT ALERT");
+  });
+
+  it("does NOT include repeat warning when rejectedRepeats is undefined", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+    });
+    expect(prompt).not.toContain("REPEAT ALERT");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Validation warnings feedback in prompt
+// ---------------------------------------------------------------------------
+
+describe("buildOptimizePrompt: lastValidationWarnings", () => {
+  function makeModuleContext(): ModuleContext {
+    return {
+      profile: "breakout", moduleId: "M1", moduleName: "Breakout",
+      fixedRules: "1. test rule", restructureLocks: "", varCap: 8,
+      stoppingCriteria: "- Trades >= 50", signalTF: "15m", regimeTF: "4H",
+      catalog: { slots: [] },
+    };
+  }
+
+  function makeMetrics(): Metrics {
+    return {
+      totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: 5,
+      winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5,
+    };
+  }
+
+  const baseOpts = {
+    strategySourcePath: "/fake/strategy.ts",
+    strategyParams: {} as Record<string, StrategyParam>,
+    paramOverrides: {},
+    criteria: { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: undefined, minAvgR: 0.15, maxFreeVariables: 8, designChecklist: undefined, coreParameters: undefined },
+    asset: "BTC",
+    phase: "refine" as const,
+    iter: 5, maxIter: 20, globalIter: 10,
+    paramHistoryPath: "/fake/ph.json",
+    artifactsDir: "/fake/artifacts",
+    moduleContext: makeModuleContext(),
+  };
+
+  it("includes validation warnings when lastValidationWarnings is non-empty", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      lastValidationWarnings: [
+        "VAR CAP EXCEEDED: 9 vars (cap: 8). 1 new params introduced. Some may need to be dropped.",
+      ],
+    });
+    expect(prompt).toContain("VALIDATION WARNINGS");
+    expect(prompt).toContain("VAR CAP EXCEEDED");
+    expect(prompt).toContain("9 vars (cap: 8)");
+  });
+
+  it("shows multiple warnings", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      lastValidationWarnings: [
+        "VAR CAP EXCEEDED: 9 vars (cap: 8). 1 new params introduced.",
+        'Clamped "atrStopMult": 1.0 below range min 2.0. Set to 2.0.',
+      ],
+    });
+    expect(prompt).toContain("VAR CAP EXCEEDED");
+    expect(prompt).toContain("Clamped");
+  });
+
+  it("does NOT include section when lastValidationWarnings is empty", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+      lastValidationWarnings: [],
+    });
+    expect(prompt).not.toContain("VALIDATION WARNINGS");
+  });
+
+  it("does NOT include section when lastValidationWarnings is undefined", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics(),
+      tradeAnalysis: null,
+    });
+    expect(prompt).not.toContain("VALIDATION WARNINGS");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // P4.1: paramCount in checkpoint
 // ---------------------------------------------------------------------------
 

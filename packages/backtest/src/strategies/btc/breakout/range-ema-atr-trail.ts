@@ -7,30 +7,35 @@ import { atr } from "../../../indicators/atr.js";
 const MS_1H = 3_600_000;
 const MS_1D = 86_400_000;
 
-interface RangeEmaTimeoutParams {
+interface RangeEmaAtrTrailParams {
   rangeLookback: StrategyParam;
   rangeAtrThreshold: StrategyParam;
   volMultiplier: StrategyParam;
   atrStopMult: StrategyParam;
+  atrTrailMult: StrategyParam;
   timeoutBars: StrategyParam;
 }
 
-const DEFAULT_PARAMS: RangeEmaTimeoutParams = {
+const DEFAULT_PARAMS: RangeEmaAtrTrailParams = {
   rangeLookback: {
     value: 15, min: 10, max: 40, step: 5, optimizable: true,
     description: "Bars to look back for range high/low definition",
   },
   rangeAtrThreshold: {
-    value: 3.0, min: 1.5, max: 4.0, step: 0.5, optimizable: true,
+    value: 3.0, min: 1.5, max: 6.0, step: 0.5, optimizable: true,
     description: "Max range width as multiple of ATR(14) 15m — below = consolidation",
   },
   volMultiplier: {
-    value: 2.75, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
+    value: 3, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
     description: "Volume spike threshold (X * SMA20 volume)",
   },
   atrStopMult: {
-    value: 4, min: 3.0, max: 6.0, step: 0.5, optimizable: true,
+    value: 4.0, min: 3.0, max: 6.0, step: 0.5, optimizable: true,
     description: "ATR(14) 1H initial stop multiplier (KB >= 3.0)",
+  },
+  atrTrailMult: {
+    value: 4.5, min: 2.0, max: 5.0, step: 0.5, optimizable: true,
+    description: "ATR(14) 1H trailing stop multiplier for exit",
   },
   timeoutBars: {
     value: 60, min: 24, max: 96, step: 4, optimizable: true,
@@ -38,12 +43,12 @@ const DEFAULT_PARAMS: RangeEmaTimeoutParams = {
   },
 };
 
-export function createRangeEmaTimeout(
-  paramOverrides?: Partial<Record<keyof RangeEmaTimeoutParams, number>>,
+export function createRangeEmaAtrTrail(
+  paramOverrides?: Partial<Record<keyof RangeEmaAtrTrailParams, number>>,
 ): Strategy {
   const params: Record<string, StrategyParam> = {};
   for (const [key, defaultParam] of Object.entries(DEFAULT_PARAMS)) {
-    const override = paramOverrides?.[key as keyof RangeEmaTimeoutParams];
+    const override = paramOverrides?.[key as keyof RangeEmaAtrTrailParams];
     params[key] = { ...defaultParam, value: override ?? defaultParam.value };
   }
 
@@ -73,7 +78,7 @@ export function createRangeEmaTimeout(
   }
 
   return {
-    name: "BTC 15m Breakout — Range EMA Timeout",
+    name: "BTC 15m Breakout — Range EMA ATR-Trail",
     params,
     requiredTimeframes: ["1h", "1d"],
     requiredWarmup: { source: 50, "1h": 15, "1d": 210 },
@@ -93,6 +98,8 @@ export function createRangeEmaTimeout(
       const { candles, index, currentCandle, higherTimeframes } = ctx;
       const lookback = Math.round(params.rangeLookback.value);
       if (index < lookback + 14) return null;
+
+      if (ctx.positionDirection) return null;
 
       // --- ATR(14, 15m) for range normalization ---
       const atr15mVal = atr15mCache ? atr15mCache[index] : NaN;
@@ -180,15 +187,74 @@ export function createRangeEmaTimeout(
     },
 
     shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
-      const { positionDirection, positionEntryBarIndex, index } = ctx;
-      if (!positionDirection || positionEntryBarIndex === null) return null;
+      const { candles, index, currentCandle, positionDirection, positionEntryPrice, positionEntryBarIndex, higherTimeframes } = ctx;
+      if (!positionDirection || positionEntryBarIndex === null || positionEntryPrice === null) return null;
 
+      // Timeout first (mandatory — Rule 5)
       const barsInTrade = index - positionEntryBarIndex;
       if (barsInTrade >= params.timeoutBars.value) {
         return { exit: true, comment: "Timeout" };
       }
 
+      // ATR trailing stop
+      const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
+      if (!htf1hRef || htf1hRef.length < 15) return null;
+      const htfAtr = htfAtrCache1h ?? atr(htf1hRef, 14);
+      const atr1hVal = findAtr1h(currentCandle.t, htf1hRef, htfAtr);
+      if (isNaN(atr1hVal)) return null;
+
+      const trailDist = params.atrTrailMult.value * atr1hVal;
+
+      if (positionDirection === "long") {
+        let highestHigh = positionEntryPrice;
+        for (let k = positionEntryBarIndex; k <= index; k++) {
+          if (candles[k].h > highestHigh) highestHigh = candles[k].h;
+        }
+        const trailStop = highestHigh - trailDist;
+        ctx.indicator("trailStop", trailStop);
+        if (currentCandle.c < trailStop) {
+          return { exit: true, comment: "ATR Trail" };
+        }
+      } else {
+        let lowestLow = positionEntryPrice;
+        for (let k = positionEntryBarIndex; k <= index; k++) {
+          if (candles[k].l < lowestLow) lowestLow = candles[k].l;
+        }
+        const trailStop = lowestLow + trailDist;
+        ctx.indicator("trailStop", trailStop);
+        if (currentCandle.c > trailStop) {
+          return { exit: true, comment: "ATR Trail" };
+        }
+      }
+
       return null;
+    },
+
+    getExitLevel(ctx: StrategyContext): number | null {
+      const { candles, index, currentCandle, positionDirection, positionEntryPrice, positionEntryBarIndex, higherTimeframes } = ctx;
+      if (!positionDirection || positionEntryBarIndex === null || positionEntryPrice === null) return null;
+
+      const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
+      if (!htf1hRef || htf1hRef.length < 15) return null;
+      const htfAtr = htfAtrCache1h ?? atr(htf1hRef, 14);
+      const atr1hVal = findAtr1h(currentCandle.t, htf1hRef, htfAtr);
+      if (isNaN(atr1hVal)) return null;
+
+      const trailDist = params.atrTrailMult.value * atr1hVal;
+
+      if (positionDirection === "long") {
+        let highestHigh = positionEntryPrice;
+        for (let k = positionEntryBarIndex; k <= index; k++) {
+          if (candles[k].h > highestHigh) highestHigh = candles[k].h;
+        }
+        return highestHigh - trailDist;
+      } else {
+        let lowestLow = positionEntryPrice;
+        for (let k = positionEntryBarIndex; k <= index; k++) {
+          if (candles[k].l < lowestLow) lowestLow = candles[k].l;
+        }
+        return lowestLow + trailDist;
+      }
     },
 
     computeLevels(ctx: StrategyContext, direction: "long" | "short") {

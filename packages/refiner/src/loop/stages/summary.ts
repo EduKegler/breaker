@@ -1,6 +1,35 @@
 import type { IterationMetric } from "../types.js";
 
 // ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface VariantSummaryInfo {
+  id: string;
+  status: "active" | "plateaued" | "complete" | "killed";
+  bestScore: number;
+  bestPnl: number;
+  iterationsUsed: number;
+  killReason?: string;
+  plateauReason?: string;
+}
+
+export interface SummaryOpts {
+  asset: string;
+  strategy?: string;
+  runId: string;
+  metrics: IterationMetric[];
+  variants: VariantSummaryInfo[];
+  durationMs: number;
+  totalIters: number;
+  globalBestVariantId: string;
+  globalBestScore: number;
+  globalBestPnl: number;
+  globalBestIter: number;
+  success: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -10,69 +39,76 @@ function fmtDuration(ms: number): string {
   return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 }
 
-/**
- * Build a WhatsApp-friendly session summary in markdown (plain text, no ANSI).
- */
-export function buildSessionSummary(opts: {
-  asset: string;
-  strategy?: string;
-  runId: string;
-  metrics: IterationMetric[];
-  durationMs: number;
-  success: boolean;
-  bestIter: number;
-  bestPnl: number;
-}): string {
-  const { asset, strategy, runId, metrics, durationMs, success, bestIter, bestPnl } = opts;
-  const durStr = fmtDuration(durationMs);
+function fmtRow(m: IterationMetric): string {
+  const dur = m.durationMs != null ? `  ${fmtDuration(m.durationMs)}` : "";
+  return `PnL $${m.pnl.toFixed(2)}  PF ${m.pf.toFixed(2)}  WR ${m.wr.toFixed(0)}%  DD ${Math.abs(m.dd).toFixed(1)}%  AvgR ${m.avgR.toFixed(2)}  T ${m.trades}${dur}`;
+}
+
+/** Group metrics by variantId, preserving insertion order. */
+function groupByVariant(metrics: IterationMetric[]): Map<string, IterationMetric[]> {
+  const map = new Map<string, IterationMetric[]>();
+  for (const m of metrics) {
+    const key = m.variantId ?? "_seed";
+    let arr = map.get(key);
+    if (!arr) { arr = []; map.set(key, arr); }
+    arr.push(m);
+  }
+  return map;
+}
+
+function statusSuffix(v: VariantSummaryInfo): string {
+  if (v.status === "killed") {
+    return v.killReason ? `killed (${v.killReason})` : "killed";
+  }
+  const parts: string[] = [v.status];
+  if (v.bestScore > 0) parts.push(`score ${v.bestScore.toFixed(1)}`);
+  return parts.join(", ");
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp summary (plain text, no ANSI)
+// ---------------------------------------------------------------------------
+
+export function buildSessionSummary(opts: SummaryOpts): string {
+  const {
+    asset, strategy, runId, metrics, variants, durationMs, totalIters,
+    globalBestVariantId, globalBestScore, globalBestPnl, globalBestIter,
+    success,
+  } = opts;
 
   const icon = success ? "\u{2705}" : "\u{26A0}\u{FE0F}";
   const status = success ? "CRITERIA PASSED" : "MAX ITER REACHED";
+  const label = strategy ? `${asset}/${strategy}` : asset;
 
   const lines: string[] = [];
-  const label = strategy ? `${asset}/${strategy}` : asset;
   lines.push(`${icon} *B.R.E.A.K.E.R. — ${label}*`);
-  lines.push(`Status: ${status}`);
+  lines.push(`${status}  |  ${fmtDuration(durationMs)}  |  ${totalIters} iters  |  ${variants.length} variants`);
+  lines.push(`BEST: ${globalBestVariantId}  |  score ${globalBestScore.toFixed(1)}  |  PnL $${globalBestPnl.toFixed(2)}`);
   lines.push(`Run: ${runId}`);
-  lines.push(`Duration: ${durStr}`);
   lines.push("");
 
-  // Best iteration
-  lines.push(`*Best iter:* ${bestIter} (PnL $${bestPnl.toFixed(2)})`);
-  lines.push("");
+  const grouped = groupByVariant(metrics);
 
-  // Evolution table
-  if (metrics.length > 0) {
-    lines.push("*PnL Evolution:*");
-    for (const m of metrics) {
+  for (const v of variants) {
+    const vMetrics = grouped.get(v.id) ?? [];
+    const suffix = statusSuffix(v);
+
+    if (v.status === "killed" && vMetrics.length === 0) {
+      lines.push(`-- ${v.id} -- ${suffix}`);
+      continue;
+    }
+
+    lines.push(`-- ${v.id} (${vMetrics.length} iters) -- ${suffix}`);
+    for (const m of vMetrics) {
       const arrow = m.verdict === "improved" ? "\u{2B06}\u{FE0F}" :
                     m.verdict === "degraded" ? "\u{2B07}\u{FE0F}" : "\u{27A1}\u{FE0F}";
-      let dur = "";
-      if (m.durationMs != null) {
-        const mins = Math.floor(m.durationMs / 60000);
-        const secs = Math.floor((m.durationMs % 60000) / 1000);
-        dur = mins > 0 ? ` ${mins}m ${secs}s` : ` ${secs}s`;
-      }
-      const summary = m.summary ? ` | ${m.summary}` : "";
-      lines.push(
-        `  ${arrow} iter${m.iter}: PnL=$${m.pnl.toFixed(2)} PF=${m.pf.toFixed(2)} WR=${m.wr.toFixed(1)}% DD=${Math.abs(m.dd).toFixed(1)}% T=${m.trades}${dur}${summary}`,
-      );
+      const star = m.iter === globalBestIter && v.id === globalBestVariantId ? "\u{2B50} " : "";
+      lines.push(`  ${star}${arrow} iter ${m.iter}  ${fmtRow(m)}`);
     }
     lines.push("");
   }
 
-  // Last metrics
-  const last = metrics[metrics.length - 1];
-  if (last) {
-    lines.push("*Last iter:*");
-    lines.push(`  PnL: $${last.pnl.toFixed(2)}`);
-    lines.push(`  PF: ${last.pf.toFixed(2)}`);
-    lines.push(`  DD: ${Math.abs(last.dd).toFixed(1)}%`);
-    lines.push(`  WR: ${last.wr.toFixed(1)}%`);
-    lines.push(`  Trades: ${last.trades}`);
-  }
-
-  return lines.join("\n");
+  return lines.join("\n").trimEnd();
 }
 
 // ---------------------------------------------------------------------------
@@ -89,22 +125,16 @@ const A = {
   cyn: "\x1b[36m",
 };
 
-/**
- * Build a colored console summary (ANSI). Not for WhatsApp/file.
- */
-export function buildConsoleSummary(opts: {
-  asset: string;
-  strategy?: string;
-  runId: string;
-  metrics: IterationMetric[];
-  durationMs: number;
-  success: boolean;
-  bestIter: number;
-  bestPnl: number;
-  bestScore: number;
-}): string {
-  const { asset, strategy, metrics, durationMs, success, bestIter, bestPnl, bestScore } = opts;
-  const durStr = fmtDuration(durationMs);
+// ---------------------------------------------------------------------------
+// Console summary (ANSI colored)
+// ---------------------------------------------------------------------------
+
+export function buildConsoleSummary(opts: SummaryOpts): string {
+  const {
+    asset, strategy, metrics, variants, durationMs, totalIters,
+    globalBestVariantId, globalBestScore, globalBestPnl, globalBestIter,
+    success,
+  } = opts;
   const label = strategy ? `${asset}/${strategy}` : asset;
 
   const statusColor = success ? A.grn : A.ylw;
@@ -115,48 +145,38 @@ export function buildConsoleSummary(opts: {
   // Header
   lines.push("");
   lines.push(`  ${A.b}B.R.E.A.K.E.R.${A.r} — ${label}`);
-  lines.push(`  ${statusColor}${statusText}${A.r}  ${A.d}│${A.r}  ${durStr}  ${A.d}│${A.r}  best iter ${bestIter}  ${A.d}│${A.r}  score ${A.b}${bestScore.toFixed(1)}${A.r}`);
-  lines.push(`  PnL ${A.b}$${bestPnl.toFixed(2)}${A.r}`);
+  lines.push(`  ${statusColor}${statusText}${A.r}  ${A.d}│${A.r}  ${fmtDuration(durationMs)}  ${A.d}│${A.r}  ${totalIters} iters  ${A.d}│${A.r}  ${variants.length} variants`);
+  lines.push(`  BEST: ${A.b}${globalBestVariantId}${A.r}  ${A.d}│${A.r}  score ${A.b}${globalBestScore.toFixed(1)}${A.r}  ${A.d}│${A.r}  PnL ${A.b}$${globalBestPnl.toFixed(2)}${A.r}`);
 
   if (metrics.length === 0) return lines.join("\n");
 
-  // Find best/worst PnL indices
-  let bestIdx = 0;
-  let worstIdx = 0;
-  for (let i = 0; i < metrics.length; i++) {
-    if (metrics[i].pnl > metrics[bestIdx].pnl) bestIdx = i;
-    if (metrics[i].pnl < metrics[worstIdx].pnl) worstIdx = i;
-  }
+  const grouped = groupByVariant(metrics);
 
-  lines.push("");
+  for (const v of variants) {
+    const vMetrics = grouped.get(v.id) ?? [];
+    const suffix = statusSuffix(v);
 
-  for (let i = 0; i < metrics.length; i++) {
-    const m = metrics[i];
+    lines.push("");
 
-    // Row color: green for best, red for worst, dim for the rest
-    let color: string;
-    if (bestIdx === worstIdx) {
-      color = A.d;
-    } else if (i === bestIdx) {
-      color = A.grn;
-    } else if (i === worstIdx) {
-      color = A.red;
-    } else {
-      color = A.d;
+    if (v.status === "killed" && vMetrics.length === 0) {
+      lines.push(`  ${A.d}── ${v.id} ── ${suffix}${A.r}`);
+      continue;
     }
 
-    const dur = m.durationMs != null ? fmtDuration(m.durationMs) : "";
-    const arrow = m.verdict === "improved" ? `${A.grn}▲${A.r}`
-               : m.verdict === "degraded" ? `${A.red}▼${A.r}`
-               : `${A.d}─${A.r}`;
+    lines.push(`  ${A.d}── ${v.id} (${vMetrics.length} iters) ── ${suffix}${A.r}`);
 
-    // Line 1: iter + metrics
-    lines.push(
-      `  ${arrow} ${color}iter ${m.iter}${A.r}  ${color}PnL $${m.pnl.toFixed(2)}  PF ${m.pf.toFixed(2)}  WR ${m.wr.toFixed(1)}%  DD ${Math.abs(m.dd).toFixed(1)}%  T ${m.trades}${A.r}${dur ? `  ${A.d}${dur}${A.r}` : ""}`,
-    );
-    // Line 2: summary (if present)
-    if (m.summary) {
-      lines.push(`${A.d}         ${m.summary}${A.r}`);
+    for (const m of vMetrics) {
+      const isGlobalBest = m.iter === globalBestIter && v.id === globalBestVariantId;
+      const arrow = m.verdict === "improved" ? `${A.grn}▲${A.r}`
+                 : m.verdict === "degraded" ? `${A.red}▼${A.r}`
+                 : `${A.d}─${A.r}`;
+
+      const color = isGlobalBest ? A.grn : A.d;
+      const star = isGlobalBest ? "⭐ " : "";
+
+      lines.push(
+        `  ${star}${arrow} ${color}iter ${m.iter}${A.r}  ${color}${fmtRow(m)}${A.r}`,
+      );
     }
   }
 

@@ -52,6 +52,99 @@ export interface SwitchResult {
   pnl: number;
 }
 
+export interface SwitchToExistingOpts {
+  cfg: LoopConfig;
+  variantManager: VariantManager;
+  variant: VariantInfo;
+  candles: Candle[];
+  effectiveWarmupBars: number;
+  scoringWeights?: Partial<ScoringWeights>;
+}
+
+/**
+ * Reactivate an existing variant from its checkpoint.
+ * Restores source, rebuilds, runs baseline, and returns all state needed
+ * for the orchestrator to continue. Returns null if checkpoint is missing
+ * or factory cannot be loaded.
+ */
+export async function switchToExistingVariant(opts: SwitchToExistingOpts): Promise<SwitchResult | null> {
+  const { cfg, variantManager, variant, candles, effectiveWarmupBars, scoringWeights } = opts;
+
+  // Reactivate in registry
+  variantManager.reactivate(variant.id);
+  variantManager.save();
+
+  // Override cfg paths
+  cfg.strategyFile = variant.strategyFile;
+  cfg.checkpointDir = variant.checkpointDir;
+  cfg.paramHistoryFile = variant.paramHistoryFile;
+
+  // Restore strategy source from checkpoint (if checkpoint exists)
+  const cpData = checkpoint.load(variant.checkpointDir);
+  if (cpData) {
+    checkpoint.rollback(variant.checkpointDir, variant.strategyFile);
+  } else if (!fs.existsSync(variant.strategyFile)) {
+    // No checkpoint and no strategy file — cannot reactivate
+    return null;
+  }
+
+  // Rebuild backtest package
+  execaSync("pnpm", ["--filter", "@breaker/backtest", "build"], {
+    cwd: path.resolve(cfg.repoRoot, "../.."),
+    timeout: 30000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  // Load factory from rebuilt variant
+  const variantDistPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");
+  let factory: StrategyFactory;
+  try {
+    const variantMod = await import(variantDistPath) as Record<string, unknown>;
+    const factoryKey = Object.keys(variantMod).find(k => typeof variantMod[k] === "function" && k.startsWith("create"));
+    if (!factoryKey) return null;
+    factory = variantMod[factoryKey] as StrategyFactory;
+  } catch {
+    return null;
+  }
+
+  // Load param overrides from checkpoint (or start fresh)
+  const restoredParamOverrides = checkpoint.loadParams(variant.checkpointDir) ?? {};
+
+  // Run baseline backtest
+  const strategy = factory(restoredParamOverrides);
+  const lastStrategyParams = strategy.params;
+  const paramCount = Object.values(lastStrategyParams).filter(p => p.optimizable).length;
+
+  const source = fs.readFileSync(cfg.strategyFile, "utf8");
+  const baseline = runEngineInProcess({
+    candles,
+    strategy,
+    sourceInterval: cfg.interval as CandleInterval,
+    warmupBars: effectiveWarmupBars,
+  });
+
+  const metrics = baseline.metrics;
+  const analysis = baseline.analysis;
+  const pnl = metrics.totalPnl ?? 0;
+
+  // Save fresh checkpoint (iter=0)
+  checkpoint.save(cfg.checkpointDir, source, metrics, 0, restoredParamOverrides, baseline.trades, paramCount, lastStrategyParams, analysis ?? undefined);
+
+  const scoreResult = computeScore(metrics, paramCount, metrics.numTrades ?? 0, scoringWeights);
+
+  return {
+    variant,
+    factory,
+    metrics,
+    analysis,
+    scoreResult,
+    paramOverrides: restoredParamOverrides,
+    lastStrategyParams,
+    paramCount,
+    pnl,
+  };
+}
+
 /**
  * Generate a new variant, rebuild, run baseline, and return all state needed
  * for the orchestrator to continue. Returns null if generation fails.

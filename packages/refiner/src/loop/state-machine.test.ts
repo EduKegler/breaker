@@ -71,6 +71,25 @@ describe("state-machine: ITER_START", () => {
     actor.send({ type: "ITER_START" });
     expect(actor.getSnapshot().context.phaseIterCount).toBe(2);
   });
+
+  it("phaseIterCount stays unchanged when no-op skips ITER_START", () => {
+    // Simulates the deferred ITER_START pattern: no-op iterations
+    // only send NO_CHANGE without ITER_START, so phaseIterCount doesn't inflate.
+    const actor = startActor();
+    // Real iteration: ITER_START + CHANGE_APPLIED
+    actor.send({ type: "ITER_START" });
+    actor.send({ type: "CHANGE_APPLIED" });
+    expect(actor.getSnapshot().context.phaseIterCount).toBe(1);
+
+    // No-op iteration: only NO_CHANGE, no ITER_START
+    actor.send({ type: "NO_CHANGE" });
+    expect(actor.getSnapshot().context.phaseIterCount).toBe(1); // unchanged
+
+    // Another real iteration
+    actor.send({ type: "ITER_START" });
+    actor.send({ type: "CHANGE_APPLIED" });
+    expect(actor.getSnapshot().context.phaseIterCount).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

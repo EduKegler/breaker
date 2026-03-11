@@ -59,6 +59,10 @@ interface BuildPromptOptions {
   walkForward?: WalkForward | null;
   /** Pre-selected components for restructure — skips Claude's selection step */
   preSelectedComponents?: Record<string, string>;
+  /** Recent suggestions rejected as no-op or historical repeat (for prompt feedback) */
+  rejectedRepeats?: string[];
+  /** Validation warnings from previous iteration (var cap, clamped values, etc.) */
+  lastValidationWarnings?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -71,7 +75,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
     criteria, asset, moduleContext, phase, iter, maxIter, globalIter,
     paramHistoryPath, artifactsDir, researchBriefPath, failedRestructures,
     lastRollbackReason, scoreBreakdown, scoringWeights, currentScore,
-    bestScoreBreakdown, bestScore,
+    bestScoreBreakdown, bestScore, rejectedRepeats, lastValidationWarnings,
   } = opts;
 
   // Use KB-aligned criteria for this module, fallback to config
@@ -136,6 +140,8 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const walkForwardSection = buildWalkForwardSection(opts.walkForward, mc);
   const lastIterationSection = buildLastIterationSection(paramHistory);
   const exploredSpaceEnriched = buildExploredSpaceEnriched(paramHistory, globalIter, iter, maxIter);
+  const repeatWarningSection = buildRepeatWarningSection(rejectedRepeats);
+  const validationWarningSection = buildValidationWarningSection(lastValidationWarnings);
 
   const metadataPath = `${artifactsDir}/iter${globalIter}-metadata.json`;
 
@@ -223,7 +229,7 @@ Avg Win: ${metrics.avgWinR != null ? `${metrics.avgWinR.toFixed(2)}R` : "N/A"} |
 ${scoringSection}${scoreDeltaSection}${walkForwardSection}
 ${designChecklistSection}${paramsSection}
 ${kbConstraintsBlock}${overfitSection}${tradeAnalysisSection}
-${(phase !== "refine" || iter <= 3) ? filterSimsSection : ""}${exploredSpaceEnriched || exploredSpaceSection}${coreParamsSection}${pendingHypothesesSection}${approachHistorySection}${phase !== "refine" ? researchSection : ""}${phase !== "refine" ? failedRestructuresSection : ""}
+${(phase !== "refine" || iter <= 3) ? filterSimsSection : ""}${validationWarningSection}${repeatWarningSection}${exploredSpaceEnriched || exploredSpaceSection}${coreParamsSection}${pendingHypothesesSection}${approachHistorySection}${phase !== "refine" ? researchSection : ""}${phase !== "refine" ? failedRestructuresSection : ""}
 ${phaseTask}
 ${phase !== "refine" ? strategyInterfaceReference : ""}## OPTIMIZATION RULES
 - **1 change per iteration** (refine phase): change ONE param value. Restructure can make larger changes.
@@ -1022,6 +1028,30 @@ function buildExploredSpaceEnriched(
   lines.push(`\nGlobal iteration: ${globalIter} (loop iter ${iter}/${maxIter})`);
   if (!hasContent) return "";
   return lines.join("\n") + "\n\n";
+}
+
+function buildValidationWarningSection(warnings?: string[]): string {
+  if (!warnings || warnings.length === 0) return "";
+  const lines = [
+    `## ⚠ VALIDATION WARNINGS (from previous iteration)`,
+    `The system flagged these issues with your last suggestion:`,
+    ...warnings.map((w) => `- ${w}`),
+    `Address these warnings in your next change.`,
+    "",
+  ];
+  return lines.join("\n") + "\n";
+}
+
+function buildRepeatWarningSection(rejectedRepeats?: string[]): string {
+  if (!rejectedRepeats || rejectedRepeats.length === 0) return "";
+  const lines = [
+    `## ⚠ REPEAT ALERT`,
+    `Your last ${rejectedRepeats.length} suggestion(s) were REJECTED by the system:`,
+    ...rejectedRepeats.map((r) => `- ${r}`),
+    `You MUST try different parameter combinations. Repeating the same changes wastes iterations.`,
+    "",
+  ];
+  return lines.join("\n") + "\n";
 }
 
 function buildResearchSection(researchBriefPath?: string): string {

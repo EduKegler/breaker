@@ -49,6 +49,9 @@ const SLOT_PRIORITY: Record<string, number> = {
  * Components are ordered by slot priority, then joined with hyphens.
  * Since slugs are already short, no truncation is needed.
  */
+/** Slugs that are excluded from variant ID (default/no-op values). */
+const IDENTITY_SLUGS = new Set(["both"]);
+
 export function buildVariantId(components: Record<string, string>): string {
   const entries = Object.entries(components);
   if (entries.length === 0) return "";
@@ -60,7 +63,10 @@ export function buildVariantId(components: Record<string, string>): string {
     return a.localeCompare(b);
   });
 
-  return entries.map(([, slug]) => slug).join("-");
+  return entries
+    .filter(([, slug]) => !IDENTITY_SLUGS.has(slug))
+    .map(([, slug]) => slug)
+    .join("-");
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +161,32 @@ export class VariantManager {
         (v) => v.id === this.registry.activeVariantId,
       ) ?? null
     );
+  }
+
+  /**
+   * Find the next variant with status "active" that is NOT the current activeVariantId.
+   * Returns null if none found. Used to reactivate user-queued variants before generating new ones.
+   */
+  findNextActive(): VariantInfo | null {
+    return this.registry.variants.find(
+      v => v.status === "active" && v.id !== this.registry.activeVariantId,
+    ) ?? null;
+  }
+
+  /**
+   * Reactivate an existing variant: set as activeVariantId and reset budget.
+   * The variant must already have status "active" (set manually by user in registry).
+   * Throws if another variant is already the activeVariantId or if variant not found.
+   */
+  reactivate(id: string): void {
+    const variant = this.registry.variants.find(v => v.id === id);
+    if (!variant) throw new Error(`Variant "${id}" not found`);
+    if (this.registry.activeVariantId) {
+      throw new Error(`Cannot reactivate: variant "${this.registry.activeVariantId}" is already active`);
+    }
+    variant.status = "active";
+    variant.iterationsUsed = 0;
+    this.registry.activeVariantId = id;
   }
 
   /** Mark the active variant as plateaued. Clears active. */
@@ -366,9 +398,17 @@ function cartesianProduct(slots: CatalogSlot[]): Record<string, string>[] {
   const restCombos = cartesianProduct(rest);
   const result: Record<string, string>[] = [];
 
-  for (const candidate of first.candidates) {
+  // Optional slots get a null option (slot absent from combination)
+  const options: (string | null)[] = first.candidates.map((c) => c.slug);
+  if (first.optional) options.push(null);
+
+  for (const slug of options) {
     for (const combo of restCombos) {
-      result.push({ [first.slotName]: candidate.slug, ...combo });
+      if (slug === null) {
+        result.push({ ...combo });
+      } else {
+        result.push({ [first.slotName]: slug, ...combo });
+      }
     }
   }
 
@@ -402,35 +442,117 @@ function totalSlugUsage(
   return total;
 }
 
+// ---------------------------------------------------------------------------
+// Quality-based selection helpers
+// ---------------------------------------------------------------------------
+
+export interface VariantPerformance {
+  components: Record<string, string>;
+  bestScore: number;
+}
+
+/**
+ * Compute per-slug average bestScore within each slot.
+ * Returns slotName → slug → avgScore.
+ */
+function computeSlugScores(
+  catalog: ComponentCatalog,
+  history: VariantPerformance[],
+): Map<string, Map<string, number>> {
+  const result = new Map<string, Map<string, number>>();
+
+  for (const slot of catalog.slots) {
+    const accum = new Map<string, { total: number; count: number }>();
+
+    for (const v of history) {
+      const slug = v.components[slot.slotName];
+      if (!slug) continue;
+      const cur = accum.get(slug) ?? { total: 0, count: 0 };
+      cur.total += v.bestScore;
+      cur.count += 1;
+      accum.set(slug, cur);
+    }
+
+    const avgMap = new Map<string, number>();
+    for (const [slug, { total, count }] of accum) {
+      avgMap.set(slug, total / count);
+    }
+    result.set(slot.slotName, avgMap);
+  }
+
+  return result;
+}
+
+/**
+ * Expected quality of a combination based on historical slug performance.
+ * Untested slugs receive the slot mean as a neutral prior.
+ */
+function expectedQuality(
+  combo: Record<string, string>,
+  slugScores: Map<string, Map<string, number>>,
+): number {
+  let total = 0;
+
+  for (const [slotName, slug] of Object.entries(combo)) {
+    const slotMap = slugScores.get(slotName);
+    if (!slotMap || slotMap.size === 0) continue;
+
+    const slugAvg = slotMap.get(slug);
+    if (slugAvg !== undefined) {
+      total += slugAvg;
+    } else {
+      // Untested slug → use slot mean (neutral prior)
+      let slotSum = 0;
+      for (const avg of slotMap.values()) slotSum += avg;
+      total += slotSum / slotMap.size;
+    }
+  }
+
+  return total;
+}
+
 /**
  * Select the next untested component combination from the catalog.
  *
  * Algorithm:
- * 1. Only required (non-optional) slots are used
- * 2. Cartesian product of all required slot candidates
- * 3. Filter out combinations whose buildVariantId() is already in testedIds
- * 4. Sort remaining by novelty (prefer slugs that appear less in tested IDs)
+ * 1. All slots participate — optional slots get a null option (slot absent)
+ * 2. Cartesian product of all slot candidates (with null for optionals)
+ * 3. Filter out empty combos and those whose buildVariantId() is already in testedIds
+ * 4. Sort by quality (when enough history) or novelty (early exploration)
  * 5. Return the first one, or null when exhausted
+ *
+ * Quality mode activates when variantHistory has at least as many entries
+ * as required slots. Combinations are ranked by the sum of their slugs'
+ * average bestScore. Untested slugs receive the slot mean as neutral prior.
  */
 export function selectNextCombination(
   catalog: ComponentCatalog,
   testedIds: Set<string>,
+  variantHistory?: VariantPerformance[],
 ): Record<string, string> | null {
-  const requiredSlots = catalog.slots.filter((s) => !s.optional);
-  if (requiredSlots.length === 0) return null;
+  if (catalog.slots.length === 0) return null;
 
-  const combos = cartesianProduct(requiredSlots);
+  const combos = cartesianProduct(catalog.slots);
 
-  const untested = combos.filter(
-    (combo) => !testedIds.has(buildVariantId(combo)),
-  );
+  const untested = combos.filter((combo) => {
+    // Skip empty combos (all-optional slots all chose null)
+    if (Object.keys(combo).length === 0) return false;
+    return !testedIds.has(buildVariantId(combo));
+  });
 
   if (untested.length === 0) return null;
 
-  // Sort by novelty: prefer combos with less-tested slugs
-  untested.sort((a, b) => {
-    return totalSlugUsage(a, testedIds) - totalSlugUsage(b, testedIds);
-  });
+  const requiredSlotCount = catalog.slots.filter((s) => !s.optional).length;
+  const useQuality = variantHistory && variantHistory.length >= requiredSlotCount;
+
+  if (useQuality) {
+    // Exploitation mode: prefer combinations whose slugs scored well
+    const slugScores = computeSlugScores(catalog, variantHistory);
+    untested.sort((a, b) => expectedQuality(b, slugScores) - expectedQuality(a, slugScores));
+  } else {
+    // Exploration mode: prefer combos with less-tested slugs
+    untested.sort((a, b) => totalSlugUsage(a, testedIds) - totalSlugUsage(b, testedIds));
+  }
 
   return untested[0];
 }

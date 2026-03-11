@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -7,6 +7,7 @@ import writeFileAtomic from "write-file-atomic";
 import { cac } from "cac";
 import { isMainModule } from "@breaker/kit";
 import { bakeParamDefaults } from "../strategies/bake-param-defaults.js";
+import { generateDeployedBarrel } from "./generate-deployed-barrel.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -92,6 +93,7 @@ export function promoteStrategy(
   }
 
   const deployedDir = join(strategiesDir, asset, category, "deployed");
+  mkdirSync(deployedDir, { recursive: true });
 
   const sourcePath = options.fromCheckpoint
     ? join(options.fromCheckpoint, `${name}.ts`)
@@ -208,8 +210,12 @@ function main() {
         process.exit(1);
       }
 
+      // Regenerate deployed barrel
+      console.log("\nRegenerating deployed barrel...");
+      generateDeployedBarrel();
+
       // Typecheck after promotion
-      console.log("\nRunning typecheck...");
+      console.log("Running typecheck...");
       try {
         const pkgRoot = join(__dirname, "../..");
         execaSync("pnpm", ["typecheck"], { cwd: pkgRoot, stdio: "inherit" });

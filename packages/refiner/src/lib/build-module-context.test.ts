@@ -404,9 +404,9 @@ describe("extractCandidatesFromTable", () => {
     expect(candidates[0].name).toBe("Both");
     expect(candidates[0].slug).toBe("both");
     expect(candidates[1].name).toBe("Long only");
-    expect(candidates[1].slug).toBe("long-only");
+    expect(candidates[1].slug).toBe("long");
     expect(candidates[2].name).toBe("Short only");
-    expect(candidates[2].slug).toBe("short-only");
+    expect(candidates[2].slug).toBe("short");
   });
 
   it("extracts descriptions from second column", () => {
@@ -501,7 +501,7 @@ describe("extractComponentCatalog", () => {
     expect(confSlot!.candidates).toHaveLength(2);
   });
 
-  it("marks M1 Direction, Entry Timing and Confirmation as optional", () => {
+  it("marks M1 Entry Timing and Confirmation as optional, Direction as required", () => {
     const catalog = extractComponentCatalog(SAMPLE_KB, "M1");
     const dirSlot = catalog.slots.find((s) => s.slotName === "Direction");
     const timingSlot = catalog.slots.find((s) => s.slotName === "Entry Timing");
@@ -509,7 +509,7 @@ describe("extractComponentCatalog", () => {
     const entrySlot = catalog.slots.find((s) => s.slotName === "Entry Signal");
     const exitSlot = catalog.slots.find((s) => s.slotName === "Exit");
 
-    expect(dirSlot!.optional).toBe(true);
+    expect(dirSlot!.optional).toBeUndefined();
     expect(timingSlot!.optional).toBe(true);
     expect(confSlot!.optional).toBe(true);
     expect(entrySlot!.optional).toBeUndefined();
@@ -681,6 +681,7 @@ describe("extractStartingPoint", () => {
 describe("getStartingComponents", () => {
   it("returns M1 breakout starting slugs", () => {
     const comps = getStartingComponents("M1");
+    expect(comps["Direction"]).toBe("both");
     expect(comps["Entry Signal"]).toBe("donchian");
     expect(comps["Regime Filter"]).toBe("ema");
     expect(comps["Exit"]).toBe("timeout");
@@ -713,8 +714,8 @@ describe("candidateToSlug", () => {
 
   it("maps direction constraint candidates to slugs", () => {
     expect(candidateToSlug("Both")).toBe("both");
-    expect(candidateToSlug("Long only")).toBe("long-only");
-    expect(candidateToSlug("Short only")).toBe("short-only");
+    expect(candidateToSlug("Long only")).toBe("long");
+    expect(candidateToSlug("Short only")).toBe("short");
   });
 
   it("maps partial-tp candidate to slug", () => {

@@ -457,4 +457,22 @@ describe("validateProfitabilityRegression", () => {
     expect(v[0].reason).toContain("-0.200");
     expect(v[0].reason).toContain("-0.240");
   });
+
+  it("NEUTRAL contamination: guard must use checkpoint baseline, not NEUTRAL metrics", () => {
+    // Real bug: checkpoint PF=1.09, NEUTRAL iter PF=1.52 (not saved),
+    // new iter PF=1.29. Guard with NEUTRAL baseline rejects (1.29 < 1.52).
+    // Guard with checkpoint baseline should pass (1.29 > 1.09).
+    const checkpointBaseline = { profitFactor: 1.09, avgR: 0.005 };
+    const neutralBaseline = { profitFactor: 1.52, avgR: 0.020 };
+    const newMetrics = { profitFactor: 1.29, avgR: 0.010 };
+
+    // Bug: using NEUTRAL baseline → false rejection
+    const bugResult = validateProfitabilityRegression(newMetrics, neutralBaseline);
+    expect(bugResult).toHaveLength(1);
+    expect(bugResult[0].field).toBe("profitabilityRegression");
+
+    // Fix: using checkpoint baseline → correctly passes (PF improved 1.09→1.29)
+    const fixResult = validateProfitabilityRegression(newMetrics, checkpointBaseline);
+    expect(fixResult).toEqual([]);
+  });
 });

@@ -3,64 +3,64 @@ import type { Strategy, StrategyContext, StrategyParam, Signal } from "../../../
 import { sma } from "../../../indicators/sma.js";
 import { atr } from "../../../indicators/atr.js";
 import { macd } from "../../../indicators/macd.js";
-import { adx as computeAdx } from "../../../indicators/adx.js";
 
 const MS_1H = 3_600_000;
 const MS_4H = 14_400_000;
 
 // Fixed constants (not optimizable)
-const RETEST_TOLERANCE = 2.0;
+const CONS_LOOKBACK = 6;
+const RETEST_TOLERANCE = 1.5;
 const MACD_FAST = 12;
 const MACD_SLOW = 26;
 const MACD_SIGNAL = 9;
 
-interface RangeRetestAdxMacdTimeoutParams {
+interface RangeRetestConsolidationMacdTimeoutParams {
   rangeLookback: StrategyParam;
   rangeAtrThreshold: StrategyParam;
   volMultiplier: StrategyParam;
   retestWindow: StrategyParam;
-  adxThreshold: StrategyParam;
+  consThreshold: StrategyParam;
   atrStopMult: StrategyParam;
   timeoutBars: StrategyParam;
 }
 
-const DEFAULT_PARAMS: RangeRetestAdxMacdTimeoutParams = {
+const DEFAULT_PARAMS: RangeRetestConsolidationMacdTimeoutParams = {
   rangeLookback: {
     value: 30, min: 10, max: 50, step: 5, optimizable: true,
     description: "Bars to look back for range high/low definition",
   },
   rangeAtrThreshold: {
-    value: 4, min: 2.0, max: 10.0, step: 0.5, optimizable: true,
+    value: 3.5, min: 2.0, max: 10.0, step: 0.5, optimizable: true,
     description: "Max range width as multiple of ATR(14) 15m — below = consolidation",
   },
   volMultiplier: {
-    value: 1.5, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
+    value: 2.75, min: 1.0, max: 3.0, step: 0.25, optimizable: true,
     description: "Volume spike threshold (X * SMA20 volume)",
   },
   retestWindow: {
-    value: 12, min: 4, max: 28, step: 2, optimizable: true,
+    value: 16, min: 4, max: 28, step: 2, optimizable: true,
     description: "Bars to wait for retest after initial breakout",
   },
-  adxThreshold: {
-    value: 20, min: 15, max: 40, step: 5, optimizable: true,
-    description: "Max ADX(14) 4H — below = consolidation regime (breakout ready)",
+  consThreshold: {
+    value: 4.5, min: 2.0, max: 8.0, step: 0.5, optimizable: true,
+    description: "4H consolidation: range over last 6 bars must be < X * ATR(14, 4H)",
   },
   atrStopMult: {
-    value: 3, min: 3.0, max: 6.0, step: 0.5, optimizable: true,
+    value: 3.5, min: 3.0, max: 6.0, step: 0.5, optimizable: true,
     description: "ATR(14) 1H initial stop multiplier (KB >= 3.0)",
   },
   timeoutBars: {
-    value: 76, min: 24, max: 96, step: 4, optimizable: true,
+    value: 72, min: 24, max: 96, step: 4, optimizable: true,
     description: "Forced exit after N bars to prevent funding bleed",
   },
 };
 
-export function createRangeRetestAdxMacdTimeout(
-  paramOverrides?: Partial<Record<keyof RangeRetestAdxMacdTimeoutParams, number>>,
+export function createRangeRetestConsolidationMacdTimeout(
+  paramOverrides?: Partial<Record<keyof RangeRetestConsolidationMacdTimeoutParams, number>>,
 ): Strategy {
   const params: Record<string, StrategyParam> = {};
   for (const [key, defaultParam] of Object.entries(DEFAULT_PARAMS)) {
-    const override = paramOverrides?.[key as keyof RangeRetestAdxMacdTimeoutParams];
+    const override = paramOverrides?.[key as keyof RangeRetestConsolidationMacdTimeoutParams];
     params[key] = { ...defaultParam, value: override ?? defaultParam.value };
   }
 
@@ -68,7 +68,7 @@ export function createRangeRetestAdxMacdTimeout(
   let volSmaCache: number[] | null = null;
   let macdHistCache: number[] | null = null;
   let htfAtrCache1h: number[] | null = null;
-  let htfAdxCache4h: number[] | null = null;
+  let htfAtrCache4h: number[] | null = null;
   let htf1hCandles: Candle[] | null = null;
   let htf4hCandles: Candle[] | null = null;
 
@@ -88,17 +88,17 @@ export function createRangeRetestAdxMacdTimeout(
     return NaN;
   }
 
-  function findAdx4h(currentT: number, htfRef: Candle[], adxArr: number[]): number {
+  function findLast4hIdx(currentT: number, htfRef: Candle[]): number {
     for (let j = htfRef.length - 1; j >= 0; j--) {
-      if (htfRef[j].t + MS_4H <= currentT && !isNaN(adxArr[j])) {
-        return adxArr[j];
+      if (htfRef[j].t + MS_4H <= currentT) {
+        return j;
       }
     }
-    return NaN;
+    return -1;
   }
 
   return {
-    name: "BTC 15m Breakout — Range Retest ADX MACD Timeout",
+    name: "BTC 15m Breakout — Range Retest Consolidation MACD Timeout",
     params,
     requiredTimeframes: ["1h", "4h"],
     requiredWarmup: { source: 50, "1h": 15, "4h": 30 },
@@ -111,7 +111,7 @@ export function createRangeRetestAdxMacdTimeout(
       htf1hCandles = higherTimeframes["1h"] ?? [];
       htfAtrCache1h = htf1hCandles.length > 0 ? atr(htf1hCandles, 14) : null;
       htf4hCandles = higherTimeframes["4h"] ?? [];
-      htfAdxCache4h = htf4hCandles.length > 0 ? computeAdx(htf4hCandles, 14).adx : null;
+      htfAtrCache4h = htf4hCandles.length > 0 ? atr(htf4hCandles, 14) : null;
       pendingRetest = null;
     },
 
@@ -132,15 +132,29 @@ export function createRangeRetestAdxMacdTimeout(
       // --- HTF: 1H ATR for stop (anti-repaint) ---
       const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
       if (!htf1hRef || htf1hRef.length < 15) return null;
-      const htfAtr = htfAtrCache1h ?? atr(htf1hRef, 14);
-      const atr1h = findAtr1h(currentCandle.t, htf1hRef, htfAtr);
+      const htfAtr1h = htfAtrCache1h ?? atr(htf1hRef, 14);
+      const atr1h = findAtr1h(currentCandle.t, htf1hRef, htfAtr1h);
       if (isNaN(atr1h)) return null;
 
-      // --- HTF: 4H ADX regime (anti-repaint) ---
+      // --- HTF: 4H consolidation regime (anti-repaint) ---
       const htf4hRef = htf4hCandles ?? higherTimeframes["4h"];
-      if (!htf4hRef || htf4hRef.length < 30) return null;
-      const adx4hArr = htfAdxCache4h ?? computeAdx(htf4hRef, 14).adx;
-      const adx4hVal = findAdx4h(currentCandle.t, htf4hRef, adx4hArr);
+      if (!htf4hRef || htf4hRef.length < 20) return null;
+      const htfAtr4h = htfAtrCache4h ?? atr(htf4hRef, 14);
+      const last4hIdx = findLast4hIdx(currentCandle.t, htf4hRef);
+      if (last4hIdx < CONS_LOOKBACK) return null;
+
+      const atr4hVal = htfAtr4h[last4hIdx];
+      if (isNaN(atr4hVal) || atr4hVal <= 0) return null;
+
+      let htfRangeHigh = -Infinity;
+      let htfRangeLow = Infinity;
+      for (let j = last4hIdx - CONS_LOOKBACK + 1; j <= last4hIdx; j++) {
+        if (htf4hRef[j].h > htfRangeHigh) htfRangeHigh = htf4hRef[j].h;
+        if (htf4hRef[j].l < htfRangeLow) htfRangeLow = htf4hRef[j].l;
+      }
+      const htfRange = htfRangeHigh - htfRangeLow;
+      const consThresholdAbs = params.consThreshold.value * atr4hVal;
+      const is4hConsolidated = htfRange < consThresholdAbs;
 
       // --- MACD histogram (15m) ---
       const macdHist = macdHistCache ? macdHistCache[index] : NaN;
@@ -152,13 +166,13 @@ export function createRangeRetestAdxMacdTimeout(
       const close = currentCandle.c;
       const stopMult = params.atrStopMult.value;
       const retestWin = Math.round(params.retestWindow.value);
-      const adxThresh = params.adxThreshold.value;
-      const is4hLowAdx = !isNaN(adx4hVal) && adx4hVal < adxThresh;
 
       // --- Diagnostics ---
       ctx.indicator("atr15m", atr15mVal);
       ctx.indicator("atr1h", atr1h);
-      ctx.indicator("adx4h", adx4hVal);
+      ctx.indicator("atr4h", atr4hVal);
+      ctx.indicator("htfRange", htfRange);
+      ctx.indicator("consThresholdAbs", consThresholdAbs);
       ctx.indicator("macdHist", macdHist);
       ctx.indicator("volSma20", volSma);
 
@@ -191,7 +205,7 @@ export function createRangeRetestAdxMacdTimeout(
                 entryPrice: null,
                 stopLoss: close - stopDist,
                 takeProfits: [],
-                comment: "Range retest long (ADX+MACD)",
+                comment: "Range retest long (4H consol+MACD)",
               };
             }
 
@@ -212,7 +226,7 @@ export function createRangeRetestAdxMacdTimeout(
                 entryPrice: null,
                 stopLoss: close + stopDist,
                 takeProfits: [],
-                comment: "Range retest short (ADX+MACD)",
+                comment: "Range retest short (4H consol+MACD)",
               };
             }
 
@@ -246,7 +260,7 @@ export function createRangeRetestAdxMacdTimeout(
       // --- LONG breakout detection ---
       const longConsolidation = ctx.track("L:consolidated", isConsolidated, normalizedWidth, threshold);
       const longBreakout = ctx.track("L:close_above_range", close > rangeHigh, close, rangeHigh);
-      const longRegime = ctx.track("L:4h_low_adx", is4hLowAdx, adx4hVal, adxThresh);
+      const longRegime = ctx.track("L:4h_consolidated", is4hConsolidated, htfRange, consThresholdAbs);
       const longVol = ctx.track("L:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
 
       if (longConsolidation && longBreakout && longRegime && longVol) {
@@ -262,7 +276,7 @@ export function createRangeRetestAdxMacdTimeout(
       // --- SHORT breakout detection ---
       const shortConsolidation = ctx.track("S:consolidated", isConsolidated, normalizedWidth, threshold);
       const shortBreakout = ctx.track("S:close_below_range", close < rangeLow, close, rangeLow);
-      const shortRegime = ctx.track("S:4h_low_adx", is4hLowAdx, adx4hVal, adxThresh);
+      const shortRegime = ctx.track("S:4h_consolidated", is4hConsolidated, htfRange, consThresholdAbs);
       const shortVol = ctx.track("S:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
 
       if (shortConsolidation && shortBreakout && shortRegime && shortVol) {

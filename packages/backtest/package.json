@@ -17,7 +17,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsx src/scripts/generate-deployed-barrel.ts && tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

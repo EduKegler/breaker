@@ -154,3 +154,131 @@ describe("shouldKillVariant", () => {
     expect(reason).toContain("0.52");
   });
 });
+
+describe("computeEffectiveBudget", () => {
+  const baseBudget = 15;
+  // M1 criteria: minTrades=50, minPF=1.3, maxDD=10, minWR=null, minAvgR=0.15
+  const criteria = { minPF: 1.3, minTrades: 50, maxDD: 10, minAvgR: 0.15, minWR: null as number | null };
+
+  it("returns 2x budget when 4/5 criteria pass", () => {
+    // range-consolidation-partial-tp scenario: 4/5 pass, only trades=38<50 fail
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 1.8, numTrades: 38, maxDrawdownPct: 5, avgR: 0.20, winRate: 45 },
+      criteria,
+    });
+    expect(result).toBe(30); // 15 × 2.0
+  });
+
+  it("returns 2x budget when 5/5 criteria pass (all pass)", () => {
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 1.5, numTrades: 60, maxDrawdownPct: 5, avgR: 0.20, winRate: 45 },
+      criteria,
+    });
+    expect(result).toBe(30); // 15 × 2.0
+  });
+
+  it("returns 1.5x budget when 3/5 criteria pass", () => {
+    // PF=1.5 ✓, trades=60 ✓, DD=5 ✓, avgR=0.10 ✗, WR not gated
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 1.5, numTrades: 60, maxDrawdownPct: 12, avgR: 0.10, winRate: 45 },
+      criteria,
+    });
+    expect(result).toBe(23); // 15 × 1.5 = 22.5 → 23
+  });
+
+  it("returns 1x budget when 2/5 criteria pass (no lever)", () => {
+    // PF=1.5 ✓, trades=45 ✗(<50), DD=12 ✗(>10), avgR=0.10 ✗(<0.15), WR=null auto-pass ✓
+    // passing=2, no lever (trades=45 not < 40 and not > 100)
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 1.5, numTrades: 45, maxDrawdownPct: 12, avgR: 0.10, winRate: 45 },
+      criteria,
+    });
+    expect(result).toBe(15); // 15 × 1.0
+  });
+
+  it("returns 0.6x budget when 0-1 criteria pass", () => {
+    // PF=0.5 ✗, trades=40 ✗, DD=30 ✗, avgR=0.05 ✗
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 0.5, numTrades: 40, maxDrawdownPct: 30, avgR: 0.05, winRate: 45 },
+      criteria,
+    });
+    expect(result).toBe(9); // 15 × 0.6
+  });
+
+  it("applies lever bonus: high trades + low PF → min 1.3x", () => {
+    // numTrades > minTrades × 2 (200 > 100) and PF < minPF (0.8 < 1.3) → lever
+    // Only 1/5 pass (trades), but lever gives 1.3x min
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 0.8, numTrades: 200, maxDrawdownPct: 15, avgR: 0.05, winRate: 45 },
+      criteria,
+    });
+    expect(result).toBe(20); // max(0.6, 1.3) × 15 = 19.5 → 20
+  });
+
+  it("applies lever bonus: low trades + high PF → min 1.3x", () => {
+    // numTrades < minTrades × 0.8 (30 < 40) and PF >= minPF (1.5 >= 1.3) → lever
+    // Only 1/5 pass (PF), but lever gives 1.3x min
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 1.5, numTrades: 30, maxDrawdownPct: 15, avgR: 0.05, winRate: 45 },
+      criteria,
+    });
+    expect(result).toBe(20); // max(0.6, 1.3) × 15 = 19.5 → 20
+  });
+
+  it("proximity wins over lever when proximity is higher", () => {
+    // 4/5 pass (2.0x) > lever (1.3x) → uses 2.0x
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 1.5, numTrades: 30, maxDrawdownPct: 5, avgR: 0.20, winRate: 45 },
+      criteria,
+    });
+    expect(result).toBe(30); // max(2.0, 1.3) × 15 = 30
+  });
+
+  it("caps at baseBudget × 2.5", () => {
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget: 20,
+      bestMetrics: { profitFactor: 2.0, numTrades: 80, maxDrawdownPct: 3, avgR: 0.30, winRate: 60 },
+      criteria,
+    });
+    expect(result).toBeLessThanOrEqual(50); // 20 × 2.5 = 50
+  });
+
+  it("handles minWR gate when set (WR fail downgrades from 5/5 to 4/5)", () => {
+    // With minWR=50, WR=45 fails → 4/5 pass → 2.0x
+    const criteriaWithWR = { ...criteria, minWR: 50 };
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 1.5, numTrades: 60, maxDrawdownPct: 5, avgR: 0.20, winRate: 45 },
+      criteria: criteriaWithWR,
+    });
+    expect(result).toBe(30); // 15 × 2.0
+  });
+
+  it("returns 1.5x when minWR gate causes 3/5 pass", () => {
+    // PF=1.5 ✓, trades=60 ✓, DD=12 ✗, avgR=0.20 ✓, WR=45<50 ✗ → 3/5 pass → 1.5x
+    const criteriaWithWR = { ...criteria, minWR: 50 };
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 1.5, numTrades: 60, maxDrawdownPct: 12, avgR: 0.20, winRate: 45 },
+      criteria: criteriaWithWR,
+    });
+    expect(result).toBe(23); // 15 × 1.5 = 22.5 → 23
+  });
+
+  it("handles null metrics gracefully (all null → 0 criteria pass → 0.6x)", () => {
+    const result = phaseHelpers.computeEffectiveBudget({
+      baseBudget,
+      bestMetrics: { profitFactor: 0, numTrades: 0, maxDrawdownPct: 100, avgR: 0, winRate: 0 },
+      criteria,
+    });
+    expect(result).toBe(9); // 15 × 0.6
+  });
+});

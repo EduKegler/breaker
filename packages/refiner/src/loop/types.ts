@@ -55,6 +55,7 @@ export interface IterationState {
 
 export interface IterationMetric {
   iter: number;
+  variantId?: string;
   pnl: number;
   pf: number;
   dd: number;

@@ -1,0 +1,313 @@
+import type { Candle } from "../../../types/candle.js";
+import type { Strategy, StrategyContext, StrategyParam, Signal } from "../../../types/strategy.js";
+import type { BollingerBandsResult } from "../../../indicators/bollinger-bands.js";
+import type { KeltnerResult } from "../../../indicators/keltner.js";
+import type { DonchianResult } from "../../../indicators/donchian.js";
+import { bollingerBands } from "../../../indicators/bollinger-bands.js";
+import { keltner } from "../../../indicators/keltner.js";
+import { donchian } from "../../../indicators/donchian.js";
+import { sma } from "../../../indicators/sma.js";
+import { atr } from "../../../indicators/atr.js";
+
+const MS_1H = 3_600_000;
+const MS_4H = 14_400_000;
+const SQUEEZE_LOOKBACK = 20;
+const SQUEEZE_MIN_BARS = 1;
+const FRESH_RELEASE_BARS = 8;
+const CONSOLIDATION_LOOKBACK = 8;
+
+interface SqueezeConsolidationTrailDcParams {
+  bbKcPeriod: StrategyParam;
+  kcMult: StrategyParam;
+  consWidthMult: StrategyParam;
+  volMultiplier: StrategyParam;
+  atrStopMult: StrategyParam;
+  trailDcPeriod: StrategyParam;
+  timeoutBars: StrategyParam;
+}
+
+const DEFAULT_PARAMS: SqueezeConsolidationTrailDcParams = {
+  bbKcPeriod: {
+    value: 20, min: 14, max: 30, step: 2, optimizable: true,
+    description: "Shared period for Bollinger Bands and Keltner Channel",
+  },
+  kcMult: {
+    value: 2, min: 1.0, max: 2.5, step: 0.25, optimizable: true,
+    description: "Keltner Channel multiplier (lower = narrower KC, easier breakout confirmation)",
+  },
+  consWidthMult: {
+    value: 2, min: 2.0, max: 6.0, step: 0.5, optimizable: true,
+    description: "Max 4H range/ATR ratio for consolidation regime (higher = more lenient)",
+  },
+  volMultiplier: {
+    value: 2.5, min: 1.0, max: 2.5, step: 0.25, optimizable: true,
+    description: "Volume spike threshold (X * SMA20 volume)",
+  },
+  atrStopMult: {
+    value: 3.5, min: 3.0, max: 6.0, step: 0.5, optimizable: true,
+    description: "ATR(14) 1H initial stop multiplier (KB >= 3.0)",
+  },
+  trailDcPeriod: {
+    value: 10, min: 5, max: 20, step: 1, optimizable: true,
+    description: "Donchian fast channel period for trailing exit",
+  },
+  timeoutBars: {
+    value: 64, min: 24, max: 96, step: 4, optimizable: true,
+    description: "Forced exit after N bars to prevent funding bleed",
+  },
+};
+
+export function createSqueezeConsolidationTrailDc(
+  paramOverrides?: Partial<Record<keyof SqueezeConsolidationTrailDcParams, number>>,
+): Strategy {
+  const params: Record<string, StrategyParam> = {};
+  for (const [key, defaultParam] of Object.entries(DEFAULT_PARAMS)) {
+    const override = paramOverrides?.[key as keyof SqueezeConsolidationTrailDcParams];
+    params[key] = { ...defaultParam, value: override ?? defaultParam.value };
+  }
+
+  let bbCache: BollingerBandsResult | null = null;
+  let kcCache: KeltnerResult | null = null;
+  let trailDcCache: DonchianResult | null = null;
+  let volSmaCache: number[] | null = null;
+  let htfAtrCache1h: number[] | null = null;
+  let htfAtrCache4h: number[] | null = null;
+  let htf1hCandles: Candle[] | null = null;
+  let htf4hCandles: Candle[] | null = null;
+
+  function findAtr1h(currentT: number, htfRef: Candle[], htfAtr: number[]): number {
+    for (let j = htfRef.length - 1; j >= 0; j--) {
+      if (htfRef[j].t + MS_1H <= currentT && !isNaN(htfAtr[j])) {
+        return htfAtr[j];
+      }
+    }
+    return NaN;
+  }
+
+  function findAtr4h(currentT: number, htfRef: Candle[], htfAtr: number[]): number {
+    for (let j = htfRef.length - 1; j >= 0; j--) {
+      if (htfRef[j].t + MS_4H <= currentT && !isNaN(htfAtr[j])) {
+        return htfAtr[j];
+      }
+    }
+    return NaN;
+  }
+
+  function findLast4hIdx(currentT: number, htfRef: Candle[]): number {
+    for (let j = htfRef.length - 1; j >= 0; j--) {
+      if (htfRef[j].t + MS_4H <= currentT) {
+        return j;
+      }
+    }
+    return -1;
+  }
+
+  return {
+    name: "BTC 15m Breakout — Squeeze Consolidation Trail-DC",
+    params,
+    requiredTimeframes: ["1h", "4h"],
+    requiredWarmup: { source: 50, "1h": 15, "4h": 30 },
+
+    init(candles: Candle[], higherTimeframes: Record<string, Candle[]>): void {
+      const period = params.bbKcPeriod.value;
+      const closes = candles.map(c => c.c);
+      bbCache = bollingerBands(closes, period, 2.0);
+      kcCache = keltner(candles, period, period, params.kcMult.value);
+      trailDcCache = donchian(candles, params.trailDcPeriod.value);
+      volSmaCache = sma(candles.map(c => c.v), 20);
+      htf1hCandles = higherTimeframes["1h"] ?? [];
+      htf4hCandles = higherTimeframes["4h"] ?? [];
+      htfAtrCache1h = htf1hCandles.length > 0 ? atr(htf1hCandles, 14) : null;
+      htfAtrCache4h = htf4hCandles.length > 0 ? atr(htf4hCandles, 14) : null;
+    },
+
+    onCandle(ctx: StrategyContext): Signal | null {
+      const { candles, index, currentCandle, higherTimeframes } = ctx;
+      if (index < 35) return null;
+
+      const period = params.bbKcPeriod.value;
+
+      // --- BB & KC ---
+      const bb = bbCache ?? bollingerBands(candles.map(c => c.c), period, 2.0);
+      const kc = kcCache ?? keltner(candles, period, period, params.kcMult.value);
+
+      const bbUpper = bb.upper[index];
+      const bbLower = bb.lower[index];
+      const kcUpper = kc.upper[index];
+      const kcLower = kc.lower[index];
+
+      if (isNaN(bbUpper) || isNaN(kcUpper)) return null;
+
+      // --- Squeeze detection: count recent squeeze bars ---
+      const currentSqueezeOn = bbLower > kcLower && bbUpper < kcUpper;
+      let recentSqueezeCount = 0;
+      for (let k = Math.max(0, index - SQUEEZE_LOOKBACK); k < index; k++) {
+        const bU = bb.upper[k]; const bL = bb.lower[k];
+        const kU = kc.upper[k]; const kL = kc.lower[k];
+        if (!isNaN(bU) && !isNaN(kL) && bL > kL && bU < kU) {
+          recentSqueezeCount++;
+        }
+      }
+
+      const hadRecentSqueeze = recentSqueezeCount >= SQUEEZE_MIN_BARS;
+      const squeezeReleased = hadRecentSqueeze && !currentSqueezeOn;
+
+      // Fresh release: squeeze was on within last FRESH_RELEASE_BARS bars
+      let freshRelease = false;
+      for (let k = 1; k <= FRESH_RELEASE_BARS && index - k >= 0; k++) {
+        const bU = bb.upper[index - k]; const bL = bb.lower[index - k];
+        const kU = kc.upper[index - k]; const kL = kc.lower[index - k];
+        if (!isNaN(bU) && !isNaN(kL) && bL > kL && bU < kU) {
+          freshRelease = true; break;
+        }
+      }
+
+      // --- HTF: 1H ATR (anti-repaint: completed bar only) ---
+      const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
+      if (!htf1hRef || htf1hRef.length < 15) return null;
+      const htfAtr1h = htfAtrCache1h ?? atr(htf1hRef, 14);
+      const atr1h = findAtr1h(currentCandle.t, htf1hRef, htfAtr1h);
+      if (isNaN(atr1h)) return null;
+
+      // --- HTF: 4H Consolidation regime (anti-repaint: completed bar only) ---
+      const htf4hRef = htf4hCandles ?? higherTimeframes["4h"];
+      if (!htf4hRef || htf4hRef.length < 30) return null;
+      const htfAtr4h = htfAtrCache4h ?? atr(htf4hRef, 14);
+      const last4hIdx = findLast4hIdx(currentCandle.t, htf4hRef);
+      if (last4hIdx < 0) return null;
+
+      const atr4h = findAtr4h(currentCandle.t, htf4hRef, htfAtr4h);
+      if (isNaN(atr4h) || atr4h <= 0) return null;
+
+      const startIdx = Math.max(0, last4hIdx - CONSOLIDATION_LOOKBACK + 1);
+      let rangeHigh4h = -Infinity;
+      let rangeLow4h = Infinity;
+      for (let j = startIdx; j <= last4hIdx; j++) {
+        if (htf4hRef[j].h > rangeHigh4h) rangeHigh4h = htf4hRef[j].h;
+        if (htf4hRef[j].l < rangeLow4h) rangeLow4h = htf4hRef[j].l;
+      }
+      const htfRange = rangeHigh4h - rangeLow4h;
+      const consThresholdAbs = params.consWidthMult.value * atr4h;
+      const isConsolidating = htfRange < consThresholdAbs;
+
+      // --- Volume SMA(20) ---
+      const volSma = volSmaCache ?? sma(candles.slice(0, index + 1).map(c => c.v), 20);
+      const volAvg20 = volSma[index];
+      const volMult = params.volMultiplier.value;
+      const volThreshold = !isNaN(volAvg20) ? volMult * volAvg20 : NaN;
+
+      const close = currentCandle.c;
+      const stopDist = atr1h * params.atrStopMult.value;
+
+      // --- Diagnostics ---
+      ctx.indicator("bbUpper", bbUpper);
+      ctx.indicator("bbLower", bbLower);
+      ctx.indicator("kcUpper", kcUpper);
+      ctx.indicator("kcLower", kcLower);
+      ctx.indicator("squeezeOn", currentSqueezeOn ? 1 : 0);
+      ctx.indicator("recentSqueezeCount", recentSqueezeCount);
+      ctx.indicator("atr1h", atr1h);
+      ctx.indicator("atr4h", atr4h);
+      ctx.indicator("htfRange4h", htfRange);
+      ctx.indicator("consThreshold", consThresholdAbs);
+      ctx.indicator("volAvg20", volAvg20);
+
+      // --- LONG: squeeze release + close above KC upper (Rule 4) + 4H consolidation + volume ---
+      const longSqueeze = ctx.track("L:squeeze_release", squeezeReleased && freshRelease, recentSqueezeCount, SQUEEZE_MIN_BARS);
+      const longBreakout = ctx.track("L:close_above_kc", close > kcUpper, close, kcUpper);
+      const longConsol = ctx.track("L:4h_consolidation", isConsolidating, htfRange, consThresholdAbs);
+      const longVol = ctx.track("L:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
+
+      if (longSqueeze && longBreakout && longConsol && longVol) {
+        return {
+          direction: "long",
+          entryPrice: null,
+          stopLoss: close - stopDist,
+          takeProfits: [],
+          comment: "Squeeze release long (4H consolidation)",
+        };
+      }
+
+      // --- SHORT: squeeze release + close below KC lower (Rule 4) + 4H consolidation + volume ---
+      const shortSqueeze = ctx.track("S:squeeze_release", squeezeReleased && freshRelease, recentSqueezeCount, SQUEEZE_MIN_BARS);
+      const shortBreakout = ctx.track("S:close_below_kc", close < kcLower, close, kcLower);
+      const shortConsol = ctx.track("S:4h_consolidation", isConsolidating, htfRange, consThresholdAbs);
+      const shortVol = ctx.track("S:vol_spike", !isNaN(volThreshold) && currentCandle.v > volThreshold, currentCandle.v, volThreshold);
+
+      if (shortSqueeze && shortBreakout && shortConsol && shortVol) {
+        return {
+          direction: "short",
+          entryPrice: null,
+          stopLoss: close + stopDist,
+          takeProfits: [],
+          comment: "Squeeze release short (4H consolidation)",
+        };
+      }
+
+      return null;
+    },
+
+    shouldExit(ctx: StrategyContext): { exit: boolean; comment: string } | null {
+      const { candles, index, currentCandle, positionDirection, positionEntryBarIndex } = ctx;
+      if (!positionDirection || positionEntryBarIndex === null) return null;
+
+      // Timeout first (mandatory — Rule 5)
+      const barsInTrade = index - positionEntryBarIndex;
+      if (barsInTrade >= params.timeoutBars.value) {
+        return { exit: true, comment: "Timeout" };
+      }
+
+      // Trailing Donchian channel exit (previous bar — anti-lookahead)
+      const dc = trailDcCache ?? donchian(candles, params.trailDcPeriod.value);
+      const close = currentCandle.c;
+
+      if (positionDirection === "long") {
+        const exitLevel = dc.lower[index - 1];
+        if (!isNaN(exitLevel) && close < exitLevel) {
+          return { exit: true, comment: "Trail DC" };
+        }
+      } else {
+        const exitLevel = dc.upper[index - 1];
+        if (!isNaN(exitLevel) && close > exitLevel) {
+          return { exit: true, comment: "Trail DC" };
+        }
+      }
+
+      return null;
+    },
+
+    getExitLevel(ctx: StrategyContext): number | null {
+      const { candles, index, positionDirection } = ctx;
+      if (!positionDirection) return null;
+
+      const dc = trailDcCache ?? donchian(candles, params.trailDcPeriod.value);
+
+      if (positionDirection === "long") {
+        const level = dc.lower[index - 1];
+        return isNaN(level) ? null : level;
+      } else {
+        const level = dc.upper[index - 1];
+        return isNaN(level) ? null : level;
+      }
+    },
+
+    computeLevels(ctx: StrategyContext, direction: "long" | "short") {
+      const { currentCandle, higherTimeframes } = ctx;
+
+      const htf1hRef = htf1hCandles ?? higherTimeframes["1h"];
+      if (!htf1hRef || htf1hRef.length < 15) return null;
+      const htfAtr = htfAtrCache1h ?? atr(htf1hRef, 14);
+      const atr1hVal = findAtr1h(currentCandle.t, htf1hRef, htfAtr);
+      if (isNaN(atr1hVal)) return null;
+
+      const stopDist = atr1hVal * params.atrStopMult.value;
+      const close = currentCandle.c;
+
+      if (direction === "long") {
+        return { stopLoss: close - stopDist, takeProfits: [] };
+      } else {
+        return { stopLoss: close + stopDist, takeProfits: [] };
+      }
+    },
+  };
+}

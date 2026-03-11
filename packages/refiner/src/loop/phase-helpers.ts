@@ -119,4 +119,81 @@ export const phaseHelpers = {
 
     return null;
   },
+
+  /**
+   * Compute effective per-variant budget based on how close the variant's
+   * best metrics are to the target criteria, plus a "lever" bonus when there
+   * is a clear optimization lever (many trades to filter, or good edge to relax).
+   *
+   * Proximity multiplier:
+   *   4-5 criteria passing → 2.0x
+   *   3 criteria passing   → 1.5x
+   *   2 criteria passing   → 1.0x
+   *   0-1 criteria passing → 0.6x
+   *
+   * Lever bonus (min 1.3x):
+   *   - numTrades > minTrades × 2 AND PF < minPF → optimizer can filter
+   *   - numTrades < minTrades × 0.8 AND PF >= minPF → optimizer can relax
+   *
+   * Final multiplier = max(proximity, lever), capped at baseBudget × 2.5.
+   */
+  computeEffectiveBudget(opts: {
+    baseBudget: number;
+    bestMetrics: { profitFactor: number; numTrades: number; maxDrawdownPct: number; avgR: number; winRate: number };
+    criteria: { minPF: number; minTrades: number; maxDD: number; minAvgR: number | null; minWR: number | null };
+  }): number {
+    const { baseBudget, bestMetrics, criteria } = opts;
+
+    // Count how many criteria are passing
+    let passing = 0;
+    let total = 0;
+
+    // PF
+    total++;
+    if (bestMetrics.profitFactor >= criteria.minPF) passing++;
+
+    // Trades
+    total++;
+    if (bestMetrics.numTrades >= criteria.minTrades) passing++;
+
+    // DD (lower is better)
+    total++;
+    if (bestMetrics.maxDrawdownPct <= criteria.maxDD) passing++;
+
+    // avgR (null gate = auto-pass)
+    total++;
+    if (criteria.minAvgR === null || bestMetrics.avgR >= criteria.minAvgR) passing++;
+
+    // WR (null gate = auto-pass)
+    total++;
+    if (criteria.minWR === null || bestMetrics.winRate >= criteria.minWR) passing++;
+
+    // Proximity multiplier
+    const ratio = total > 0 ? passing / total : 0;
+    let proximityMult: number;
+    if (ratio >= 0.8) {          // 4/5 or 5/5
+      proximityMult = 2.0;
+    } else if (ratio >= 0.6) {   // 3/5
+      proximityMult = 1.5;
+    } else if (ratio >= 0.4) {   // 2/5
+      proximityMult = 1.0;
+    } else {                     // 0/5 or 1/5
+      proximityMult = 0.6;
+    }
+
+    // Lever bonus: clear optimization lever present
+    let leverMult = 0;
+    const highTrades = bestMetrics.numTrades > criteria.minTrades * 2;
+    const lowPF = bestMetrics.profitFactor < criteria.minPF;
+    const lowTrades = bestMetrics.numTrades < criteria.minTrades * 0.8;
+    const highPF = bestMetrics.profitFactor >= criteria.minPF;
+
+    if ((highTrades && lowPF) || (lowTrades && highPF)) {
+      leverMult = 1.3;
+    }
+
+    const effectiveMult = Math.max(proximityMult, leverMult);
+    const cap = baseBudget * 2.5;
+    return Math.min(Math.round(baseBudget * effectiveMult), cap);
+  },
 };

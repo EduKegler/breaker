@@ -38,7 +38,7 @@ const DEFAULT_PARAMS: RangeRetestAdxMacdTimeoutParams = {
     description: "Volume spike threshold (X * SMA20 volume)",
   },
   retestWindow: {
-    value: 12, min: 4, max: 28, step: 2, optimizable: true,
+    value: 10, min: 4, max: 28, step: 2, optimizable: true,
     description: "Bars to wait for retest after initial breakout",
   },
   adxThreshold: {

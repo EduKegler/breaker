@@ -164,7 +164,12 @@ export async function generateVariant(opts: GenerateVariantOpts): Promise<Varian
   // ---- Pre-select next component combination ----
   const testedIds = new Set(allVariants.map((v) => v.id));
 
-  const preSelectedComponents = selectNextCombination(moduleContext.catalog, testedIds);
+  const variantHistory = allVariants.map((v) => ({
+    components: v.components,
+    bestScore: v.bestScore,
+  }));
+
+  const preSelectedComponents = selectNextCombination(moduleContext.catalog, testedIds, variantHistory);
   if (!preSelectedComponents) {
     log("\x1b[33mAll component combinations exhausted — cannot generate new variant\x1b[0m");
     return null;

@@ -32,6 +32,7 @@ import { emitEvent, closeLoggers } from "./stages/events.js";
 import { checkpoint } from "./stages/checkpoint.js";
 import { validateParamGuardrails, validateWalkForward, validateArchetypeWR, validateFreeVariableCount, validateStrategyStructure, validateProfitabilityRegression } from "./stages/guardrails.js";
 import { buildSessionSummary, buildConsoleSummary } from "./stages/summary.js";
+import type { VariantSummaryInfo } from "./stages/summary.js";
 import { runEngineInProcess } from "./stages/run-engine-in-process.js";
 import { runEngineChild } from "./stages/spawn-engine-child.js";
 import { optimizeStrategy } from "./stages/optimize.js";
@@ -54,7 +55,7 @@ import type { IterationMetadata } from "./stages/param-writer.js";
 import type { IterationState, LoopPhase } from "./types.js";
 import { VariantManager } from "./variant-manager.js";
 import { generateVariant } from "./variant-generator.js";
-import { switchToNewVariant } from "./variant-switch.js";
+import { switchToNewVariant, switchToExistingVariant } from "./variant-switch.js";
 import type { SwitchResult } from "./variant-switch.js";
 import { generateSeed } from "./seed-generator.js";
 import { applyRollback, applyB2Rollback } from "./loop-state.js";
@@ -124,8 +125,9 @@ function fmtSummary(summary: string): string {
     .replace(/;\s*/g, "\n         ; ");
 }
 
-function logIterHeader(iter: number, maxIter: number, phase: string, phaseIter: number): void {
-  const content = `  Iteration ${String(iter).padStart(2)}/${maxIter}  │  phase: ${phase.padEnd(11)}  │  phaseIter: ${phaseIter}  `;
+function logIterHeader(iter: number, maxIter: number, phase: string, phaseIter: number, variantId?: string): void {
+  const iterPart = `  Iteration ${String(iter).padStart(2)}/${maxIter}  │  phase: ${phase.padEnd(11)}  │  phaseIter: ${phaseIter}  `;
+  const content = variantId ? `${iterPart}│  ${variantId}  ` : iterPart;
   const bar = "═".repeat(content.length);
   console.log("");
   console.log(`${c.b}${c.cyn}╔${bar}╗${c.r}`);
@@ -301,9 +303,20 @@ export async function orchestrate(): Promise<void> {
     esmCacheStale = true;
     log(`${c.b}Active variant: ${activeVariant.id}${c.r} (${activeVariant.strategyFile})`);
   } else if (!activeVariant) {
-    // All variants plateaued/complete — need to generate a new one
-    needsVariantGeneration = true;
-    log(`No active variant — will generate new variant after setup`);
+    // All variants plateaued/complete — check for user-queued active variants first
+    const nextActive = variantMgr.findNextActive();
+    if (nextActive) {
+      variantMgr.reactivate(nextActive.id);
+      variantMgr.save();
+      cfg.strategyFile = nextActive.strategyFile;
+      cfg.checkpointDir = nextActive.checkpointDir;
+      cfg.paramHistoryFile = nextActive.paramHistoryFile;
+      esmCacheStale = true;
+      log(`Reactivating variant: ${c.b}${nextActive.id}${c.r}`);
+    } else {
+      needsVariantGeneration = true;
+      log(`No active variant — will generate new variant after setup`);
+    }
   }
 
   // 1g: Log variant switch decision
@@ -619,8 +632,26 @@ export async function orchestrate(): Promise<void> {
   let pendingVerdictOverride: { verdict: string; note: string } | undefined;
   let failedRestructures: RestructureFailure[] = [];
   let bestPFEver = initialMetrics.profitFactor ?? 0;
+  /** Best metrics snapshot for dynamic budget computation — updated only on checkpoint save. */
+  let bestVariantMetrics = {
+    profitFactor: initialMetrics.profitFactor ?? 0,
+    numTrades: initialMetrics.numTrades ?? 0,
+    maxDrawdownPct: initialMetrics.maxDrawdownPct ?? 100,
+    avgR: initialMetrics.avgR ?? 0,
+    winRate: initialMetrics.winRate ?? 0,
+  };
   /** Fingerprints of full param sets seen in this variant's lifetime. Detects historical repeats. */
   let seenParamFingerprints = new Set<string>();
+  /** Recent rejected suggestions (no-op/repeat) — fed back into prompt so Claude doesn't repeat them. */
+  let recentRejects: string[] = [];
+  /** Validation warnings from previous iteration — fed back into prompt (var cap, clamped values, etc.) */
+  let lastValidationWarnings: string[] = [];
+
+  // ---- Global best tracking (across all variants) ----
+  let globalBestScore = state.bestScore;
+  let globalBestPnl = state.bestPnl;
+  let globalBestIter = state.bestIter;
+  let globalBestVariantId = variantMgr.getActive()?.id ?? "unknown";
 
   // ============================================================
   // OPTIMIZE-FIRST LOOP
@@ -637,11 +668,11 @@ export async function orchestrate(): Promise<void> {
     state.iter = iter;
     state.globalIter++;
 
-    // Send ITER_START to the machine (increments phaseIterCount)
-    actor.send({ type: "ITER_START" });
+    // phaseIterCount is only incremented when a real change is confirmed
+    // (deferred ITER_START — avoids inflating count for no-op/repeat iterations)
     const mCtx = actor.getSnapshot().context;
     const currentPhase = actor.getSnapshot().value as LoopPhase;
-    logIterHeader(iter, cfg.maxIter, currentPhase, mCtx.phaseIterCount);
+    logIterHeader(iter, cfg.maxIter, currentPhase, mCtx.phaseIterCount, variantMgr.getActive()?.id);
 
     // Sync IterationState from machine for backwards compat
     state.currentPhase = currentPhase;
@@ -699,32 +730,48 @@ export async function orchestrate(): Promise<void> {
       variantMgr.save();
       logWarn(`Variant ${activeVar?.id ?? "?"} plateaued (${reason}).`);
 
-      // ---- Outer loop: generate new variant and continue ----
+      // ---- Outer loop: try reactivating queued variant, else generate new ----
       const remaining = cfg.maxIter - iter;
-      log(`${c.blu}${c.b}Generating new variant (${remaining} iterations remaining)...${c.r}`);
-
       let switchResult: SwitchResult | null = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        switchResult = await switchToNewVariant({
-          cfg,
-          moduleContext,
-          variantManager: variantMgr,
-          kbPath,
-          seedStrategyFile,
-          cancelSignal: shutdownController.signal,
-          currentMetrics,
-          currentAnalysis,
-          lastStrategyParams,
-          paramOverrides,
-          currentScore: state.bestScore,
-          bestScore: state.bestScore,
-          globalIter: state.globalIter,
-          candles,
-          effectiveWarmupBars,
-          scoringWeights: cfg.scoring.weights,
+
+      const nextActivePlateau = variantMgr.findNextActive();
+      if (nextActivePlateau) {
+        log(`${c.blu}${c.b}Reactivating queued variant: ${nextActivePlateau.id} (${remaining} iterations remaining)...${c.r}`);
+        switchResult = await switchToExistingVariant({
+          cfg, variantManager: variantMgr, variant: nextActivePlateau,
+          candles, effectiveWarmupBars, scoringWeights: cfg.scoring.weights,
         });
-        if (switchResult) break;
-        logWarn(`Variant generation attempt ${attempt + 1} failed — ${attempt === 0 ? "retrying..." : "giving up."}`);
+        if (switchResult) {
+          logOk(`Reactivated variant: ${c.b}${nextActivePlateau.id}${c.r} (baseline score=${switchResult.scoreResult.weighted.toFixed(1)})`);
+        } else {
+          logWarn(`Failed to reactivate ${nextActivePlateau.id} — falling back to generation`);
+        }
+      }
+
+      if (!switchResult) {
+        log(`${c.blu}${c.b}Generating new variant (${remaining} iterations remaining)...${c.r}`);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          switchResult = await switchToNewVariant({
+            cfg,
+            moduleContext,
+            variantManager: variantMgr,
+            kbPath,
+            seedStrategyFile,
+            cancelSignal: shutdownController.signal,
+            currentMetrics,
+            currentAnalysis,
+            lastStrategyParams,
+            paramOverrides,
+            currentScore: state.bestScore,
+            bestScore: state.bestScore,
+            globalIter: state.globalIter,
+            candles,
+            effectiveWarmupBars,
+            scoringWeights: cfg.scoring.weights,
+          });
+          if (switchResult) break;
+          logWarn(`Variant generation attempt ${attempt + 1} failed — ${attempt === 0 ? "retrying..." : "giving up."}`);
+        }
       }
       if (!switchResult) {
         logWarn("Catalog may be exhausted — exiting loop.");
@@ -747,18 +794,34 @@ export async function orchestrate(): Promise<void> {
       logOk(`New variant: ${c.b}${switchResult.variant.id}${c.r} (baseline score=${switchResult.scoreResult.weighted.toFixed(1)})`);
 
       // Reset loop state for new variant
+      success = false;
       lastRollbackReason = undefined;
       failedRestructures = [];
       lastContentHash = undefined;
       pendingVerdictOverride = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
+      bestVariantMetrics = {
+        profitFactor: currentMetrics.profitFactor ?? 0,
+        numTrades: currentMetrics.numTrades ?? 0,
+        maxDrawdownPct: currentMetrics.maxDrawdownPct ?? 100,
+        avgR: currentMetrics.avgR ?? 0,
+        winRate: currentMetrics.winRate ?? 0,
+      };
       seenParamFingerprints = new Set<string>();
+      recentRejects = [];
+      lastValidationWarnings = [];
 
       state.bestScore = switchResult.scoreResult.weighted;
       state.bestPnl = switchResult.pnl;
       state.bestIter = 0;
       state.previousPnl = switchResult.pnl;
       state.currentScore = switchResult.scoreResult.weighted;
+      if (switchResult.scoreResult.weighted > globalBestScore) {
+        globalBestScore = switchResult.scoreResult.weighted;
+        globalBestPnl = switchResult.pnl;
+        globalBestIter = iter;
+        globalBestVariantId = switchResult.variant.id;
+      }
 
       // Recreate actor with fresh state for new variant
       actor.stop();
@@ -778,6 +841,17 @@ export async function orchestrate(): Promise<void> {
         stage: "VARIANT_SWITCH", status: "info",
         message: `Switched to variant ${switchResult.variant.id} (baseline score=${switchResult.scoreResult.weighted.toFixed(1)})`,
       });
+      state.sessionMetrics.push({
+        iter,
+        variantId: switchResult.variant.id,
+        pnl: switchResult.pnl,
+        pf: switchResult.metrics.profitFactor ?? 0,
+        dd: switchResult.metrics.maxDrawdownPct ?? 0,
+        wr: switchResult.metrics.winRate ?? 0,
+        trades: switchResult.metrics.numTrades ?? 0,
+        avgR: switchResult.metrics.avgR ?? 0,
+        verdict: "baseline",
+      });
       continue;
     }
 
@@ -786,38 +860,65 @@ export async function orchestrate(): Promise<void> {
       esmCacheStale = true;
     }
 
-    // ---- Per-variant budget check ----
+    // ---- Per-variant budget check (dynamic) ----
     const variantItersUsed = variantMgr.getActive()?.iterationsUsed ?? 0;
-    if (variantItersUsed >= cfg.perVariantBudget) {
-      const budgetReason = `Per-variant budget exhausted (${variantItersUsed}/${cfg.perVariantBudget})`;
+    const effectiveBudget = phaseHelpers.computeEffectiveBudget({
+      baseBudget: cfg.perVariantBudget,
+      bestMetrics: bestVariantMetrics,
+      criteria: {
+        minPF: cfg.criteria.minPF ?? 1.3,
+        minTrades: cfg.criteria.minTrades ?? 50,
+        maxDD: cfg.criteria.maxDD ?? 10,
+        minAvgR: cfg.criteria.minAvgR ?? null,
+        minWR: cfg.criteria.minWR ?? null,
+      },
+    });
+    if (variantItersUsed >= effectiveBudget) {
+      const budgetReason = `Per-variant budget exhausted (${variantItersUsed}/${effectiveBudget})`;
       logWarn(budgetReason);
       variantMgr.markPlateaued(budgetReason, state.bestScore, state.bestPnl, state.bestIter, variantItersUsed);
       variantMgr.save();
 
-      log(`${c.blu}${c.b}Budget exhausted — generating new variant (${cfg.maxIter - iter} iterations remaining)...${c.r}`);
-
       let switchResult: SwitchResult | null = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        switchResult = await switchToNewVariant({
-          cfg,
-          moduleContext,
-          variantManager: variantMgr,
-          kbPath,
-          seedStrategyFile,
-          cancelSignal: shutdownController.signal,
-          currentMetrics,
-          currentAnalysis,
-          lastStrategyParams,
-          paramOverrides,
-          currentScore: state.bestScore,
-          bestScore: state.bestScore,
-          globalIter: state.globalIter,
-          candles,
-          effectiveWarmupBars,
-          scoringWeights: cfg.scoring.weights,
+
+      const nextActiveBudget = variantMgr.findNextActive();
+      if (nextActiveBudget) {
+        log(`${c.blu}${c.b}Budget exhausted — reactivating queued variant: ${nextActiveBudget.id} (${cfg.maxIter - iter} iterations remaining)...${c.r}`);
+        switchResult = await switchToExistingVariant({
+          cfg, variantManager: variantMgr, variant: nextActiveBudget,
+          candles, effectiveWarmupBars, scoringWeights: cfg.scoring.weights,
         });
-        if (switchResult) break;
-        logWarn(`Variant generation attempt ${attempt + 1} failed — ${attempt === 0 ? "retrying..." : "giving up."}`);
+        if (switchResult) {
+          logOk(`Reactivated variant: ${c.b}${nextActiveBudget.id}${c.r} (baseline score=${switchResult.scoreResult.weighted.toFixed(1)})`);
+        } else {
+          logWarn(`Failed to reactivate ${nextActiveBudget.id} — falling back to generation`);
+        }
+      }
+
+      if (!switchResult) {
+        log(`${c.blu}${c.b}Budget exhausted — generating new variant (${cfg.maxIter - iter} iterations remaining)...${c.r}`);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          switchResult = await switchToNewVariant({
+            cfg,
+            moduleContext,
+            variantManager: variantMgr,
+            kbPath,
+            seedStrategyFile,
+            cancelSignal: shutdownController.signal,
+            currentMetrics,
+            currentAnalysis,
+            lastStrategyParams,
+            paramOverrides,
+            currentScore: state.bestScore,
+            bestScore: state.bestScore,
+            globalIter: state.globalIter,
+            candles,
+            effectiveWarmupBars,
+            scoringWeights: cfg.scoring.weights,
+          });
+          if (switchResult) break;
+          logWarn(`Variant generation attempt ${attempt + 1} failed — ${attempt === 0 ? "retrying..." : "giving up."}`);
+        }
       }
       if (!switchResult) {
         logWarn("Catalog may be exhausted — exiting loop.");
@@ -838,18 +939,34 @@ export async function orchestrate(): Promise<void> {
       currentScoreResult = switchResult.scoreResult;
       logOk(`New variant: ${c.b}${switchResult.variant.id}${c.r} (baseline score=${switchResult.scoreResult.weighted.toFixed(1)})`);
 
+      success = false;
       lastRollbackReason = undefined;
       failedRestructures = [];
       lastContentHash = undefined;
       pendingVerdictOverride = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
+      bestVariantMetrics = {
+        profitFactor: currentMetrics.profitFactor ?? 0,
+        numTrades: currentMetrics.numTrades ?? 0,
+        maxDrawdownPct: currentMetrics.maxDrawdownPct ?? 100,
+        avgR: currentMetrics.avgR ?? 0,
+        winRate: currentMetrics.winRate ?? 0,
+      };
       seenParamFingerprints = new Set<string>();
+      recentRejects = [];
+      lastValidationWarnings = [];
 
       state.bestScore = switchResult.scoreResult.weighted;
       state.bestPnl = switchResult.pnl;
       state.bestIter = 0;
       state.previousPnl = switchResult.pnl;
       state.currentScore = switchResult.scoreResult.weighted;
+      if (switchResult.scoreResult.weighted > globalBestScore) {
+        globalBestScore = switchResult.scoreResult.weighted;
+        globalBestPnl = switchResult.pnl;
+        globalBestIter = iter;
+        globalBestVariantId = switchResult.variant.id;
+      }
 
       actor.stop();
       actor = createActor(breakerMachine, {
@@ -868,6 +985,17 @@ export async function orchestrate(): Promise<void> {
         stage: "VARIANT_SWITCH", status: "info",
         message: `Budget exhausted → variant ${switchResult.variant.id} (baseline score=${switchResult.scoreResult.weighted.toFixed(1)})`,
       });
+      state.sessionMetrics.push({
+        iter,
+        variantId: switchResult.variant.id,
+        pnl: switchResult.pnl,
+        pf: switchResult.metrics.profitFactor ?? 0,
+        dd: switchResult.metrics.maxDrawdownPct ?? 0,
+        wr: switchResult.metrics.winRate ?? 0,
+        trades: switchResult.metrics.numTrades ?? 0,
+        avgR: switchResult.metrics.avgR ?? 0,
+        verdict: "baseline",
+      });
       continue;
     }
 
@@ -876,7 +1004,7 @@ export async function orchestrate(): Promise<void> {
     emitEvent({
       artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
       stage: "ITER_START", status: "info",
-      message: `phase=${phase}`,
+      message: `phase=${phase} budget=${variantItersUsed}/${effectiveBudget}`,
     });
 
     // ---- Research stage (if in research phase, plateau-strong policy) ----
@@ -957,6 +1085,14 @@ export async function orchestrate(): Promise<void> {
       avgR: currentMetrics.avgR ?? 0,
     };
 
+    // Profitability regression baseline: use bestVariantMetrics (confirmed checkpoint)
+    // to avoid contamination by NEUTRAL iterations whose metrics were never saved.
+    // Fallback to preOptimizeMetrics for the first iteration (no checkpoint yet → defaults are 0).
+    const profRegressionBaseline = {
+      profitFactor: bestVariantMetrics.profitFactor || preOptimizeMetrics.pf,
+      avgR: bestVariantMetrics.avgR || preOptimizeMetrics.avgR,
+    };
+
     // ---- Step 1: Optimize (Claude suggests next changes) ----
     const phaseForOptimize = actor.getSnapshot().value as LoopPhase;
     const currentResearchBriefPath = actor.getSnapshot().context.researchBriefPath;
@@ -1015,6 +1151,8 @@ export async function orchestrate(): Promise<void> {
       bestScoreBreakdown,
       bestScore: actor.getSnapshot().context.bestScore,
       walkForward: (currentAnalysis ?? lastAnalysis)?.walkForward ?? null,
+      rejectedRepeats: recentRejects.length > 0 ? recentRejects : undefined,
+      lastValidationWarnings: lastValidationWarnings.length > 0 ? lastValidationWarnings : undefined,
     });
 
     emitEvent({
@@ -1068,10 +1206,14 @@ export async function orchestrate(): Promise<void> {
       continue;
     }
 
+    // Capture validation warnings for feedback in next iteration's prompt
+    lastValidationWarnings = optResult.data?.validationWarnings ?? [];
+
     if (!optResult.data?.changed) {
       actor.send({ type: "NO_CHANGE" });
       const noChangeCount = actor.getSnapshot().context.noChangeCount;
       logWarn(`⏸ No change (${noChangeCount}/${cfg.maxNoChange})${optSummary ? `\n         ${fmtSummary(optSummary)}` : ""}`);
+      recentRejects.push("Claude returned no change");
       emitEvent({
         artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
         stage: "NO_CHANGE", status: "info",
@@ -1089,7 +1231,6 @@ export async function orchestrate(): Promise<void> {
     }
 
     logOk(`🤖 Optimization complete.${optSummary ? `\n         ${fmtSummary(optSummary)}` : ""}`);
-    actor.send({ type: "CHANGE_APPLIED", isRestructure: effectivePhase !== "refine" });
 
     // ---- Step 2: Apply changes & guardrails ----
     if (effectivePhase === "refine" && optResult.data.paramOverrides) {
@@ -1133,6 +1274,16 @@ export async function orchestrate(): Promise<void> {
         actor.send({ type: "NO_CHANGE" });
         const noChangeCount = actor.getSnapshot().context.noChangeCount;
         logWarn(`⏸ No change — params identical after apply (${noChangeCount}/${cfg.maxNoChange})`);
+        const changedKeys = Object.keys(optResult.data!.paramOverrides!);
+        recentRejects.push(`params identical after apply (${changedKeys.join(", ")})`);
+        emitEvent({
+          artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+          stage: "NO_CHANGE", status: "info",
+          message: "no-op: identical params",
+          phase: effectivePhase,
+          claudeDurationMs: promptMetrics.claudeDurationMs,
+          verdict: "no_change",
+        });
         if (noChangeCount >= cfg.maxNoChange) {
           logWarn(`No-change limit reached — will escalate phase at next iteration.`);
         }
@@ -1146,9 +1297,28 @@ export async function orchestrate(): Promise<void> {
         actor.send({ type: "NO_CHANGE" });
         const noChangeCount = actor.getSnapshot().context.noChangeCount;
         logWarn(`  (noChangeCount=${noChangeCount}/${cfg.maxNoChange})`);
+        // Build a readable summary of what was attempted
+        const overrideEntries = Object.entries(optResult.data!.paramOverrides ?? {});
+        const desc = overrideEntries.length > 0
+          ? overrideEntries.map(([k, v]) => `${k}=${v}`).join(", ")
+          : "same param set";
+        recentRejects.push(`${desc} (historical repeat)`);
+        emitEvent({
+          artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+          stage: "NO_CHANGE", status: "info",
+          message: "historical repeat",
+          phase: effectivePhase,
+          claudeDurationMs: promptMetrics.claudeDurationMs,
+          verdict: "no_change",
+        });
         continue;
       }
       seenParamFingerprints.add(fingerprint);
+
+      // Real change confirmed — now signal state machine
+      actor.send({ type: "ITER_START" });
+      actor.send({ type: "CHANGE_APPLIED", isRestructure: false });
+      recentRejects = [];
 
       // 1b: Log which params changed with before→after
       for (const [k, v] of Object.entries(optResult.data.paramOverrides!)) {
@@ -1162,7 +1332,10 @@ export async function orchestrate(): Promise<void> {
       paramOverrides = newOverrides;
     } else {
       // Restructure: file was changed + passed typecheck in optimize step
-      // needsRebuild already set by CHANGE_APPLIED with isRestructure=true
+      actor.send({ type: "ITER_START" });
+      actor.send({ type: "CHANGE_APPLIED", isRestructure: true });
+      recentRejects = [];
+      // needsRebuild set by CHANGE_APPLIED with isRestructure=true
 
       // Guardrail: ensure restructure didn't strip mandatory structural patterns
       const afterSource = fs.readFileSync(cfg.strategyFile, "utf8");
@@ -1489,7 +1662,7 @@ export async function orchestrate(): Promise<void> {
     // Profitability regression gate: reject when BOTH PF and avgR worsened vs best
     const profRegViolations = validateProfitabilityRegression(
       { profitFactor: metrics.profitFactor ?? null, avgR: metrics.avgR ?? null },
-      { profitFactor: preOptimizeMetrics.pf, avgR: preOptimizeMetrics.avgR },
+      { profitFactor: profRegressionBaseline.profitFactor, avgR: profRegressionBaseline.avgR },
     );
     if (profRegViolations.length > 0 && effectiveVerdict === "accept") {
       logWarn(`⛔ Profitability regression: ${profRegViolations[0].reason} — forcing reject`);
@@ -1515,6 +1688,7 @@ export async function orchestrate(): Promise<void> {
 
     state.sessionMetrics.push({
       iter,
+      variantId: variantMgr.getActive()?.id,
       pnl: iterPnl,
       pf: metrics.profitFactor ?? 0,
       dd: metrics.maxDrawdownPct ?? 0,
@@ -1545,6 +1719,12 @@ export async function orchestrate(): Promise<void> {
           state.bestPnl = iterPnl;
           state.bestIter = iter;
           bestScoreBreakdown = scoreResult.raw;
+          if (scoreResult.weighted > globalBestScore) {
+            globalBestScore = scoreResult.weighted;
+            globalBestPnl = iterPnl;
+            globalBestIter = iter;
+            globalBestVariantId = variantMgr.getActive()?.id ?? globalBestVariantId;
+          }
           checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, engineTrades, paramCount, lastStrategyParams, analysis ?? undefined);
           // Enrich last metric before break (normally done at loop bottom)
           const lastMetric = state.sessionMetrics[state.sessionMetrics.length - 1];
@@ -1572,6 +1752,12 @@ export async function orchestrate(): Promise<void> {
           state.bestPnl = iterPnl;
           state.bestIter = iter;
           bestScoreBreakdown = scoreResult.raw;
+          if (scoreResult.weighted > globalBestScore) {
+            globalBestScore = scoreResult.weighted;
+            globalBestPnl = iterPnl;
+            globalBestIter = iter;
+            globalBestVariantId = variantMgr.getActive()?.id ?? globalBestVariantId;
+          }
           checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, engineTrades, paramCount, lastStrategyParams, analysis ?? undefined);
           const lastMetric2 = state.sessionMetrics[state.sessionMetrics.length - 1];
           if (lastMetric2) {
@@ -1594,30 +1780,46 @@ export async function orchestrate(): Promise<void> {
       variantMgr.markKilled(killReason, state.bestScore, state.bestPnl, state.bestIter, variantIters);
       variantMgr.save();
 
-      log(`${c.blu}${c.b}Generating new variant after early kill (${cfg.maxIter - iter} iterations remaining)...${c.r}`);
-
       let switchResult: SwitchResult | null = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        switchResult = await switchToNewVariant({
-          cfg,
-          moduleContext,
-          variantManager: variantMgr,
-          kbPath,
-          seedStrategyFile,
-          cancelSignal: shutdownController.signal,
-          currentMetrics,
-          currentAnalysis,
-          lastStrategyParams,
-          paramOverrides,
-          currentScore: state.bestScore,
-          bestScore: state.bestScore,
-          globalIter: state.globalIter,
-          candles,
-          effectiveWarmupBars,
-          scoringWeights: cfg.scoring.weights,
+
+      const nextActiveKill = variantMgr.findNextActive();
+      if (nextActiveKill) {
+        log(`${c.blu}${c.b}Early kill — reactivating queued variant: ${nextActiveKill.id} (${cfg.maxIter - iter} iterations remaining)...${c.r}`);
+        switchResult = await switchToExistingVariant({
+          cfg, variantManager: variantMgr, variant: nextActiveKill,
+          candles, effectiveWarmupBars, scoringWeights: cfg.scoring.weights,
         });
-        if (switchResult) break;
-        logWarn(`Variant generation attempt ${attempt + 1} failed — ${attempt === 0 ? "retrying..." : "giving up."}`);
+        if (switchResult) {
+          logOk(`Reactivated variant: ${c.b}${nextActiveKill.id}${c.r} (baseline score=${switchResult.scoreResult.weighted.toFixed(1)})`);
+        } else {
+          logWarn(`Failed to reactivate ${nextActiveKill.id} — falling back to generation`);
+        }
+      }
+
+      if (!switchResult) {
+        log(`${c.blu}${c.b}Generating new variant after early kill (${cfg.maxIter - iter} iterations remaining)...${c.r}`);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          switchResult = await switchToNewVariant({
+            cfg,
+            moduleContext,
+            variantManager: variantMgr,
+            kbPath,
+            seedStrategyFile,
+            cancelSignal: shutdownController.signal,
+            currentMetrics,
+            currentAnalysis,
+            lastStrategyParams,
+            paramOverrides,
+            currentScore: state.bestScore,
+            bestScore: state.bestScore,
+            globalIter: state.globalIter,
+            candles,
+            effectiveWarmupBars,
+            scoringWeights: cfg.scoring.weights,
+          });
+          if (switchResult) break;
+          logWarn(`Variant generation attempt ${attempt + 1} failed — ${attempt === 0 ? "retrying..." : "giving up."}`);
+        }
       }
       if (!switchResult) {
         logWarn("Catalog may be exhausted — exiting loop.");
@@ -1638,18 +1840,34 @@ export async function orchestrate(): Promise<void> {
       currentScoreResult = switchResult.scoreResult;
       logOk(`New variant: ${c.b}${switchResult.variant.id}${c.r} (baseline score=${switchResult.scoreResult.weighted.toFixed(1)})`);
 
+      success = false;
       lastRollbackReason = undefined;
       failedRestructures = [];
       lastContentHash = undefined;
       pendingVerdictOverride = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
+      bestVariantMetrics = {
+        profitFactor: currentMetrics.profitFactor ?? 0,
+        numTrades: currentMetrics.numTrades ?? 0,
+        maxDrawdownPct: currentMetrics.maxDrawdownPct ?? 100,
+        avgR: currentMetrics.avgR ?? 0,
+        winRate: currentMetrics.winRate ?? 0,
+      };
       seenParamFingerprints = new Set<string>();
+      recentRejects = [];
+      lastValidationWarnings = [];
 
       state.bestScore = switchResult.scoreResult.weighted;
       state.bestPnl = switchResult.pnl;
       state.bestIter = 0;
       state.previousPnl = switchResult.pnl;
       state.currentScore = switchResult.scoreResult.weighted;
+      if (switchResult.scoreResult.weighted > globalBestScore) {
+        globalBestScore = switchResult.scoreResult.weighted;
+        globalBestPnl = switchResult.pnl;
+        globalBestIter = iter;
+        globalBestVariantId = switchResult.variant.id;
+      }
 
       actor.stop();
       actor = createActor(breakerMachine, {
@@ -1672,6 +1890,17 @@ export async function orchestrate(): Promise<void> {
         maxTurnsUsed: promptMetrics.maxTurns,
         actualTurnsUsed: promptMetrics.actualTurns,
       });
+      state.sessionMetrics.push({
+        iter,
+        variantId: switchResult.variant.id,
+        pnl: switchResult.pnl,
+        pf: switchResult.metrics.profitFactor ?? 0,
+        dd: switchResult.metrics.maxDrawdownPct ?? 0,
+        wr: switchResult.metrics.winRate ?? 0,
+        trades: switchResult.metrics.numTrades ?? 0,
+        avgR: switchResult.metrics.avgR ?? 0,
+        verdict: "baseline",
+      });
       continue;
     }
 
@@ -1688,8 +1917,21 @@ export async function orchestrate(): Promise<void> {
       state.bestPnl = iterPnl;
       state.bestIter = iter;
       bestScoreBreakdown = scoreResult.raw;
+      if (scoreResult.weighted > globalBestScore) {
+        globalBestScore = scoreResult.weighted;
+        globalBestPnl = iterPnl;
+        globalBestIter = iter;
+        globalBestVariantId = variantMgr.getActive()?.id ?? globalBestVariantId;
+      }
       checkpoint.save(cfg.checkpointDir, strategyContent, metrics, iter, paramOverrides, engineTrades, paramCount, lastStrategyParams, analysis ?? undefined);
       lastRollbackReason = undefined; // Clear on successful checkpoint
+      bestVariantMetrics = {
+        profitFactor: metrics.profitFactor ?? 0,
+        numTrades: metrics.numTrades ?? 0,
+        maxDrawdownPct: metrics.maxDrawdownPct ?? 100,
+        avgR: metrics.avgR ?? 0,
+        winRate: metrics.winRate ?? 0,
+      };
       logOk(`💾 Checkpoint saved: iter=${iter} score=${scoreResult.weighted.toFixed(1)} PnL=$${iterPnl.toFixed(2)} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)}`);
       log(`${c.b}${c.grn}⭐ New best: Score=${scoreResult.weighted.toFixed(1)} PnL=$${iterPnl.toFixed(2)} at iter ${iter}${c.r}`);
 
@@ -1886,39 +2128,43 @@ export async function orchestrate(): Promise<void> {
 
   // ---- Session Summary ----
   const durationMs = Date.now() - startTime;
-  const summary = buildSessionSummary({
+  const variantSummaries: VariantSummaryInfo[] = allVariants.map(v => ({
+    id: v.id,
+    status: v.status,
+    bestScore: v.bestScore,
+    bestPnl: v.bestPnl,
+    iterationsUsed: v.iterationsUsed,
+    killReason: v.killReason,
+    plateauReason: v.plateauReason,
+  }));
+  const summaryOpts = {
     asset: cfg.asset,
     strategy: cfg.strategy,
     runId: cfg.runId,
     metrics: state.sessionMetrics,
+    variants: variantSummaries,
     durationMs,
+    totalIters: state.iter,
+    globalBestVariantId,
+    globalBestScore,
+    globalBestPnl,
+    globalBestIter,
     success,
-    bestIter: state.bestIter,
-    bestPnl: state.bestPnl,
-  });
+  };
+  const summary = buildSessionSummary(summaryOpts);
 
   emitEvent({
     artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset,
     iter: state.iter,
     stage: "LOOP_END",
     status: success ? "success" : "warn",
-    pnl: state.bestPnl,
-    message: success ? "Criteria passed" : `Max iter reached (phase=${state.currentPhase}, bestScore=${state.bestScore.toFixed(1)})`,
+    pnl: globalBestPnl,
+    message: success ? "Criteria passed" : `Max iter reached (phase=${state.currentPhase}, bestScore=${globalBestScore.toFixed(1)})`,
   });
 
   writeFileAtomic.sync(path.join(cfg.artifactsDir, "session-summary.txt"), summary, "utf8");
 
-  const consoleSummary = buildConsoleSummary({
-    asset: cfg.asset,
-    strategy: cfg.strategy,
-    runId: cfg.runId,
-    metrics: state.sessionMetrics,
-    durationMs,
-    success,
-    bestIter: state.bestIter,
-    bestPnl: state.bestPnl,
-    bestScore: state.bestScore,
-  });
+  const consoleSummary = buildConsoleSummary(summaryOpts);
   console.log(consoleSummary);
 
   // Send WhatsApp summary via @breaker/alerts

@@ -420,6 +420,107 @@ describe("VariantManager", () => {
     });
   });
 
+  describe("findNextActive", () => {
+    it("returns null when no variants have status active", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+
+      expect(mgr.findNextActive()).toBeNull();
+    });
+
+    it("returns null when the only active variant is the activeVariantId", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      // seed is active and is activeVariantId
+      expect(mgr.findNextActive()).toBeNull();
+    });
+
+    it("returns the first active variant different from activeVariantId", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+      mgr.createVariant({ "Entry Signal": "squeeze" }, "// v1");
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+
+      // Manually set a previously plateaued variant back to active
+      // (simulates user editing variant-registry.json)
+      const all = mgr.getAll();
+      (all[0] as { status: string }).status = "active";
+
+      expect(mgr.findNextActive()?.id).toBe("test-seed");
+    });
+
+    it("returns the first of multiple active variants", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+      mgr.createVariant({ "Entry Signal": "squeeze" }, "// v1");
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+      mgr.createVariant({ "Entry Signal": "orb" }, "// v2");
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+
+      // No activeVariantId — two manually set to active
+      const all = mgr.getAll();
+      (all[0] as { status: string }).status = "active";
+      (all[1] as { status: string }).status = "active";
+
+      const next = mgr.findNextActive();
+      expect(next?.id).toBe("test-seed");
+    });
+
+    it("skips activeVariantId when looking for next active", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      // seed is active and is activeVariantId
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+      mgr.createVariant({ "Entry Signal": "squeeze" }, "// v1");
+      // squeeze is now activeVariantId
+
+      // Manually set seed back to active too
+      const all = mgr.getAll();
+      (all[0] as { status: string }).status = "active";
+
+      // Should skip squeeze (activeVariantId) and return seed
+      expect(mgr.findNextActive()?.id).toBe("test-seed");
+    });
+  });
+
+  describe("reactivate", () => {
+    it("sets activeVariantId and resets iterationsUsed", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      mgr.incrementIterations();
+      mgr.incrementIterations();
+      mgr.markPlateaued("test", 50, 100, 5, 2);
+
+      // Manually set variant back to active (simulates user edit)
+      const all = mgr.getAll();
+      (all[0] as { status: string }).status = "active";
+
+      mgr.reactivate("test-seed");
+
+      expect(mgr.getActive()?.id).toBe("test-seed");
+      expect(mgr.getActive()?.iterationsUsed).toBe(0);
+    });
+
+    it("throws when there is already an activeVariantId", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      // seed is already active
+
+      expect(() => mgr.reactivate("test-seed")).toThrow(/already active/);
+    });
+
+    it("throws when variant does not exist", () => {
+      const mgr = new VariantManager(tmpDir, mainStrategyFile);
+      mgr.loadOrInit(mainStrategyFile, checkpointDir, paramHistoryFile);
+      mgr.markPlateaued("test", 0, 0, 0, 0);
+
+      expect(() => mgr.reactivate("nonexistent")).toThrow(/not found/);
+    });
+  });
+
   describe("multi-run simulation", () => {
     it("simulates 3 runs: seed → plateau → generate → plateau → generate", () => {
       // Run 1: seed refine → plateau
@@ -534,11 +635,10 @@ describe("selectNextCombination", () => {
   it("returns an untested combination when testedIds is empty", () => {
     const result = selectNextCombination(testCatalog, new Set());
     expect(result).not.toBeNull();
-    // Should only have required slots (not Entry Timing which is optional)
+    // Must have at least the required slots
     expect(Object.keys(result!)).toEqual(
       expect.arrayContaining(["Entry Signal", "Regime Filter", "Exit"]),
     );
-    expect(Object.keys(result!)).not.toContain("Entry Timing");
   });
 
   it("skips combinations already in testedIds", () => {
@@ -551,13 +651,13 @@ describe("selectNextCombination", () => {
     expect(buildVariantId(second!)).not.toBe(firstId);
   });
 
-  it("returns null when all required-slot combinations are exhausted", () => {
-    // 2 entry × 2 regime × 2 exit = 8 combinations
-    const allCombos: string[] = [];
+  it("falls back to optional-slot combos when required-only are exhausted", () => {
+    // 2 entry × 2 regime × 2 exit = 8 required-only combinations
+    const requiredCombos: string[] = [];
     for (const entry of ["donchian", "squeeze"]) {
       for (const regime of ["ema", "adx"]) {
         for (const exit of ["atr-trail", "timeout"]) {
-          allCombos.push(buildVariantId({
+          requiredCombos.push(buildVariantId({
             "Entry Signal": entry,
             "Regime Filter": regime,
             "Exit": exit,
@@ -566,8 +666,10 @@ describe("selectNextCombination", () => {
       }
     }
 
-    const result = selectNextCombination(testCatalog, new Set(allCombos));
-    expect(result).toBeNull();
+    // Should still return combos with optional Entry Timing slot
+    const result = selectNextCombination(testCatalog, new Set(requiredCombos));
+    expect(result).not.toBeNull();
+    expect(result!["Entry Timing"]).toBe("close");
   });
 
   it("prefers combinations with less-tested slugs (novelty)", () => {
@@ -584,14 +686,44 @@ describe("selectNextCombination", () => {
     expect(result!["Entry Signal"]).toBe("squeeze");
   });
 
-  it("ignores optional slots", () => {
-    const result = selectNextCombination(testCatalog, new Set());
+  it("includes optional slots with null option in cartesian product", () => {
+    // Entry Timing is optional — combos should include both with and without it
+    const allCombosWithout: string[] = [];
+    const tested = new Set<string>();
+
+    // Exhaust all combos without optional slot (2 entry × 2 regime × 2 exit = 8)
+    for (const entry of ["donchian", "squeeze"]) {
+      for (const regime of ["ema", "adx"]) {
+        for (const exit of ["atr-trail", "timeout"]) {
+          const id = buildVariantId({ "Entry Signal": entry, "Regime Filter": regime, "Exit": exit });
+          allCombosWithout.push(id);
+          tested.add(id);
+        }
+      }
+    }
+
+    // After exhausting non-optional combos, should still return combos with Entry Timing
+    const result = selectNextCombination(testCatalog, tested);
     expect(result).not.toBeNull();
-    // Entry Timing is optional — should not be in the result
-    expect(result!["Entry Timing"]).toBeUndefined();
+    expect(result!["Entry Timing"]).toBe("close");
   });
 
-  it("returns null for catalog with no required slots", () => {
+  it("returns null when all combos (required + optional) are exhausted", () => {
+    const all = new Set<string>();
+    // Without optional: 2 × 2 × 2 = 8
+    for (const entry of ["donchian", "squeeze"]) {
+      for (const regime of ["ema", "adx"]) {
+        for (const exit of ["atr-trail", "timeout"]) {
+          all.add(buildVariantId({ "Entry Signal": entry, "Regime Filter": regime, "Exit": exit }));
+          // With optional: 2 × 1 × 2 × 2 = 8
+          all.add(buildVariantId({ "Entry Signal": entry, "Entry Timing": "close", "Regime Filter": regime, "Exit": exit }));
+        }
+      }
+    }
+    expect(selectNextCombination(testCatalog, all)).toBeNull();
+  });
+
+  it("returns combo for catalog with only optional slots (non-null option exists)", () => {
     const allOptionalCatalog: ComponentCatalog = {
       slots: [
         {
@@ -601,11 +733,149 @@ describe("selectNextCombination", () => {
         },
       ],
     };
-    expect(selectNextCombination(allOptionalCatalog, new Set())).toBeNull();
+    // Optional slot with a candidate produces a valid combo (with the candidate)
+    const result = selectNextCombination(allOptionalCatalog, new Set());
+    expect(result).not.toBeNull();
+    expect(result!["Optional Slot"]).toBe("a");
+  });
+
+  it("returns null for catalog with only optional slots when all combos tested", () => {
+    const allOptionalCatalog: ComponentCatalog = {
+      slots: [
+        {
+          slotName: "Optional Slot",
+          candidates: [{ name: "A", slug: "a", description: "test" }],
+          optional: true,
+        },
+      ],
+    };
+    // The only non-empty combo is { "Optional Slot": "a" } → id "a"
+    expect(selectNextCombination(allOptionalCatalog, new Set(["a"]))).toBeNull();
   });
 
   it("returns null for empty catalog", () => {
     expect(selectNextCombination({ slots: [] }, new Set())).toBeNull();
+  });
+
+  // ---- Quality-based selection (with variant history) ----
+
+  const qualityCatalog: ComponentCatalog = {
+    slots: [
+      {
+        slotName: "Entry Signal",
+        candidates: [
+          { name: "Range breakout", slug: "range", description: "Range" },
+          { name: "Donchian Channel", slug: "donchian", description: "Donchian" },
+          { name: "ORB", slug: "orb", description: "ORB" },
+        ],
+      },
+      {
+        slotName: "Regime Filter",
+        candidates: [
+          { name: "EMA direction", slug: "ema", description: "EMA" },
+          { name: "ADX threshold", slug: "adx", description: "ADX" },
+        ],
+      },
+      {
+        slotName: "Exit",
+        candidates: [
+          { name: "Partial TP", slug: "partial-tp", description: "Partial" },
+          { name: "Timeout", slug: "timeout", description: "Time" },
+        ],
+      },
+    ],
+  };
+
+  it("prefers combinations with high-scoring slugs when history is provided", () => {
+    // range variants scored much higher than donchian/orb
+    const history = [
+      { components: { "Entry Signal": "range", "Regime Filter": "ema", "Exit": "partial-tp" }, bestScore: 60 },
+      { components: { "Entry Signal": "donchian", "Regime Filter": "adx", "Exit": "timeout" }, bestScore: 20 },
+      { components: { "Entry Signal": "orb", "Regime Filter": "ema", "Exit": "timeout" }, bestScore: 25 },
+      { components: { "Entry Signal": "range", "Regime Filter": "adx", "Exit": "timeout" }, bestScore: 55 },
+    ];
+
+    const tested = new Set(history.map(v =>
+      buildVariantId(v.components),
+    ));
+
+    const result = selectNextCombination(qualityCatalog, tested, history);
+    expect(result).not.toBeNull();
+    // Should pick a range-* variant because range has avg 57.5 vs donchian 20 vs orb 25
+    expect(result!["Entry Signal"]).toBe("range");
+  });
+
+  it("falls back to novelty sort when history is too small", () => {
+    // Only 2 variants — below threshold (3 required slots)
+    const history = [
+      { components: { "Entry Signal": "range", "Regime Filter": "ema", "Exit": "partial-tp" }, bestScore: 60 },
+      { components: { "Entry Signal": "range", "Regime Filter": "adx", "Exit": "timeout" }, bestScore: 55 },
+    ];
+
+    const tested = new Set(history.map(v =>
+      buildVariantId(v.components),
+    ));
+
+    const result = selectNextCombination(qualityCatalog, tested, history);
+    expect(result).not.toBeNull();
+    // Novelty sort prefers untested slugs — should pick donchian or orb (not range)
+    expect(["donchian", "orb"]).toContain(result!["Entry Signal"]);
+  });
+
+  it("uses slot mean for untested slugs (neutral prior)", () => {
+    // Slug scores per slot:
+    // Entry Signal: range=(60+55)/2=57.5, donchian=20, orb=untested→mean=(57.5+20)/2=38.75
+    // Regime Filter: ema=60, adx=(20+55)/2=37.5
+    // Exit: partial-tp=60, timeout=(20+55)/2=37.5
+    //
+    // Top untested combos:
+    // orb-ema-partial-tp: 38.75+60+60 = 158.75 ← untested orb gets slot mean, paired with best regime+exit
+    // range-ema-timeout:  57.5+60+37.5 = 155
+    // range-adx-partial-tp: 57.5+37.5+60 = 155
+    const history = [
+      { components: { "Entry Signal": "range", "Regime Filter": "ema", "Exit": "partial-tp" }, bestScore: 60 },
+      { components: { "Entry Signal": "donchian", "Regime Filter": "adx", "Exit": "timeout" }, bestScore: 20 },
+      { components: { "Entry Signal": "range", "Regime Filter": "adx", "Exit": "timeout" }, bestScore: 55 },
+    ];
+
+    const tested = new Set(history.map(v =>
+      buildVariantId(v.components),
+    ));
+
+    const result = selectNextCombination(qualityCatalog, tested, history);
+    expect(result).not.toBeNull();
+    // orb-ema-partial-tp wins because untested "orb" gets slot mean (38.75)
+    // paired with ema (60) + partial-tp (60) = 158.75 > range-ema-timeout (155)
+    // This correctly explores untested entries but pairs them with proven winners
+    expect(result!["Entry Signal"]).toBe("orb");
+    expect(result!["Regime Filter"]).toBe("ema");
+    expect(result!["Exit"]).toBe("partial-tp");
+  });
+
+  it("still works with no history (backward compatible)", () => {
+    const result = selectNextCombination(qualityCatalog, new Set());
+    expect(result).not.toBeNull();
+  });
+
+  it("quality sort prefers best exit when entry is equal", () => {
+    // All range variants — partial-tp scored much higher than timeout
+    const history = [
+      { components: { "Entry Signal": "range", "Regime Filter": "ema", "Exit": "partial-tp" }, bestScore: 65 },
+      { components: { "Entry Signal": "range", "Regime Filter": "adx", "Exit": "timeout" }, bestScore: 30 },
+      { components: { "Entry Signal": "donchian", "Regime Filter": "ema", "Exit": "timeout" }, bestScore: 25 },
+    ];
+
+    const tested = new Set(history.map(v =>
+      buildVariantId(v.components),
+    ));
+
+    const result = selectNextCombination(qualityCatalog, tested, history);
+    expect(result).not.toBeNull();
+    // Should prefer partial-tp exit (avg 65) over timeout (avg 27.5)
+    if (result!["Entry Signal"] === "range") {
+      // range-adx-partial-tp or range-ema-timeout — partial-tp scores higher
+      expect(result!["Exit"]).toBe("partial-tp");
+    }
   });
 });
 
