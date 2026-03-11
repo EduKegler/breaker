@@ -327,6 +327,14 @@ describe("buildModuleContext", () => {
     expect(ctx.stoppingCriteria).toContain("WR >= 50%");
   });
 
+  it("includes expectedTradesPerYear in M4 stopping criteria", () => {
+    const ctx = buildModuleContext(
+      { strategy: "trend-following", interval: "4H", criteria: {} },
+      "/fake/kb.md",
+    );
+    expect(ctx.stoppingCriteria).toContain("Expected trade frequency: 10-20 trades/year");
+  });
+
   it("uses restructureLocks from paramHistory", () => {
     const ctx = buildModuleContext(
       {
@@ -383,6 +391,17 @@ describe("MODULE_CRITERIA", () => {
 
   it("M1 has no WR gate", () => {
     expect(MODULE_CRITERIA.M1.minWR).toBeNull();
+  });
+
+  it("M4 has expected trade frequency 10-20/year", () => {
+    expect(MODULE_CRITERIA.M4.expectedTradesPerYear).toEqual({ min: 10, max: 20 });
+  });
+
+  it("all modules have expectedTradesPerYear defined", () => {
+    for (const [id, mc] of Object.entries(MODULE_CRITERIA)) {
+      expect(mc.expectedTradesPerYear).toBeDefined();
+      expect(mc.expectedTradesPerYear!.min).toBeLessThan(mc.expectedTradesPerYear!.max);
+    }
   });
 });
 

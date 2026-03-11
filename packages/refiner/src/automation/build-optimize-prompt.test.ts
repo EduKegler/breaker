@@ -1277,6 +1277,53 @@ describe("P1: diagnostic guide", () => {
     });
     expect(prompt).not.toContain("DIAGNOSTIC GUIDE");
   });
+
+  it("shows archetype drift warning for M4 with excessive trades", () => {
+    const m4Opts = {
+      ...baseOpts,
+      moduleContext: {
+        ...baseOpts.moduleContext,
+        moduleId: "M4", moduleName: "Trend Following", profile: "trend-following",
+        stoppingCriteria: "- Trades >= 30\n- PF >= 1.4",
+      } as ModuleContext,
+    };
+    const prompt = buildOptimizePrompt({
+      ...m4Opts,
+      metrics: makeMetrics({ numTrades: 100, profitFactor: 1.8, winRate: 50, avgWinR: 1.2, avgLossR: -0.5 }),
+      tradeAnalysis: null,
+    });
+    // 100 trades in 6m = ~200/year, M4 expects 10-20/year → drift warning
+    expect(prompt).toContain("ARCHETYPE DRIFT");
+    expect(prompt).toContain("SCALPING");
+  });
+
+  it("does not show archetype drift for M4 with expected trade count", () => {
+    const m4Opts = {
+      ...baseOpts,
+      moduleContext: {
+        ...baseOpts.moduleContext,
+        moduleId: "M4", moduleName: "Trend Following", profile: "trend-following",
+        stoppingCriteria: "- Trades >= 30\n- PF >= 1.4",
+      } as ModuleContext,
+    };
+    const prompt = buildOptimizePrompt({
+      ...m4Opts,
+      metrics: makeMetrics({ numTrades: 8, profitFactor: 1.8, winRate: 50, avgWinR: 1.2, avgLossR: -0.5 }),
+      tradeAnalysis: null,
+    });
+    // 8 trades in 6m = ~16/year, within 10-20 range → no drift
+    expect(prompt).not.toContain("ARCHETYPE DRIFT");
+  });
+
+  it("does not show archetype drift for M1 with high trade count", () => {
+    const prompt = buildOptimizePrompt({
+      ...baseOpts,
+      metrics: makeMetrics({ numTrades: 150, profitFactor: 1.8, winRate: 50, avgWinR: 1.2, avgLossR: -0.5 }),
+      tradeAnalysis: null,
+    });
+    // M1 expects 50-200/year, 150 in 6m = 300/year, within 2x max (400) → no drift
+    expect(prompt).not.toContain("ARCHETYPE DRIFT");
+  });
 });
 
 // ---------------------------------------------------------------------------

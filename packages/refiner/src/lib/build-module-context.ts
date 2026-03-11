@@ -197,11 +197,12 @@ export const MODULE_CRITERIA: Record<string, {
   wrWarnMax: number | null;    // soft warning threshold (archetype drift)
   wrRejectMax: number | null;  // hard reject threshold (archetype drift)
   expectedDegradation: number; // 0.3 = 30% backtest→live degradation
+  expectedTradesPerYear?: { min: number; max: number }; // archetype-expected trade frequency
 }> = {
-  M1: { minTrades: 50,  minPF: 1.3, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6, wrWarnMax: 50,  wrRejectMax: 65,  expectedDegradation: 0.3 },
-  M2: { minTrades: 80,  minPF: 1.3, maxDD: 8,  minWR: 50,   minAvgR: null, minPfRatio: 0.6, wrWarnMax: 75,  wrRejectMax: 80,  expectedDegradation: 0.3 },
-  M3: { minTrades: 50,  minPF: 1.4, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6, wrWarnMax: 60,  wrRejectMax: 70,  expectedDegradation: 0.3 },
-  M4: { minTrades: 30,  minPF: 1.4, maxDD: 12, minWR: null, minAvgR: 0.20, minPfRatio: 0.6, wrWarnMax: 55,  wrRejectMax: 65,  expectedDegradation: 0.3 },
+  M1: { minTrades: 50,  minPF: 1.3, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6, wrWarnMax: 50,  wrRejectMax: 65,  expectedDegradation: 0.3, expectedTradesPerYear: { min: 50, max: 200 } },
+  M2: { minTrades: 80,  minPF: 1.3, maxDD: 8,  minWR: 50,   minAvgR: null, minPfRatio: 0.6, wrWarnMax: 75,  wrRejectMax: 80,  expectedDegradation: 0.3, expectedTradesPerYear: { min: 80, max: 300 } },
+  M3: { minTrades: 50,  minPF: 1.4, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6, wrWarnMax: 60,  wrRejectMax: 70,  expectedDegradation: 0.3, expectedTradesPerYear: { min: 50, max: 200 } },
+  M4: { minTrades: 30,  minPF: 1.4, maxDD: 12, minWR: null, minAvgR: 0.20, minPfRatio: 0.6, wrWarnMax: 55,  wrRejectMax: 65,  expectedDegradation: 0.3, expectedTradesPerYear: { min: 10, max: 20 } },
 };
 
 /**
@@ -601,6 +602,10 @@ function formatStoppingCriteria(moduleId: string): string {
   }
 
   lines.push(`- pfRatio >= ${mc.minPfRatio}`);
+
+  if (mc.expectedTradesPerYear) {
+    lines.push(`- Expected trade frequency: ${mc.expectedTradesPerYear.min}-${mc.expectedTradesPerYear.max} trades/year`);
+  }
 
   return lines.join("\n");
 }

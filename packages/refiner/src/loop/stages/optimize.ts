@@ -52,7 +52,7 @@ interface ParamConstraint {
 const MODULE_CONSTRAINTS: Record<string, Record<string, ParamConstraint>> = {
   M1: {
     // Breakout — 8 var cap, ATR 1H stop, KB §1.6 min mult 3.0
-    // Aligned with strategy DEFAULT_PARAMS
+    // Keys MUST match strategy DEFAULT_PARAMS names exactly
     bbKcPeriod:        { min: 14, max: 30 },
     kcMult:            { min: 1.0, max: 2.5 },
     bbStdDev:          { min: 1.5, max: 2.5 },
@@ -64,31 +64,50 @@ const MODULE_CONSTRAINTS: Record<string, Record<string, ParamConstraint>> = {
   },
   M2: {
     // Mean Reversion — 6 var cap, ATR 1H wide/catastrophic stop, KB §1.6 min mult 3.0
+    // Keys MUST match strategy DEFAULT_PARAMS names exactly
     kcPeriod:          { min: 10, max: 30 },
     kcMultiplier:      { min: 1.0, max: 3.0 },
     rsi2Long:          { min: 5, max: 25 },
     rsi2Short:         { min: 75, max: 95 },
     adxThreshold:      { min: 15, max: 35 },
     timeoutBars:       { min: 8, max: 48 },
-    stopAtrMult:       { min: 3.0, max: 5.0 },
+    atrStopMult:       { min: 3.0, max: 5.0 },         // was stopAtrMult (name mismatch)
   },
   M3: {
     // Pullback — 8 var cap, ATR 1H stop as entry filter, KB §1.6 min mult 2.5
+    // Keys MUST match strategy DEFAULT_PARAMS names exactly
     emaPeriod:         { min: 20, max: 200 },
+    emaFast:           { min: 9, max: 50 },
+    emaSlow:           { min: 30, max: 200 },
     fibUpper:          { min: 38.2, max: 78.6 },
     fibLower:          { min: 23.6, max: 61.8 },
     rsiPeriod:         { min: 7, max: 21 },
     rsiThreshold:      { min: 30, max: 60 },
-    stopAtrMult:       { min: 2.5, hardFloor: 2.5, max: 4.0 },
+    rsiOversold:       { min: 20, max: 45 },
+    atrStopMult:       { min: 2.5, hardFloor: 2.5, max: 4.0 },  // was stopAtrMult (name mismatch)
     timeoutBars:       { min: 16, max: 64 },
   },
   M4: {
     // Trend Following — 6 var cap, Daily ATR stop >= 3.0
-    superTrendAtrPeriod: { min: 7, max: 20 },
-    superTrendMult:      { min: 2.0, max: 5.0 },
-    adxThreshold:        { min: 20, max: 35 },
-    stopAtrMult:         { min: 3.0, hardFloor: 3.0, max: 8.0 },
-    timeoutDays:         { min: 10, max: 30 },
+    // Keys MUST match strategy DEFAULT_PARAMS names exactly
+    stPeriod:          { min: 7, max: 20 },
+    stMultiplier:      { min: 3.0, hardFloor: 3.0, max: 6.0 },   // was superTrendMult 2.0-5.0. FXOpen: mult 5 for crypto swing
+    adxThreshold:      { min: 25, hardFloor: 25, max: 35 },       // was 20-35. KB §6.1: "ADX < 20 = no trend"
+    atrStopMult:       { min: 3.0, hardFloor: 3.0, max: 8.0 },   // was stopAtrMult (name mismatch)
+    chandelierMult:    { min: 3.0, hardFloor: 3.0, max: 6.0 },   // NEW. KB §6.2: "crypto needs 3.0-5.0"
+    timeoutBars:       { min: 60, max: 250 },                     // was timeoutDays 10-30. Now in bars (60=10d, 250≈42d on 4H)
+    minHoldBars:       { min: 3, hardFloor: 3, max: 12 },         // NEW. Prevents scalper exits within first 12h
+    // MACD variants
+    macdFast:          { min: 8, max: 16 },
+    macdSlow:          { min: 20, max: 34 },
+    exitEmaSlow:       { min: 30, max: 60 },
+    // Donchian variants
+    donchianPeriod:    { min: 10, max: 55 },
+    emaSlopePeriod:    { min: 20, max: 100 },
+    atrTrailMult:      { min: 3.0, hardFloor: 3.0, max: 6.0 },
+    // EMA variants
+    emaFast:           { min: 9, max: 50 },
+    emaSlow:           { min: 30, max: 200 },
   },
 };
 

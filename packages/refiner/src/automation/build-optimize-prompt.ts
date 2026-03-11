@@ -126,7 +126,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   );
   const designChecklistSection = buildDesignChecklistSection(criteria.designChecklist, globalIter);
   const filterSimsSection = buildFilterSimsSection(tradeAnalysis);
-  const diagnosticGuide = buildDiagnosticGuide(metrics, tradeAnalysis);
+  const diagnosticGuide = buildDiagnosticGuide(metrics, tradeAnalysis, moduleContext.moduleId);
   const overfitSection = buildOverfitSection(paramHistory, tradeAnalysis, mc.minPfRatio, metrics, moduleContext.moduleId);
 
   // Research brief — updated schema matching conduct-research.ts
@@ -288,6 +288,7 @@ function buildKBConstraintsBlock(mc: ModuleContext): string {
     lines.push(`- Stop: ATR Daily × multiplier. Multiplier MUST be >= 3.0 (hard floor from rule 4).`);
     lines.push(`- Exit precedence: hard stop first → trailing (SuperTrend flip) → timeout. Whichever triggers first.`);
     lines.push(`- Long/short asymmetry: test long-only, asymmetric sizing, and symmetric modes.`);
+    lines.push(`- MINIMUM HOLD: shouldExit() must skip trailing exits for the first minHoldBars bars after entry. Only hard SL and timeout may exit during hold period. This prevents scalper behavior where entries are reversed within hours before the trend develops.`);
   }
 
   if (mc.moduleId === "M2") {
@@ -338,7 +339,7 @@ function buildUnmetCriteria(
   return unmet;
 }
 
-function buildDiagnosticGuide(metrics: Metrics, tradeAnalysis: TradeAnalysis | null): string {
+function buildDiagnosticGuide(metrics: Metrics, tradeAnalysis: TradeAnalysis | null, moduleId?: string): string {
   const hints: string[] = [];
 
   const pf = metrics.profitFactor ?? 0;
@@ -346,6 +347,7 @@ function buildDiagnosticGuide(metrics: Metrics, tradeAnalysis: TradeAnalysis | n
   const avgWinR = metrics.avgWinR ?? 0;
   const avgLossR = Math.abs(metrics.avgLossR ?? 0);
   const rr = avgLossR > 0 ? avgWinR / avgLossR : 0;
+  const trades = metrics.numTrades ?? 0;
 
   if (pf < 1.0) {
     if (rr > 0 && rr < 1.2) hints.push("PF<1: R:R ratio near 1.0 → problem is exits (SL/TP placement). Widen TP or tighten SL.");
@@ -355,6 +357,23 @@ function buildDiagnosticGuide(metrics: Metrics, tradeAnalysis: TradeAnalysis | n
       const totalExits = tradeAnalysis.totalExitRows ?? 1;
       const signalPct = signalExits.reduce((s, e) => s + e.count, 0) / totalExits;
       if (signalPct > 0.6) hints.push("PF<1: >60% exits via timeout/signal → TP/SL never hit. Increase timeout bars or adjust targets.");
+    }
+  }
+
+  // Archetype drift: trade frequency check against expected range
+  if (moduleId) {
+    const mc = MODULE_CRITERIA[moduleId];
+    if (mc?.expectedTradesPerYear && trades > 0) {
+      // Assume ~6 month backtest window (standard config). Annualize conservatively.
+      const annualized = trades * 2;
+      if (annualized > mc.expectedTradesPerYear.max * 2) {
+        hints.push(
+          `ARCHETYPE DRIFT: ${trades} trades in backtest (~${annualized}/year). ` +
+          `Expected ${mc.expectedTradesPerYear.min}-${mc.expectedTradesPerYear.max} trades/year for this module. ` +
+          `This is SCALPING, not the intended archetype. ` +
+          `Increase entry filter thresholds (SuperTrend multiplier, ADX threshold) or add minimum hold period.`,
+        );
+      }
     }
   }
 

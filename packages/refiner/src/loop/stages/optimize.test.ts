@@ -226,7 +226,139 @@ describe("optimizeStrategy", () => {
     readSpy.mockRestore();
   });
 
-  // --- Fix 6: MODULE_CONSTRAINTS aligned with strategy DEFAULT_PARAMS ---
+  // --- MODULE_CONSTRAINTS aligned with strategy DEFAULT_PARAMS ---
+
+  // M4 constraints: stMultiplier hardFloor 3.0
+  it("refine M4: stMultiplier=2.0 clamped to hardFloor 3.0", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "stMultiplier": 2.0 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy({
+      ...baseOpts,
+      moduleContext: { ...stubModuleContext, moduleId: "M4", profile: "trend-following" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ stMultiplier: 3.0 });
+    expect(result.data?.validationWarnings?.some((w) => w.includes("hard floor"))).toBe(true);
+    readSpy.mockRestore();
+  });
+
+  // M4 constraints: adxThreshold hardFloor 25
+  it("refine M4: adxThreshold=20 clamped to hardFloor 25", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "adxThreshold": 20 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy({
+      ...baseOpts,
+      moduleContext: { ...stubModuleContext, moduleId: "M4", profile: "trend-following" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ adxThreshold: 25 });
+    expect(result.data?.validationWarnings?.some((w) => w.includes("hard floor"))).toBe(true);
+    readSpy.mockRestore();
+  });
+
+  // M4 constraints: chandelierMult hardFloor 3.0
+  it("refine M4: chandelierMult=2.0 clamped to hardFloor 3.0", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "chandelierMult": 2.0 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy({
+      ...baseOpts,
+      moduleContext: { ...stubModuleContext, moduleId: "M4", profile: "trend-following" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ chandelierMult: 3.0 });
+    expect(result.data?.validationWarnings?.some((w) => w.includes("hard floor"))).toBe(true);
+    readSpy.mockRestore();
+  });
+
+  // M4 constraints: atrStopMult hardFloor 3.0 (was stopAtrMult — name mismatch fixed)
+  it("refine M4: atrStopMult=2.5 clamped to hardFloor 3.0", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "atrStopMult": 2.5 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy({
+      ...baseOpts,
+      moduleContext: { ...stubModuleContext, moduleId: "M4", profile: "trend-following" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ atrStopMult: 3.0 });
+    expect(result.data?.validationWarnings?.some((w) => w.includes("hard floor"))).toBe(true);
+    readSpy.mockRestore();
+  });
+
+  // M4 constraints: minHoldBars hardFloor 3
+  it("refine M4: minHoldBars=1 clamped to hardFloor 3", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "minHoldBars": 1 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy({
+      ...baseOpts,
+      moduleContext: { ...stubModuleContext, moduleId: "M4", profile: "trend-following" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ minHoldBars: 3 });
+    expect(result.data?.validationWarnings?.some((w) => w.includes("hard floor"))).toBe(true);
+    readSpy.mockRestore();
+  });
+
+  // M3 constraints: atrStopMult hardFloor 2.5 (was stopAtrMult — name mismatch fixed)
+  it("refine M3: atrStopMult=1.5 clamped to hardFloor 2.5", async () => {
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '{ "paramOverrides": { "atrStopMult": 1.5 } }',
+      stderr: "", timedOut: false,
+    } as any);
+    const readSpy = vi.spyOn(fs, "readFileSync")
+      .mockReturnValueOnce("// same")
+      .mockReturnValueOnce("// same");
+
+    const result = await optimizeStrategy({
+      ...baseOpts,
+      moduleContext: { ...stubModuleContext, moduleId: "M3", profile: "pullback" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.paramOverrides).toEqual({ atrStopMult: 2.5 });
+    expect(result.data?.validationWarnings?.some((w) => w.includes("hard floor"))).toBe(true);
+    readSpy.mockRestore();
+  });
 
   it("refine: bbKcPeriod clamped to constraint range", async () => {
     vi.mocked(execa).mockResolvedValue({
