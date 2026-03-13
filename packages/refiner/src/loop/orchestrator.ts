@@ -44,7 +44,7 @@ import { compareScores } from "./stages/compare-scores.js";
 import { buildOptimizePrompt, validateSlugComponents } from "../automation/build-optimize-prompt.js";
 import type { RestructureFailure } from "../automation/build-optimize-prompt.js";
 import { buildFixPrompt } from "../automation/build-fix-prompt.js";
-import { buildModuleContext, MODULE_CRITERIA, computeStretchCriteria, getKbSection } from "../lib/build-module-context.js";
+import { buildModuleContext, MODULE_CRITERIA, computeStretchCriteria, getKbSection, getStartingComponents } from "../lib/build-module-context.js";
 import { paramWriter } from "./stages/param-writer.js";
 import { conductResearch } from "./stages/research.js";
 import { safeJsonParse } from "../lib/safe-json.js";
@@ -310,7 +310,8 @@ export async function orchestrate(): Promise<void> {
   const seedCheckpointDir = cfg.checkpointDir;
   const seedParamHistoryFile = cfg.paramHistoryFile;
   const variantMgr = new VariantManager(cfg.strategyDir, seedStrategyFile);
-  variantMgr.loadOrInit(seedStrategyFile, seedCheckpointDir, seedParamHistoryFile);
+  const seedComponents = getStartingComponents(moduleContext.moduleId);
+  variantMgr.loadOrInit(seedStrategyFile, seedCheckpointDir, seedParamHistoryFile, seedComponents);
   // Tracks when ESM module cache is stale (seed generated, variant switch, restructure).
   // Forces child-process backtest path since factory() would return old compiled code.
   let esmCacheStale = seedGenerated;
@@ -1986,10 +1987,21 @@ export async function orchestrate(): Promise<void> {
       logOk(`💾 Checkpoint saved: iter=${iter} score=${scoreResult.weighted.toFixed(1)} PnL=$${iterPnl.toFixed(2)} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)}`);
       log(`${c.b}${c.grn}⭐ New best: Score=${scoreResult.weighted.toFixed(1)} PnL=$${iterPnl.toFixed(2)} at iter ${iter}${c.r}`);
 
-      // Detect restructure→refine transition: exploit the new architecture's params
+      // Detect restructure→refine transition: reload factory so refine sees new params
       if (phaseBeforeCheckpoint === "restructure" && phaseAfterCheckpoint === "refine") {
-        esmCacheStale = true;
-        logDim(`Restructure checkpoint → refine transition (will use child-process for ESM cache freshness)`);
+        const distPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");
+        const freshMod = await import(`${distPath}?t=${Date.now()}`) as Record<string, unknown>;
+        const freshKey = Object.keys(freshMod).find(k => typeof freshMod[k] === "function" && k.startsWith("create"));
+        if (freshKey) {
+          factory = freshMod[freshKey] as StrategyFactory;
+          esmCacheStale = false;
+          lastStrategyParams = factory(paramOverrides).params;
+          paramCount = countOptimizableParams(lastStrategyParams);
+          logDim(`Restructure checkpoint → refine: factory reloaded (${freshKey}), ${paramCount} params`);
+        } else {
+          esmCacheStale = true;
+          logWarn(`Restructure checkpoint → refine: factory reload failed, falling back to child-process`);
+        }
       }
     } else if (scoreResult.weighted > bestScore && !meetsMinTrades) {
       logWarn(`⚠ Score ${scoreResult.weighted.toFixed(1)} is best but trades=${metrics.numTrades} < minTrades=${cfg.criteria.minTrades} — not saving checkpoint`);

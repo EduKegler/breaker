@@ -71,7 +71,7 @@
       ]
     },
     "trend-following": {
-      "minPF": 1.4, "maxDD": 12, "minTrades": 30, "minAvgR": 0.20,
+      "minPF": 1.4, "maxDD": 12, "minTrades": 15, "minAvgR": 0.20,
       "maxIterations": 15, "maxFreeVariables": 6
     }
   },

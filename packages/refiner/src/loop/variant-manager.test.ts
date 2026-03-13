@@ -901,12 +901,10 @@ describe("estimateMaxVars", () => {
     expect(estimateMaxVars(combo, slotMap)).toBe(2); // 0 + 2
   });
 
-  it("adds fixed var overhead when moduleId is provided", () => {
+  it("does not add fixed overhead (varCap already includes it)", () => {
     const combo = { "Entry Signal": "donchian", "Regime Filter": "adx" };
-    // M1 overhead = 3 (volume + ATR stop + timeout)
-    expect(estimateMaxVars(combo, slotMap, "M1")).toBe(6); // 2 + 1 + 3
-    // M4 overhead = 2 (stop + timeout)
-    expect(estimateMaxVars(combo, slotMap, "M4")).toBe(5); // 2 + 1 + 2
+    // Only slot vars: 2 + 1 = 3 (no overhead added)
+    expect(estimateMaxVars(combo, slotMap)).toBe(3);
   });
 
   it("returns 0 for empty combo", () => {
@@ -947,16 +945,16 @@ describe("selectNextCombination with varCap", () => {
   };
 
   it("filters out combos that exceed varCap", () => {
-    // Slot vars: Entry(2) + Trail(2) = 4, plus M4 overhead(2) = 6
-    // With varCap=5, combos with max vars > 5 are excluded
-    // All combos have slot max 4, so with M4 overhead(2) = 6 > 5 → all filtered
-    const result = selectNextCombination(budgetCatalog, new Set(), { varCap: 5, moduleId: "M4" });
+    // Slot vars: Entry(max 2) + Trail(max 2) = 4
+    // With varCap=3, all combos exceed → null
+    const result = selectNextCombination(budgetCatalog, new Set(), { varCap: 3 });
     expect(result).toBeNull();
   });
 
   it("allows combos within varCap", () => {
-    // With varCap=6: slot max 4 + M4 overhead(2) = 6 ≤ 6 → allowed
-    const result = selectNextCombination(budgetCatalog, new Set(), { varCap: 6, moduleId: "M4" });
+    // Slot vars: Entry(max 2) + Trail(max 2) = 4
+    // With varCap=4: 4 ≤ 4 → allowed
+    const result = selectNextCombination(budgetCatalog, new Set(), { varCap: 4 });
     expect(result).not.toBeNull();
   });
 

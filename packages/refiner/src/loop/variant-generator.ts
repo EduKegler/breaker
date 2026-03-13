@@ -173,7 +173,6 @@ export async function generateVariant(opts: GenerateVariantOpts): Promise<Varian
     moduleContext.catalog, testedIds, {
       variantHistory,
       varCap: moduleContext.varCap,
-      moduleId: moduleContext.moduleId,
     },
   );
   if (!preSelectedComponents) {

@@ -129,6 +129,7 @@ export class VariantManager {
     mainStrategyFile: string,
     seedCheckpointDir: string,
     seedParamHistoryFile: string,
+    seedComponents?: Record<string, string>,
   ): void {
     if (fs.existsSync(this.registryPath)) {
       const raw = fs.readFileSync(this.registryPath, "utf8");
@@ -139,7 +140,7 @@ export class VariantManager {
     const seedId = path.basename(mainStrategyFile, ".ts");
     const seed: VariantInfo = {
       id: seedId,
-      components: {},
+      components: seedComponents ?? {},
       strategyFile: mainStrategyFile,
       checkpointDir: seedCheckpointDir,
       paramHistoryFile: seedParamHistoryFile,
@@ -526,27 +527,19 @@ function expectedQuality(
  * average bestScore. Untested slugs receive the slot mean as neutral prior.
  */
 /**
- * Non-slot vars from KB variable budget tables (ATR stop, timeout, volume, etc.).
- * These consume var budget but aren't swappable catalog slots.
- * Source: docs/knowledge-base.md §5 (per-module variable budget tables).
- */
-const FIXED_VAR_OVERHEAD: Record<string, number> = {
-  M1: 3, // Volume(1) + ATR stop(1) + Timeout(1)
-  M2: 1, // Timeout(1) — catastrophic stop is optional
-  M3: 2, // ATR stop(1) + Timeout(1)
-  M4: 2, // Stop(1) + Timeout(1)
-};
-
-/**
  * Estimate max variable count for a combination using per-slot typicalVars.
  * Parses "1-2" → 2 (takes upper bound for conservative filtering).
+ *
+ * Note: varCap comes from the KB's "Variable budget (N max)" which already
+ * includes non-slot overhead (ATR stop, timeout, etc.). Adding overhead here
+ * would double-count, causing ALL combos to be filtered in modules where
+ * slot max sum + overhead > varCap (e.g. M3: 8 + 2 = 10 > 8).
  *
  * @param slotMap - Map of slotName → CatalogSlot for O(1) lookups.
  */
 export function estimateMaxVars(
   combo: Record<string, string>,
   slotMap: Map<string, CatalogSlot>,
-  moduleId?: string,
 ): number {
   let total = 0;
   for (const slotName of Object.keys(combo)) {
@@ -555,16 +548,12 @@ export function estimateMaxVars(
     const parts = slot.typicalVars.split("-").map(Number).filter((n) => !Number.isNaN(n));
     total += parts.length > 0 ? parts[parts.length - 1] : 0;
   }
-  if (moduleId) {
-    total += FIXED_VAR_OVERHEAD[moduleId] ?? 0;
-  }
   return total;
 }
 
 export interface SelectNextOpts {
   variantHistory?: VariantPerformance[];
   varCap?: number;
-  moduleId?: string;
 }
 
 export function selectNextCombination(
@@ -574,7 +563,7 @@ export function selectNextCombination(
 ): Record<string, string> | null {
   if (catalog.slots.length === 0) return null;
 
-  const { variantHistory, varCap, moduleId } = opts ?? {};
+  const { variantHistory, varCap } = opts ?? {};
   const combos = cartesianProduct(catalog.slots);
 
   let untested = combos.filter((combo) => {
@@ -589,7 +578,7 @@ export function selectNextCombination(
   if (varCap != null) {
     const slotMap = new Map(catalog.slots.map((s) => [s.slotName, s]));
     untested = untested.filter(
-      (combo) => estimateMaxVars(combo, slotMap, moduleId) <= varCap,
+      (combo) => estimateMaxVars(combo, slotMap) <= varCap,
     );
     if (untested.length === 0) return null;
   }
