@@ -19,18 +19,16 @@ export const SizingSchema = z.object({
   cashPerTrade: z.number().positive(),
 });
 
-export const CoinStrategySchema = z.object({
-  name: z.string().min(1),
-  interval: z.enum(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "8h", "12h", "1d"]),
-  warmupBars: z.number().int().positive().default(200),
-  autoTradingEnabled: z.boolean().default(false),
-  moduleType: z.enum(["breakout", "mean-reversion", "pullback", "trend-following"]),
+export const ModuleTypeEnum = z.enum(["breakout", "mean-reversion", "pullback", "trend-following"]);
+
+/** Per-strategy overrides applied to auto-discovered strategies. */
+export const StrategyOverrideSchema = z.object({
+  autoTradingEnabled: z.boolean().optional(),
 });
 
 export const CoinConfigSchema = z.object({
   coin: z.string().min(1),
   leverage: z.number().int().positive(),
-  strategies: z.array(CoinStrategySchema).min(1),
 });
 
 export const ExchangeConfigSchema = z.object({
@@ -38,6 +36,8 @@ export const ExchangeConfigSchema = z.object({
   port: z.number().int().positive().default(3200),
   gatewayUrl: z.string().url().default("http://localhost:3100"),
   coins: z.array(CoinConfigSchema).min(1),
+  /** Per-strategy overrides applied to auto-discovered strategies. */
+  strategyOverrides: z.record(StrategyOverrideSchema).default({}),
   dataSource: z.enum(["binance", "hyperliquid"]).default("binance"),
   marginType: z.enum(["isolated", "cross"]).default("isolated"),
   guardrails: GuardrailsSchema,
@@ -49,7 +49,7 @@ export const ExchangeConfigSchema = z.object({
 
 export type Guardrails = z.infer<typeof GuardrailsSchema>;
 export type Sizing = z.infer<typeof SizingSchema>;
-export type CoinStrategy = z.infer<typeof CoinStrategySchema>;
+export type StrategyOverride = z.infer<typeof StrategyOverrideSchema>;
 export type CoinConfig = z.infer<typeof CoinConfigSchema>;
 export type ExchangeConfig = z.infer<typeof ExchangeConfigSchema>;
-export type ModuleType = CoinStrategy["moduleType"];
+export type ModuleType = z.infer<typeof ModuleTypeEnum>;

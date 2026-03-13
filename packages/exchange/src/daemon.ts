@@ -4,9 +4,10 @@ import { fileURLToPath } from "node:url";
 import { Hyperliquid } from "hyperliquid";
 import { isMainModule } from "@breaker/kit";
 import * as deployed from "@breaker/backtest/deployed";
+import { deployedManifest } from "@breaker/backtest/deployed";
 import { computeMinWarmupBars } from "@breaker/backtest";
-import type { CandleInterval } from "@breaker/backtest";
 import { ExchangeConfigSchema, type ExchangeConfig } from "./types/config.js";
+import { resolveEffectiveStrategies } from "./domain/resolve-effective-strategies.js";
 import { loadEnv } from "./lib/load-env.js";
 import { logger } from "./lib/logger.js";
 import { SqliteStore } from "./adapters/sqlite-store.js";
@@ -52,14 +53,21 @@ const strategyFactoryCache = new Map<string, () => import("@breaker/backtest").S
 function resolveStrategyFactory(name: string): () => import("@breaker/backtest").Strategy {
   const cached = strategyFactoryCache.get(name);
   if (cached) return cached;
+
   const mod = deployed as Record<string, unknown>;
-  const factoryKey = Object.keys(mod).find(
-    (k) => typeof mod[k] === "function" && k.toLowerCase().includes(name.replace(/-/g, "")),
-  );
-  if (!factoryKey) {
-    const available = Object.keys(mod).filter((k) => typeof mod[k] === "function");
+
+  // Primary: manifest-based lookup (O(1) vs O(n) key scan)
+  const entry = deployedManifest.find(e => e.strategyName === name);
+  const factoryKey = entry?.factoryName
+    ?? Object.keys(mod).find(
+      (k) => typeof mod[k] === "function" && k.toLowerCase().includes(name.replace(/-/g, "")),
+    );
+
+  if (!factoryKey || typeof mod[factoryKey] !== "function") {
+    const available = deployedManifest.map(e => e.strategyName);
     throw new Error(`Unknown strategy: ${name}. Available: ${available.join(", ")}. Promote strategies to deployed/ first.`);
   }
+
   const factory = mod[factoryKey] as () => import("@breaker/backtest").Strategy;
   strategyFactoryCache.set(name, factory);
   return factory;
@@ -189,6 +197,12 @@ async function main() {
   const allCoins = config.coins.map((c) => c.coin);
   logger.info({ mode: config.mode, coins: allCoins, dryRun: isDryRun }, "Starting exchange daemon");
 
+  const effectiveStrategies = resolveEffectiveStrategies(config, deployedManifest);
+  logger.info(
+    { strategies: effectiveStrategies.map(s => `${s.coin}:${s.name}:${s.interval}`) },
+    "Resolved effective strategies",
+  );
+
   // Initialize adapters
   const dataDir = join(__dirname, "../data");
   mkdirSync(dataDir, { recursive: true });
@@ -281,10 +295,8 @@ async function main() {
     logger.info({ todayPnl }, "Orchestrator seeded with today's realized PnL from DB");
   }
 
-  for (const coinCfg of config.coins) {
-    for (const strat of coinCfg.strategies) {
-      orchestrator.registerModule(`${coinCfg.coin}:${strat.name}`, strat.moduleType);
-    }
+  for (const es of effectiveStrategies) {
+    orchestrator.registerModule(`${es.coin}:${es.name}`, es.moduleType);
   }
 
   orchestrator.setDecisionCallback((d) => {
@@ -297,16 +309,14 @@ async function main() {
 
   // CandleStreamer deduplication: key = "COIN:interval"
   const streamers = new Map<string, CandleStreamer>();
-  for (const coinCfg of config.coins) {
-    for (const strat of coinCfg.strategies) {
-      const key = `${coinCfg.coin}:${strat.interval}`;
-      if (!streamers.has(key)) {
-        streamers.set(key, new CandleStreamer({
-          coin: coinCfg.coin,
-          interval: strat.interval,
-          dataSource: config.dataSource,
-        }));
-      }
+  for (const es of effectiveStrategies) {
+    const key = `${es.coin}:${es.interval}`;
+    if (!streamers.has(key)) {
+      streamers.set(key, new CandleStreamer({
+        coin: es.coin,
+        interval: es.interval,
+        dataSource: config.dataSource,
+      }));
     }
   }
 
@@ -315,60 +325,49 @@ async function main() {
   // Register candle broadcast: 1 listener per coin on the streamer (not per runner).
   // This prevents duplicate WS broadcasts when a coin has multiple strategies.
   const broadcastedStreamers = new Set<string>();
-  for (const coinCfg of config.coins) {
-    for (const strat of coinCfg.strategies) {
-      const key = `${coinCfg.coin}:${strat.interval}`;
-      if (broadcastedStreamers.has(key)) continue;
-      broadcastedStreamers.add(key);
-      const streamer = streamers.get(key);
-      if (!streamer) continue;
-      streamer.on("candle:tick", (candle) => {
-        wsBroker.broadcastEvent("candle", { ...candle, coin: coinCfg.coin });
-      });
-    }
+  for (const es of effectiveStrategies) {
+    const key = `${es.coin}:${es.interval}`;
+    if (broadcastedStreamers.has(key)) continue;
+    broadcastedStreamers.add(key);
+    const streamer = streamers.get(key);
+    if (!streamer) continue;
+    streamer.on("candle:tick", (candle) => {
+      wsBroker.broadcastEvent("candle", { ...candle, coin: es.coin });
+    });
   }
 
   // StrategyRunner per (coin, strategy)
   const runners: StrategyRunner[] = [];
-  for (const coinCfg of config.coins) {
-    for (const strat of coinCfg.strategies) {
-      const key = `${coinCfg.coin}:${strat.interval}`;
-      const streamer = streamers.get(key)!;
-      const strategy = createStrategy(strat.name);
+  for (const es of effectiveStrategies) {
+    const key = `${es.coin}:${es.interval}`;
+    const streamer = streamers.get(key)!;
+    const strategy = createStrategy(es.name);
 
-      const minRequired = computeMinWarmupBars(strategy, strat.interval as CandleInterval);
-      const effectiveWarmup = Math.max(strat.warmupBars, minRequired);
-      if (minRequired > strat.warmupBars) {
-        log.warn(
-          { coin: coinCfg.coin, strategy: strat.name, configured: strat.warmupBars, required: minRequired, effective: effectiveWarmup },
-          "Config warmupBars is below strategy minimum — auto-corrected",
-        );
-      }
+    const warmupBars = computeMinWarmupBars(strategy, es.interval);
 
-      runners.push(new StrategyRunner({
-        config,
-        coin: coinCfg.coin,
-        leverage: coinCfg.leverage,
-        interval: strat.interval as CandleInterval,
-        warmupBars: effectiveWarmup,
-        autoTradingEnabled: strat.autoTradingEnabled,
-        strategy,
-        strategyConfigName: strat.name,
-        streamer,
-        positionBook,
-        signalHandlerDeps,
-        eventLog,
-        orchestrator,
-        moduleType: strat.moduleType,
-        onStaleData: ({ lastCandleAt, silentMs }) => {
-          const lastAt = lastCandleAt > 0 ? new Date(lastCandleAt).toISOString() : "never";
-          const silentMin = Math.round(silentMs / 60_000);
-          alertsClient.sendText(
-            `⚠️ ${coinCfg.coin} candle data stale: no data for ${silentMin}min (last candle: ${lastAt}) — ${config.mode}`,
-          ).catch(() => {});
-        },
-      }));
-    }
+    runners.push(new StrategyRunner({
+      config,
+      coin: es.coin,
+      leverage: es.leverage,
+      interval: es.interval,
+      warmupBars,
+      autoTradingEnabled: es.autoTradingEnabled,
+      strategy,
+      strategyConfigName: es.name,
+      streamer,
+      positionBook,
+      signalHandlerDeps,
+      eventLog,
+      orchestrator,
+      moduleType: es.moduleType,
+      onStaleData: ({ lastCandleAt, silentMs }) => {
+        const lastAt = lastCandleAt > 0 ? new Date(lastCandleAt).toISOString() : "never";
+        const silentMin = Math.round(silentMs / 60_000);
+        alertsClient.sendText(
+          `⚠️ ${es.coin} candle data stale: no data for ${silentMin}min (last candle: ${lastAt}) — ${config.mode}`,
+        ).catch(() => {});
+      },
+    }));
   }
 
   // Pre-compute lookup maps for O(1) access in hot paths
@@ -476,7 +475,9 @@ async function main() {
     const coinsSummary = config.coins.map((c) => ({
       coin: c.coin,
       leverage: c.leverage,
-      strategies: c.strategies.map((s) => ({ name: s.name, interval: s.interval, autoTradingEnabled: s.autoTradingEnabled })),
+      strategies: runners
+        .filter(r => r.getCoin() === c.coin)
+        .map(r => ({ name: r.getStrategyName(), interval: r.getInterval(), autoTradingEnabled: r.getAutoTradingEnabled() })),
     }));
     const snapshot = {
       positions: positionBook.getAll(),
@@ -498,75 +499,74 @@ async function main() {
   // Replay signal broadcast: on candle close, re-run replay for each strategy
   // and push the results via WS so the explorer updates without F5.
   const replayBroadcastedStreamers = new Set<string>();
-  for (const coinCfg of config.coins) {
-    for (const strat of coinCfg.strategies) {
-      const key = `${coinCfg.coin}:${strat.interval}`;
-      if (replayBroadcastedStreamers.has(key)) continue;
-      replayBroadcastedStreamers.add(key);
-      const streamer = streamers.get(key);
-      if (!streamer) continue;
+  for (const es of effectiveStrategies) {
+    const key = `${es.coin}:${es.interval}`;
+    if (replayBroadcastedStreamers.has(key)) continue;
+    replayBroadcastedStreamers.add(key);
+    const streamer = streamers.get(key);
+    if (!streamer) continue;
 
-      streamer.on("candle:close", async () => {
-        const now = Date.now();
-        // Iterate all strategies for this coin+interval
-        const coinStrategies = coinCfg.strategies.filter((s) => s.interval === strat.interval);
-        for (const stratCfg of coinStrategies) {
-          try {
-            const interval = stratCfg.interval as CandleInterval;
-            const factory = resolveStrategyFactory(stratCfg.name);
-            const strategy = factory();
-            const minWarmup = computeMinWarmupBars(strategy, interval);
-            const replayBars = minWarmup + SIGNAL_WINDOW;
-            const candles = await fetchCandlesForReplay(replayDeps, coinCfg.coin, interval, now, replayBars);
-            const signals = replayStrategy({
-              strategyFactory: factory,
-              candles,
-              interval,
-              strategyName: stratCfg.name,
-            });
+    streamer.on("candle:close", async () => {
+      const now = Date.now();
+      // Iterate all strategies sharing this coin+interval
+      const coinIntervalStrategies = effectiveStrategies.filter(
+        e => e.coin === es.coin && e.interval === es.interval,
+      );
+      for (const stratCfg of coinIntervalStrategies) {
+        try {
+          const factory = resolveStrategyFactory(stratCfg.name);
+          const strategy = factory();
+          const minWarmup = computeMinWarmupBars(strategy, stratCfg.interval);
+          const replayBars = minWarmup + SIGNAL_WINDOW;
+          const candles = await fetchCandlesForReplay(replayDeps, stratCfg.coin, stratCfg.interval, now, replayBars);
+          const signals = replayStrategy({
+            strategyFactory: factory,
+            candles,
+            interval: stratCfg.interval,
+            strategyName: stratCfg.name,
+          });
 
-            wsBroker.broadcastEvent("replay-signals", {
-              coin: coinCfg.coin,
-              strategyName: stratCfg.name,
-              signals,
-            });
+          wsBroker.broadcastEvent("replay-signals", {
+            coin: stratCfg.coin,
+            strategyName: stratCfg.name,
+            signals,
+          });
 
-            // Invalidate HTTP cache for this strategy
-            const cacheKey = `${coinCfg.coin}:${stratCfg.name}:${interval}`;
-            replayCache.delete(cacheKey);
+          // Invalidate HTTP cache for this strategy
+          const cacheKey = `${stratCfg.coin}:${stratCfg.name}:${stratCfg.interval}`;
+          replayCache.delete(cacheKey);
 
-            // Divergence detection: compare live runner result with replay
-            const coinRunners = coinRunnersMap.get(coinCfg.coin) ?? [];
-            const runner = coinRunners.find((r) => r.getStrategyName() === stratCfg.name);
-            if (runner) {
-              const liveResult = runner.getLastSignalResult();
-              const lastReplaySignal = signals.length > 0 ? signals[signals.length - 1] : null;
-              const replayHadSignal = lastReplaySignal != null &&
-                candles.length > 0 &&
-                lastReplaySignal.t === candles[candles.length - 1].t;
+          // Divergence detection: compare live runner result with replay
+          const coinRunners = coinRunnersMap.get(stratCfg.coin) ?? [];
+          const runner = coinRunners.find((r) => r.getStrategyName() === stratCfg.name);
+          if (runner) {
+            const liveResult = runner.getLastSignalResult();
+            const lastReplaySignal = signals.length > 0 ? signals[signals.length - 1] : null;
+            const replayHadSignal = lastReplaySignal != null &&
+              candles.length > 0 &&
+              lastReplaySignal.t === candles[candles.length - 1].t;
 
-              if (liveResult && replayHadSignal && !liveResult.hadSignal) {
-                log.warn({
-                  action: "liveReplayDivergence",
-                  coin: coinCfg.coin,
-                  strategy: stratCfg.name,
-                  liveHadSignal: liveResult.hadSignal,
-                  replayDirection: lastReplaySignal.direction,
-                  replayEntryPrice: lastReplaySignal.entryPrice,
-                  liveCandleT: liveResult.t,
-                  replayCandleT: lastReplaySignal.t,
-                }, "Live runner missed signal that replay found — possible WS/REST data divergence");
-              }
+            if (liveResult && replayHadSignal && !liveResult.hadSignal) {
+              log.warn({
+                action: "liveReplayDivergence",
+                coin: stratCfg.coin,
+                strategy: stratCfg.name,
+                liveHadSignal: liveResult.hadSignal,
+                replayDirection: lastReplaySignal.direction,
+                replayEntryPrice: lastReplaySignal.entryPrice,
+                liveCandleT: liveResult.t,
+                replayCandleT: lastReplaySignal.t,
+              }, "Live runner missed signal that replay found — possible WS/REST data divergence");
             }
-          } catch (err) {
-            log.warn(
-              { action: "replayBroadcastFailed", coin: coinCfg.coin, strategy: stratCfg.name, err },
-              "Failed to broadcast replay signals",
-            );
           }
+        } catch (err) {
+          log.warn(
+            { action: "replayBroadcastFailed", coin: stratCfg.coin, strategy: stratCfg.name, err },
+            "Failed to broadcast replay signals",
+          );
         }
-      });
-    }
+      }
+    });
   }
 
   await eventLog.append({

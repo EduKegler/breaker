@@ -198,15 +198,17 @@ export function createApp(deps: ServerDeps): AppResult {
 
     try {
       const coin = (req.query.coin as string) || deps.config.coins[0]?.coin;
-      const strategyName = (req.query.strategy as string) || deps.config.coins[0]?.strategies[0]?.name;
-      const coinCfg = findCoinConfig(coin);
-      if (!coinCfg) {
-        res.status(400).json({ error: `Unknown coin: ${coin}` });
+      const strategyParam = req.query.strategy as string | undefined;
+      const runner = strategyParam
+        ? deps.runners.find(r => r.getCoin() === coin && r.getStrategyName() === strategyParam)
+        : deps.runners.find(r => r.getCoin() === coin);
+      if (!runner) {
+        res.status(400).json({ error: `No strategy found for coin: ${coin}` });
         return;
       }
-      const stratCfg = coinCfg.strategies.find((s) => s.name === strategyName) ?? coinCfg.strategies[0];
-      const interval = stratCfg.interval as CandleInterval;
-      const cacheKey = `${coin}:${stratCfg.name}:${interval}`;
+      const stratName = runner.getStrategyName();
+      const interval = runner.getInterval();
+      const cacheKey = `${coin}:${stratName}:${interval}`;
       const cacheTtlMs = intervalToMs(interval);
 
       const cached = replayCache.get(cacheKey);
@@ -215,15 +217,15 @@ export function createApp(deps: ServerDeps): AppResult {
         return;
       }
 
-      const strategy = deps.strategyFactory(stratCfg.name);
+      const strategy = deps.strategyFactory(stratName);
       const minWarmup = computeMinWarmupBars(strategy, interval);
       const replayBars = minWarmup + SIGNAL_WINDOW;
       const candles = await fetchCandlesForReplay(replayDeps, coin, interval, now, replayBars);
       const signals = replayStrategy({
-        strategyFactory: () => deps.strategyFactory(stratCfg.name),
+        strategyFactory: () => deps.strategyFactory(stratName),
         candles,
         interval,
-        strategyName: stratCfg.name,
+        strategyName: stratName,
       });
       replayCache.set(cacheKey, { cachedAt: now, signals });
       res.json({ signals });
@@ -245,8 +247,19 @@ export function createApp(deps: ServerDeps): AppResult {
   });
 
   app.get("/config", (_req, res) => {
-    const { mode, coins, guardrails, sizing, dataSource } = deps.config;
-    const availableStrategies = coins.flatMap((c) => c.strategies.map((s) => s.name));
+    const { mode, guardrails, sizing, dataSource } = deps.config;
+    const coins = deps.config.coins.map(c => ({
+      coin: c.coin,
+      leverage: c.leverage,
+      strategies: deps.runners
+        .filter(r => r.getCoin() === c.coin)
+        .map(r => ({
+          name: r.getStrategyName(),
+          interval: r.getInterval(),
+          autoTradingEnabled: r.getAutoTradingEnabled(),
+        })),
+    }));
+    const availableStrategies = [...new Set(deps.runners.map(r => r.getStrategyName()))];
     res.json({ mode, coins, guardrails, sizing, dataSource, availableStrategies });
   });
 
@@ -270,25 +283,26 @@ export function createApp(deps: ServerDeps): AppResult {
       return;
     }
 
-    // Toggle per-strategy or all strategies for the coin
-    const targets = stratName
-      ? coinCfg.strategies.filter((s) => s.name === stratName)
-      : coinCfg.strategies;
+    // Find matching runners
+    const matchingRunners = deps.runners.filter(r => {
+      if (r.getCoin() !== coin) return false;
+      if (stratName && r.getStrategyName() !== stratName) return false;
+      return true;
+    });
 
-    if (targets.length === 0) {
-      res.status(400).json({ error: `Strategy ${stratName} not found for ${coin}` });
+    if (matchingRunners.length === 0) {
+      res.status(400).json({ error: `Strategy ${stratName ?? "any"} not found for ${coin}` });
       return;
     }
 
-    for (const strat of targets) {
-      strat.autoTradingEnabled = enabled;
-    }
-
-    // Propagate to runner instances so the change takes effect immediately
-    for (const runner of deps.runners) {
-      if (runner.getCoin() !== coin) continue;
-      if (stratName && runner.getStrategyName() !== stratName) continue;
+    // Update runners + strategyOverrides in single pass
+    for (const runner of matchingRunners) {
       runner.setAutoTradingEnabled(enabled);
+      const name = runner.getStrategyName();
+      if (!deps.config.strategyOverrides[name]) {
+        deps.config.strategyOverrides[name] = {};
+      }
+      deps.config.strategyOverrides[name].autoTradingEnabled = enabled;
     }
 
     // Persist to config file so the value survives daemon restarts
@@ -460,7 +474,7 @@ export function createApp(deps: ServerDeps): AppResult {
     const lastCandle = candles[candles.length - 1];
     const price = lastCandle.c;
 
-    const stratName = strategyParam ?? coinCfg.strategies[0]?.name ?? "unknown";
+    const stratName = strategyParam ?? deps.runners.find(r => r.getCoin() === coin)?.getStrategyName() ?? "unknown";
 
     // Delegate SL/TP computation to the strategy artifact via its runner.
     // computeLevels() produces levels for the forced direction without checking

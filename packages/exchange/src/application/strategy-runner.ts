@@ -790,6 +790,10 @@ export class StrategyRunner {
     return this.lastSignalResult;
   }
 
+  getAutoTradingEnabled(): boolean {
+    return this.deps.autoTradingEnabled;
+  }
+
   setAutoTradingEnabled(enabled: boolean): void {
     this.deps.autoTradingEnabled = enabled;
   }

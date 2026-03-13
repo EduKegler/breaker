@@ -2,3 +2,17 @@
 export * from "./../btc/breakout/deployed/short-range-retest-ema-macd-partial-tp.js";
 export * from "./../btc/trend-following/deployed/macd-htf-adx-high-chandelier.js";
 export * from "./../sol/pullback/deployed/ema-pullback.js";
+
+export interface DeployedStrategyEntry {
+  factoryName: string;
+  strategyName: string;
+  coin: string;
+  interval: string;
+  moduleType: string;
+}
+
+export const deployedManifest: DeployedStrategyEntry[] = [
+  { factoryName: "createShortRangeRetestEmaMacdPartialTp", strategyName: "short-range-retest-ema-macd-partial-tp", coin: "BTC", interval: "15m", moduleType: "breakout" },
+  { factoryName: "createMacdHtfAdxHighMaExit", strategyName: "macd-htf-adx-high-chandelier", coin: "BTC", interval: "4h", moduleType: "trend-following" },
+  { factoryName: "createEmaPullback", strategyName: "ema-pullback", coin: "SOL", interval: "15m", moduleType: "pullback" },
+];

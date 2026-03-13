@@ -52,12 +52,19 @@ src/
 ```
 
 ## Configuration
-- `exchange-config.json` — mode, asset, strategy, guardrails, sizing, dryRun, logLevels (NOT .env)
+- `exchange-config.json` — mode, coins (coin + leverage only), strategyOverrides, guardrails, sizing, dryRun, logLevels (NOT .env)
 - `.env` — secrets only: `HL_ACCOUNT_ADDRESS`, `HL_PRIVATE_KEY`
 
+## Strategy auto-discovery
+- Daemon auto-discovers strategies from `deployedManifest` (built at compile time by `generate-deployed-barrel.ts`)
+- `coins` in config only specifies which coins to trade and their leverage — strategies come from the manifest
+- `strategyOverrides` provides per-strategy settings: `{ "strategy-name": { "autoTradingEnabled": true } }`
+- Defaults `autoTradingEnabled: false` for safety — enable explicitly via `strategyOverrides` or `/auto-trading` endpoint
+- `resolveEffectiveStrategies(config, manifest)` in `domain/resolve-effective-strategies.ts` is the single resolution function
+- To add a strategy: promote it to `deployed/`, rebuild, restart daemon — it's picked up automatically
+
 ## Key patterns
-- Strategy names are dynamic (`z.string().min(1)` in config schema), not hardcoded enums. `moduleType` is required per strategy
-- `createStrategy(name)` uses `resolveStrategyFactory(name)` which caches the barrel lookup in a Map — avoids O(n) key scan on every `candle:close`
+- `resolveStrategyFactory(name)` uses manifest-based lookup (O(1) via `deployedManifest.find()`) with substring fallback
 - HlClient interface (types/hl-client.ts) allows full mocking in tests (no real SDK needed)
 - DryRunHlClient implements HlClient for dry-run mode (logs actions, returns fakes)
 - buildContext/canTrade extracted to @breaker/backtest engine-shared.ts for live=backtest equivalence

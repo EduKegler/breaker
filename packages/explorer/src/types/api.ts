@@ -119,7 +119,6 @@ export interface PricesEvent {
 export interface CoinStrategyConfig {
   name: string;
   interval: string;
-  warmupBars: number;
   autoTradingEnabled: boolean;
 }
 

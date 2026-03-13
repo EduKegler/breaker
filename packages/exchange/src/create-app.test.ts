@@ -12,9 +12,10 @@ const config: ExchangeConfig = {
   port: 3200,
   gatewayUrl: "http://localhost:3100",
   coins: [
-    { coin: "BTC", leverage: 5, strategies: [{ name: "test-strat", interval: "15m", warmupBars: 200, autoTradingEnabled: true, moduleType: "breakout" as const }] },
-    { coin: "ETH", leverage: 3, strategies: [{ name: "test-strat", interval: "15m", warmupBars: 200, autoTradingEnabled: true, moduleType: "breakout" as const }] },
+    { coin: "BTC", leverage: 5 },
+    { coin: "ETH", leverage: 3 },
   ],
+  strategyOverrides: {},
   dataSource: "binance",
   marginType: "isolated",
   guardrails: {
@@ -24,6 +25,9 @@ const config: ExchangeConfig = {
     maxDailyLossR: 2,
     maxTradesPerDay: 5,
     cooldownBars: 4,
+    volSpikeThresholdPct: 1.5,
+    volSpikeLookbackBars: 4,
+    volSpikeCooldownBars: 4,
   },
   sizing: {
     mode: "risk",
@@ -31,6 +35,8 @@ const config: ExchangeConfig = {
     cashPerTrade: 100,
   },
   entrySlippageBps: 10,
+  dryRun: false,
+  logLevels: {},
 };
 
 function createMockStreamer() {
@@ -107,7 +113,28 @@ beforeEach(() => {
       params: {},
       onCandle: () => null,
     }) as Strategy,
-    runners: [],
+    runners: [
+      {
+        getCoin: () => "BTC",
+        getStrategyName: () => "test-strat",
+        getInterval: () => "15m",
+        getAutoTradingEnabled: () => true,
+        setAutoTradingEnabled: vi.fn(),
+        getLastExitLevel: () => null,
+        generateManualSignal: () => null,
+        getLastSignalResult: () => null,
+      } as any,
+      {
+        getCoin: () => "ETH",
+        getStrategyName: () => "test-strat",
+        getInterval: () => "15m",
+        getAutoTradingEnabled: () => true,
+        setAutoTradingEnabled: vi.fn(),
+        getLastExitLevel: () => null,
+        generateManualSignal: () => null,
+        getLastSignalResult: () => null,
+      } as any,
+    ],
   };
 });
 
@@ -694,16 +721,18 @@ describe("Exchange server", () => {
     expect(res.body.error).toContain("not found");
   });
 
-  it("GET /config includes coins with autoTradingEnabled", async () => {
+  it("GET /config includes coins with strategies from runners", async () => {
     const { app } = createApp(deps);
     const res = await request(app).get("/config");
 
     expect(res.status).toBe(200);
-    expect(res.body.coins[0].strategies[0].autoTradingEnabled).toBe(true);
+    expect(res.body.coins[0].strategies).toEqual([
+      { name: "test-strat", interval: "15m", autoTradingEnabled: true },
+    ]);
+    expect(res.body.availableStrategies).toContain("test-strat");
   });
 
   it("POST /auto-trading enables auto-trading for coin", async () => {
-    deps.config.coins[0].strategies[0].autoTradingEnabled = false;
     const { app } = createApp(deps);
     const res = await request(app)
       .post("/auto-trading")
@@ -711,7 +740,7 @@ describe("Exchange server", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.autoTradingEnabled).toBe(true);
-    expect(deps.config.coins[0].strategies[0].autoTradingEnabled).toBe(true);
+    expect(deps.config.strategyOverrides["test-strat"]?.autoTradingEnabled).toBe(true);
   });
 
   it("POST /auto-trading disables auto-trading for coin", async () => {
@@ -722,7 +751,7 @@ describe("Exchange server", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.autoTradingEnabled).toBe(false);
-    expect(deps.config.coins[0].strategies[0].autoTradingEnabled).toBe(false);
+    expect(deps.config.strategyOverrides["test-strat"]?.autoTradingEnabled).toBe(false);
   });
 
   it("POST /auto-trading propagates toggle to runners", async () => {
@@ -731,6 +760,7 @@ describe("Exchange server", () => {
       getStrategyName: () => "test-strat",
       setAutoTradingEnabled: vi.fn(),
       getInterval: () => "15m",
+      getAutoTradingEnabled: () => true,
       getLastExitLevel: () => null,
     };
     deps.runners = [mockRunner as any];
@@ -746,7 +776,6 @@ describe("Exchange server", () => {
   it("POST /auto-trading calls persistConfig to survive restarts", async () => {
     const persistConfig = vi.fn();
     deps.persistConfig = persistConfig;
-    deps.config.coins[0].strategies[0].autoTradingEnabled = false;
 
     const { app } = createApp(deps);
     await request(app)
@@ -754,7 +783,7 @@ describe("Exchange server", () => {
       .send({ coin: "BTC", enabled: true });
 
     expect(persistConfig).toHaveBeenCalledOnce();
-    expect(deps.config.coins[0].strategies[0].autoTradingEnabled).toBe(true);
+    expect(deps.config.strategyOverrides["test-strat"]?.autoTradingEnabled).toBe(true);
   });
 
   it("POST /auto-trading rejects invalid payload", async () => {
