@@ -6,9 +6,8 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
-import { execaSync } from "execa";
 import type { Candle, CandleInterval, Metrics, StrategyParam, TradeAnalysis } from "@breaker/backtest";
+import { buildBacktest } from "../lib/build-backtest.js";
 import { generateVariant } from "./variant-generator.js";
 import { checkpoint } from "./stages/checkpoint.js";
 import { computeScore } from "./stages/scoring.js";
@@ -88,12 +87,8 @@ export async function switchToExistingVariant(opts: SwitchToExistingOpts): Promi
     return null;
   }
 
-  // Rebuild backtest package
-  execaSync("pnpm", ["--filter", "@breaker/backtest", "build"], {
-    cwd: path.resolve(cfg.repoRoot, "../.."),
-    timeout: 30000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  // Rebuild backtest package (mutex-protected for parallel refiners)
+  await buildBacktest(cfg.repoRoot);
 
   // Load factory from rebuilt variant
   const variantDistPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");
@@ -188,12 +183,8 @@ export async function switchToNewVariant(opts: SwitchToVariantOpts): Promise<Swi
   cfg.checkpointDir = newVariant.checkpointDir;
   cfg.paramHistoryFile = newVariant.paramHistoryFile;
 
-  // Rebuild backtest package for new variant
-  execaSync("pnpm", ["--filter", "@breaker/backtest", "build"], {
-    cwd: path.resolve(cfg.repoRoot, "../.."),
-    timeout: 30000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  // Rebuild backtest package for new variant (mutex-protected for parallel refiners)
+  await buildBacktest(cfg.repoRoot);
 
   // Reload factory from newly built variant
   const variantDistPath = cfg.strategyFile.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js");

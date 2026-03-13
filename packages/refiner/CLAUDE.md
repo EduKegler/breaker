@@ -6,7 +6,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 ## Project structure
 - `src/automation/` — Prompt builders for Claude optimization/fix (`build-optimize-prompt.ts`, `build-fix-prompt.ts`)
 - `src/dashboard/` — Dashboard and anomaly detection
-- `src/lib/` — Config, lock, strategy-registry, candle-loader, strategy-path, safe-json
+- `src/lib/` — Config, build-backtest, strategy-registry, candle-loader, strategy-path, safe-json
 - `src/loop/` — Orchestrator + state-machine (xstate v5) + stages + variant-manager + variant-generator + seed-generator
 - `src/types/` — Zod config schemas
 - `assets/{asset}/{strategy}/` — Strategy data dir (checkpoints, param history, variant registry)
@@ -17,7 +17,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 
 ## Optimization loop
 - CLI: `node dist/loop/orchestrator.js --asset=BTC --strategy=breakout --max-iter=20`
-- Lock is asset-level (`breaker-BTC.lock`) — prevents concurrent optimization of the same asset.
+- Multiple refiner instances can run in parallel (even same asset, different strategies). Builds are serialized via `buildBacktest()` mutex (`/tmp/breaker-build.lock`).
 - **Optimize-first loop**: each iteration runs Optimize → Apply → Backtest → Score → Checkpoint/Rollback (change evaluated in same iteration)
 - **The loop STOPS when all criteria met**, unless baseline already passes — then runs all iterations to maximize score.
 - Two execution modes:
@@ -30,7 +30,7 @@ B.R.E.A.K.E.R. — Backtesting & Refinement Engine for Automated Knowledge-drive
 - **Ciclo (outer loop)**: seed → refine → plateau → gera nova variante inline → refine → plateau → ... ate esgotar `--max-iter`
 - **Outer loop**: quando plateau/kill/budget e detectado, a variante e marcada (`plateaued`/`killed`), nova variante e gerada inline (sem reiniciar o processo), actor xstate e recriado com estado limpo, baseline da nova variante e rodado, e o for-loop continua com iteracoes restantes. Se a geracao falhar (2 tentativas com retry), o loop termina.
 - **Variant switch triggers**: (1) phase escalation (neutralStreak, noChangeCount) → plateaued; (2) early kill (PF < thresholds derivados de MODULE_CRITERIA) → killed; (3) per-variant budget exhausted (default 15 iters) → plateaued. **WF overfit (wfRejectStreak) does NOT trigger escalation** — it's a regularization problem, not a plateau signal. The optimizer gets feedback via rollback and can learn to regularize.
-- **Early kill progressivo** (`shouldKillVariant` em phase-helpers.ts): PF < 0.3 = kill imediato; iter 5 = PF < minPF×0.4; iter 9 = PF < minPF×0.6; iter 12 = PF < minPF×0.8. Thresholds derivados de MODULE_CRITERIA, nao hardcoded. Iter 12 checkpoint added to prevent structurally weak variants (PF < 1.0) from consuming entire budget.
+- **Early kill progressivo** (`shouldKillVariant` em phase-helpers.ts): PF < 0.3 = kill imediato; iter 5 = PF < minPF×0.4; iter 9 = PF < minPF×0.6 OR avgR < 0 (negative per-trade expectancy); iter 12 = PF < minPF×0.8. Thresholds derivados de MODULE_CRITERIA, nao hardcoded. Iter 12 checkpoint added to prevent structurally weak variants (PF < 1.0) from consuming entire budget.
 - **Per-variant budget**: `perVariantBudget` em breaker-config.json (default 15). Forca variant switch mesmo sem plateau de phase. Budget é per-run, não per-lifetime. `resetBudget()` é chamado no início de cada run para zerar `iterationsUsed`.
 - **Retry de geracao**: cada call site de `switchToNewVariant` tenta 2x antes de desistir.
 - **Sem promocao automatica**: usuario compara scores manualmente via variant-registry.json e decide qual promover.

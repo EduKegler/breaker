@@ -95,6 +95,7 @@ export const phaseHelpers = {
     bestPFEver: number,
     variantIterCount: number,
     moduleId: string,
+    bestAvgR?: number,
   ): string | null {
     // Universal floor (any iter)
     if (bestPFEver < 0.3) return `PF ${bestPFEver.toFixed(2)} < 0.3 (universal floor)`;
@@ -107,9 +108,12 @@ export const phaseHelpers = {
       return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.4).toFixed(2)} (40% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
     }
 
-    // Iter 9 checkpoint
+    // Iter 9 checkpoint: PF gate OR negative per-trade expectancy (KB §13.2)
     if (variantIterCount >= 9 && bestPFEver < minPF * 0.6) {
       return `PF ${bestPFEver.toFixed(2)} < ${(minPF * 0.6).toFixed(2)} (60% of ${moduleId} minPF=${minPF} at iter ${variantIterCount})`;
+    }
+    if (variantIterCount >= 9 && bestAvgR !== undefined && bestAvgR < 0) {
+      return `avgR ${bestAvgR.toFixed(3)} < 0 (negative per-trade expectancy at iter ${variantIterCount})`;
     }
 
     // Iter 12 checkpoint — late-stage gate, variant must be near target

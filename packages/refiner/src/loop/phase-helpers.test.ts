@@ -153,6 +153,29 @@ describe("shouldKillVariant", () => {
     expect(reason).not.toBeNull();
     expect(reason).toContain("0.52");
   });
+
+  it("kills at iter 9 when bestAvgR < 0 (negative expectancy)", () => {
+    // PF=0.9 passes the 60% PF gate (0.78), but avgR=-0.05 is negative
+    const reason = phaseHelpers.shouldKillVariant(0.9, 9, "M1", -0.05);
+    expect(reason).not.toBeNull();
+    expect(reason).toContain("avgR");
+    expect(reason).toContain("negative per-trade expectancy");
+  });
+
+  it("survives at iter 9 when bestAvgR >= 0", () => {
+    // PF=0.9 passes PF gate, avgR=0.1 is positive
+    expect(phaseHelpers.shouldKillVariant(0.9, 9, "M1", 0.1)).toBeNull();
+  });
+
+  it("does not check avgR before iter 9", () => {
+    // avgR negative but only at iter 5 — no avgR check at this stage
+    expect(phaseHelpers.shouldKillVariant(0.9, 5, "M1", -0.1)).toBeNull();
+  });
+
+  it("does not check avgR when not provided (backward compat)", () => {
+    // No bestAvgR argument — should not kill for avgR
+    expect(phaseHelpers.shouldKillVariant(0.9, 9, "M1")).toBeNull();
+  });
 });
 
 describe("computeEffectiveBudget", () => {

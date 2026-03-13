@@ -82,7 +82,9 @@ export const CANDIDATE_SLUGS: Record<string, string> = {
   "Both": "both",
   "Both (symmetric)": "both",
   "Long only": "long",
+  "Long-only": "long",
   "Short only": "short",
+  "Short-only": "short",
   // ── M1 Breakout: Entry Signal ──
   "Donchian Channel": "donchian",
   "Bollinger Band squeeze release": "squeeze",
@@ -102,7 +104,6 @@ export const CANDIDATE_SLUGS: Record<string, string> = {
   // ── M1 Breakout: Confirmation ──
   "RSI momentum": "rsi",
   "MACD alignment": "macd",
-  "Volume spike": "vol-spike",
   // ── M1 Breakout: Exit ──
   "Trailing channel (Donchian fast)": "trail-dc",
   "ATR trailing stop": "atr-trail",
@@ -135,16 +136,22 @@ export const CANDIDATE_SLUGS: Record<string, string> = {
   "ADX > threshold": "adx-high",
   // ── M3 Pullback: Pullback Zone ──
   "Fibonacci retracement": "fib",
+  "Fibonacci retracement (advanced)": "fib",
   "EMA dynamic support": "ema-support",
+  "EMA dynamic support (default)": "ema-support",
   "9/30 pullback zone": "930",
-  "Prior S/R level": "sr",
   // ── M3 Pullback: Pullback Confirm ──
   "RSI neutral reset": "rsi-reset",
   "Candlestick pattern": "candle",
+  "Candlestick": "candle",
+  "Structural": "close-beyond",
+  "Oscillator": "rsi-reset",
   "Volume expansion": "volume",
+  "Volume": "volume",
   "Candle close beyond pullback extreme": "close-beyond",
   // ── M3 Pullback: Exit ──
   "Prior swing high/low": "swing",
+  "Fixed R:R": "fixed-rr",
   // "ATR trailing stop" already mapped above
   "Fibonacci extension": "fib-ext",
   // "Time-based timeout" already mapped above
@@ -154,7 +161,6 @@ export const CANDIDATE_SLUGS: Record<string, string> = {
   "EMA crossover": "ema-cross",
   "MA crossover": "ema-cross",
   "Donchian channel breakout": "donchian-daily",
-  "Price channel breakout": "donchian-daily",
   "MACD crossover + HTF filter": "macd-htf",
   // ── M4 Trend Following: Regime Filter ──
   // "ADX > threshold" already mapped above
@@ -201,8 +207,8 @@ export const MODULE_CRITERIA: Record<string, {
   expectedTradesPerYear?: { min: number; max: number }; // archetype-expected trade frequency
 }> = {
   M1: { minTrades: 50,  minPF: 1.3, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6, wrWarnMax: 50,  wrRejectMax: 65,  expectedDegradation: 0.3, expectedTradesPerYear: { min: 50, max: 200 } },
-  M2: { minTrades: 80,  minPF: 1.3, maxDD: 8,  minWR: 50,   minAvgR: null, minPfRatio: 0.6, wrWarnMax: 75,  wrRejectMax: 80,  expectedDegradation: 0.3, expectedTradesPerYear: { min: 80, max: 300 } },
-  M3: { minTrades: 50,  minPF: 1.4, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6, wrWarnMax: 60,  wrRejectMax: 70,  expectedDegradation: 0.3, expectedTradesPerYear: { min: 50, max: 200 } },
+  M2: { minTrades: 80,  minPF: 1.3, maxDD: 8,  minWR: 50,   minAvgR: null, minPfRatio: 0.6, wrWarnMax: 75,  wrRejectMax: 80,  expectedDegradation: 0.2, expectedTradesPerYear: { min: 80, max: 300 } },
+  M3: { minTrades: 50,  minPF: 1.4, maxDD: 10, minWR: null, minAvgR: 0.15, minPfRatio: 0.6, wrWarnMax: 60,  wrRejectMax: 70,  expectedDegradation: 0.25, expectedTradesPerYear: { min: 50, max: 200 } },
   M4: { minTrades: 30,  minPF: 1.4, maxDD: 12, minWR: null, minAvgR: 0.20, minPfRatio: 0.6, wrWarnMax: 55,  wrRejectMax: 65,  expectedDegradation: 0.3, expectedTradesPerYear: { min: 10, max: 20 } },
 };
 
@@ -513,9 +519,9 @@ const STARTING_COMPONENTS: Record<string, Record<string, string>> = {
   },
   M3: {
     "Trend Filter": "ema",
-    "Pullback Zone": "fib",
-    "Pullback Confirm": "rsi-reset",
-    "Exit": "swing",
+    "Pullback Zone": "ema-support",
+    "Pullback Confirm": "close-beyond",
+    "Exit": "fixed-rr",
   },
   M4: {
     "Direction": "both",

@@ -22,7 +22,7 @@ import { isMainModule, backoffDelay } from "@breaker/kit";
 import { sendWhatsApp as sendWhatsAppWithRetry } from "@breaker/alerts";
 import { getStrategySourcePath } from "../lib/get-strategy-source-path.js";
 import { loadCandles } from "../lib/candle-loader.js";
-import { lock } from "../lib/lock.js";
+import { buildBacktest } from "../lib/build-backtest.js";
 import { classifyError } from "./classify-error.js";
 import { parseArgs } from "./parse-args.js";
 import { buildLoopConfig } from "./build-loop-config.js";
@@ -79,7 +79,6 @@ function installShutdownHandlers(asset: string): void {
     process.removeListener("SIGTERM", handler);
     console.log(`\n\x1b[33m⚠ Shutdown requested — cleaning up...\x1b[0m`);
     shutdownController.abort();
-    try { lock.release(asset); } catch { /* best effort */ }
     try { closeLoggers(); } catch { /* best effort */ }
     process.exit(130); // 128 + SIGINT(2)
   };
@@ -288,11 +287,7 @@ export async function orchestrate(): Promise<void> {
       cfg.strategyFile = seedResult.strategyFile;
       logOk(`Seed generated: ${seedResult.variantId} (${seedResult.factoryName})`);
     }
-    execaSync("pnpm", ["--filter", "@breaker/backtest", "build"], {
-      cwd: path.resolve(cfg.repoRoot, "../.."),
-      timeout: 30000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    await buildBacktest(cfg.repoRoot);
     seedGenerated = true;
   }
   const seedStrategyFile = cfg.strategyFile;
@@ -307,14 +302,10 @@ export async function orchestrate(): Promise<void> {
     logDim(`Created strategy dir: ${cfg.strategyDir}`);
   }
 
-  // Acquire lock — everything after this MUST be inside try/finally
-  lock.acquire(cfg.asset);
   installShutdownHandlers(cfg.asset);
-  logDim(`Lock acquired for ${cfg.asset}`);
 
   let success = false;
 
-  try {
   // ---- Variant management ----
   const seedCheckpointDir = cfg.checkpointDir;
   const seedParamHistoryFile = cfg.paramHistoryFile;
@@ -453,7 +444,6 @@ export async function orchestrate(): Promise<void> {
     if (!newVariant) {
       logWarn("Variant generation failed — no more variants can be generated. Exiting.");
       variantMgr.save();
-      lock.release(cfg.asset);
       process.exit(0);
     }
 
@@ -467,11 +457,7 @@ export async function orchestrate(): Promise<void> {
 
     // Rebuild backtest package so child-process can import the new variant
     log(`${c.blu}Rebuilding @breaker/backtest for new variant...${c.r}`);
-    execaSync("pnpm", ["--filter", "@breaker/backtest", "build"], {
-      cwd: path.resolve(cfg.repoRoot, "../.."),
-      timeout: 30000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    await buildBacktest(cfg.repoRoot);
     logOk("Rebuild complete.");
 
     // Reload factory from newly built variant — prevents stale ESM cache from
@@ -673,6 +659,7 @@ export async function orchestrate(): Promise<void> {
   let lastActualBacktestMetrics: { pnl: number; trades: number; pf: number } | undefined;
   let failedRestructures: RestructureFailure[] = [];
   let bestPFEver = initialMetrics.profitFactor ?? 0;
+  let bestAvgREver = initialMetrics.avgR ?? 0;
   /** Best metrics snapshot for dynamic budget computation — updated only on checkpoint save. */
   let bestVariantMetrics = {
     profitFactor: initialMetrics.profitFactor ?? 0,
@@ -848,6 +835,7 @@ export async function orchestrate(): Promise<void> {
       pendingVerdictOverride = undefined;
       lastActualBacktestMetrics = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
+      bestAvgREver = currentMetrics.avgR ?? 0;
       bestVariantMetrics = {
         profitFactor: currentMetrics.profitFactor ?? 0,
         numTrades: currentMetrics.numTrades ?? 0,
@@ -994,6 +982,7 @@ export async function orchestrate(): Promise<void> {
       pendingVerdictOverride = undefined;
       lastActualBacktestMetrics = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
+      bestAvgREver = currentMetrics.avgR ?? 0;
       bestVariantMetrics = {
         profitFactor: currentMetrics.profitFactor ?? 0,
         numTrades: currentMetrics.numTrades ?? 0,
@@ -1431,11 +1420,7 @@ export async function orchestrate(): Promise<void> {
     if (needsRebuild) {
       log(`${c.blu}Rebuilding @breaker/backtest after restructure...${c.r}`);
       try {
-        execaSync("pnpm", ["--filter", "@breaker/backtest", "build"], {
-          cwd: cfg.repoRoot,
-          timeout: 30000,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
+        await buildBacktest(cfg.repoRoot);
         actor.send({ type: "SET_NEEDS_REBUILD", value: false });
         logOk("Rebuild complete.");
       } catch (err) {
@@ -1585,8 +1570,9 @@ export async function orchestrate(): Promise<void> {
     const engineTrades = engineResult.trades;
     const iterPnl = metrics.totalPnl ?? 0;
 
-    // Track best PF ever seen for structural termination (Fix 2)
+    // Track best PF and avgR ever seen for early kill checks (KB §13.2)
     bestPFEver = Math.max(bestPFEver, metrics.profitFactor ?? 0);
+    bestAvgREver = Math.max(bestAvgREver, metrics.avgR ?? 0);
 
     // B3: Only recompute paramCount from factory() when ESM cache is reliable (in-process path).
     // For child-process path, use paramCount from the freshly-loaded strategy in the child.
@@ -1837,7 +1823,7 @@ export async function orchestrate(): Promise<void> {
 
     // ---- Step 7b: Early kill check (progressive, derived from MODULE_CRITERIA) ----
     const variantIters = variantMgr.getActive()?.iterationsUsed ?? 0;
-    const killReason = phaseHelpers.shouldKillVariant(bestPFEver, variantIters, moduleContext.moduleId);
+    const killReason = phaseHelpers.shouldKillVariant(bestPFEver, variantIters, moduleContext.moduleId, bestAvgREver);
     if (killReason) {
       logWarn(`⛔ Early kill: ${killReason}`);
       variantMgr.markKilled(killReason, state.bestScore, state.bestPnl, state.bestIter, variantIters);
@@ -1910,6 +1896,7 @@ export async function orchestrate(): Promise<void> {
       pendingVerdictOverride = undefined;
       lastActualBacktestMetrics = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
+      bestAvgREver = currentMetrics.avgR ?? 0;
       bestVariantMetrics = {
         profitFactor: currentMetrics.profitFactor ?? 0,
         numTrades: currentMetrics.numTrades ?? 0,
@@ -2251,11 +2238,6 @@ export async function orchestrate(): Promise<void> {
   actor.stop();
   closeLoggers();
   teardownStdin();
-
-  } finally {
-    lock.release(cfg.asset);
-    logDim(`Lock released for ${cfg.asset}`);
-  }
 
   process.exit(success ? 0 : 1);
 }

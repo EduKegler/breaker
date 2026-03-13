@@ -12,6 +12,7 @@ import {
   MODULE_CRITERIA,
   CANDIDATE_SLUGS,
   candidateToSlug,
+  computeStretchCriteria,
 } from "./build-module-context.js";
 
 vi.mock("node:fs", () => ({
@@ -737,8 +738,46 @@ describe("getStartingComponents", () => {
     expect(getStartingComponents("M1")["Entry Signal"]).toBe("donchian");
   });
 
+  it("returns M3 pullback starting slugs (KB §5.2 aligned)", () => {
+    const comps = getStartingComponents("M3");
+    expect(comps["Trend Filter"]).toBe("ema");
+    expect(comps["Pullback Zone"]).toBe("ema-support");
+    expect(comps["Pullback Confirm"]).toBe("close-beyond");
+    expect(comps["Exit"]).toBe("fixed-rr");
+  });
+
   it("throws for unknown module", () => {
     expect(() => getStartingComponents("M99")).toThrow(/No starting components/);
+  });
+});
+
+describe("computeStretchCriteria", () => {
+  it("computes M1 stretch with 30% degradation", () => {
+    const stretch = computeStretchCriteria("M1");
+    // minPF=1.3, degradation=0.3 → stretch = 1.3/0.7 ≈ 1.86
+    expect(stretch.stretchPF).toBeCloseTo(1.86, 1);
+  });
+
+  it("computes M2 stretch with 20% degradation (KB §10.1)", () => {
+    const stretch = computeStretchCriteria("M2");
+    // minPF=1.3, degradation=0.2 → stretch = 1.3/0.8 = 1.625
+    expect(stretch.stretchPF).toBeCloseTo(1.63, 1);
+    // M2 has no avgR gate
+    expect(stretch.stretchAvgR).toBeNull();
+  });
+
+  it("computes M3 stretch with 25% degradation (KB §10.1)", () => {
+    const stretch = computeStretchCriteria("M3");
+    // minPF=1.4, degradation=0.25 → stretch = 1.4/0.75 ≈ 1.867
+    expect(stretch.stretchPF).toBeCloseTo(1.87, 1);
+    // M3 has minAvgR=0.15 → stretchAvgR = 0.15/0.75 = 0.2
+    expect(stretch.stretchAvgR).toBeCloseTo(0.2, 1);
+  });
+
+  it("computes M4 stretch with 30% degradation", () => {
+    const stretch = computeStretchCriteria("M4");
+    // minPF=1.4, degradation=0.3 → stretch = 1.4/0.7 = 2.0
+    expect(stretch.stretchPF).toBeCloseTo(2.0, 1);
   });
 });
 
