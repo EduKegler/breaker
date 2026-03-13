@@ -20,6 +20,13 @@
           "warmupBars": 200,
           "autoTradingEnabled": true,
           "moduleType": "mean-reversion"
+        },
+        {
+          "name": "macd-htf-adx-high-chandelier",
+          "interval": "4h",
+          "warmupBars": 400,
+          "autoTradingEnabled": false,
+          "moduleType": "trend-following"
         }
       ]
     },
