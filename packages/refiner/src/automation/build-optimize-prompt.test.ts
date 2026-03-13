@@ -1324,6 +1324,38 @@ describe("P1: diagnostic guide", () => {
     // M1 expects 50-200/year, 150 in 6m = 300/year, within 2x max (400) → no drift
     expect(prompt).not.toContain("ARCHETYPE DRIFT");
   });
+
+  it("uses actual date range for annualization instead of hardcoded 6-month assumption", () => {
+    const m4Opts = {
+      ...baseOpts,
+      moduleContext: {
+        ...baseOpts.moduleContext,
+        moduleId: "M4", moduleName: "Trend Following", profile: "trend-following",
+        stoppingCriteria: "- Trades >= 30\n- PF >= 1.4",
+      } as ModuleContext,
+    };
+    // 44 trades over ~2.15 years (2024-01-01 to 2026-02-24) = ~20/year
+    // M4 expects 10-20/year → should NOT trigger drift
+    const start = new Date("2024-01-01").getTime();
+    const end = new Date("2026-02-24").getTime();
+    const prompt = buildOptimizePrompt({
+      ...m4Opts,
+      metrics: makeMetrics({ numTrades: 44, profitFactor: 1.3, winRate: 43, avgWinR: 0.8, avgLossR: -0.37 }),
+      tradeAnalysis: null,
+      startTime: start,
+      endTime: end,
+    });
+    // 44 / 2.15 = ~20/year, within expected range → no drift
+    expect(prompt).not.toContain("ARCHETYPE DRIFT");
+
+    // Without date range (fallback), same 44 trades would annualize to 88/year → drift
+    const promptNoDate = buildOptimizePrompt({
+      ...m4Opts,
+      metrics: makeMetrics({ numTrades: 44, profitFactor: 1.3, winRate: 43, avgWinR: 0.8, avgLossR: -0.37 }),
+      tradeAnalysis: null,
+    });
+    expect(promptNoDate).toContain("ARCHETYPE DRIFT");
+  });
 });
 
 // ---------------------------------------------------------------------------

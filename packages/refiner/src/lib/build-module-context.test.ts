@@ -174,6 +174,14 @@ const SAMPLE_KB = `
 | Timeout | 1 | days/bars |
 | **Typical total** | **5-6** | Tight budget forces simplicity |
 
+**Direction constraint candidates:**
+
+| Approach | How it works | Notes |
+|----------|-------------|-------|
+| Both | Trade both long and short | Default |
+| Long only | Longs only, skip all short signals | BTC structural drift |
+| Short only | Shorts only, skip all long signals | Test separately |
+
 **Entry signal candidates (pick one architecture, then lock per RESTRUCTURE):**
 
 | Approach | How it works | Notes |
@@ -607,19 +615,30 @@ describe("extractComponentCatalog with M4 variable budget aliases", () => {
     expect(trailSlot!.typicalVars).toBe("0-1");
   });
 
-  it("extracts all M4 slots", () => {
+  it("extracts all M4 slots including Direction", () => {
     const catalog = extractComponentCatalog(SAMPLE_KB, "M4");
     const slotNames = catalog.slots.map((s) => s.slotName);
+    expect(slotNames).toContain("Direction");
     expect(slotNames).toContain("Entry Signal");
     expect(slotNames).toContain("Regime Filter");
     expect(slotNames).toContain("Trailing Exit");
   });
 
+  it("extracts M4 direction constraint candidates", () => {
+    const catalog = extractComponentCatalog(SAMPLE_KB, "M4");
+    const dirSlot = catalog.slots.find((s) => s.slotName === "Direction");
+    expect(dirSlot).toBeDefined();
+    expect(dirSlot?.candidates).toHaveLength(3);
+    expect(dirSlot?.candidates[0].slug).toBe("both");
+    expect(dirSlot?.candidates[1].slug).toBe("long");
+    expect(dirSlot?.candidates[2].slug).toBe("short");
+  });
+
   it("extracts M4 entry signal candidates", () => {
     const catalog = extractComponentCatalog(SAMPLE_KB, "M4");
     const entrySlot = catalog.slots.find((s) => s.slotName === "Entry Signal");
-    expect(entrySlot!.candidates).toHaveLength(3);
-    expect(entrySlot!.candidates[0].name).toBe("SuperTrend flip");
+    expect(entrySlot?.candidates).toHaveLength(3);
+    expect(entrySlot?.candidates[0].name).toBe("SuperTrend flip");
   });
 });
 
@@ -753,7 +772,7 @@ describe("CANDIDATE_SLUGS covers all KB candidates", () => {
     { id: "M1", num: 3, headers: ["Direction constraint candidates", "Entry signal candidates", "Entry timing candidates", "Regime filter candidates", "Optional confirmation filter", "Exit candidates"] },
     { id: "M2", num: 4, headers: ["Band/channel candidates", "Exhaustion confirmation candidates", "Regime filter candidates", "Exit candidates"] },
     { id: "M3", num: 5, headers: ["Trend confirmation candidates", "Pullback zone candidates", "Pullback confirmation candidates", "Exit candidates"] },
-    { id: "M4", num: 6, headers: ["Entry signal candidates", "Regime filter candidates", "Trailing exit candidates"] },
+    { id: "M4", num: 6, headers: ["Direction constraint candidates", "Entry signal candidates", "Regime filter candidates", "Trailing exit candidates"] },
   ];
 
   it("every KB candidate has a CANDIDATE_SLUGS entry (no kebab fallback)", async () => {

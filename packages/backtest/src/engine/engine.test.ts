@@ -228,6 +228,72 @@ describe("runBacktest", () => {
     const grossPnl = (trade.exitPrice - trade.entryPrice) * trade.size;
     expect(trade.pnl).toBeCloseTo(grossPnl - trade.commission - trade.fundingCost, 5);
   });
+
+  it("records funding bar-by-bar in equity curve for accurate drawdown (KB §6.2)", () => {
+    const t0 = new Date("2024-06-01T12:00:00Z").getTime();
+    const ms4h = 4 * 3_600_000; // 4H candles for M4-style test
+    const candles: Candle[] = [
+      // 0-4: warmup
+      makeCandle(t0 + 0 * ms4h, 100000, 100500, 99500, 100000),
+      makeCandle(t0 + 1 * ms4h, 100000, 100500, 99500, 100000),
+      makeCandle(t0 + 2 * ms4h, 100000, 100500, 99500, 100000),
+      makeCandle(t0 + 3 * ms4h, 100000, 100500, 99500, 100000),
+      makeCandle(t0 + 4 * ms4h, 100000, 100500, 99500, 100000),
+      // 5: entry signal
+      makeCandle(t0 + 5 * ms4h, 100000, 100500, 99500, 100000),
+      // 6: entry fills at open. Price stays flat (no price-based PnL change)
+      makeCandle(t0 + 6 * ms4h, 100000, 100500, 99500, 100000),
+      // 7: still flat
+      makeCandle(t0 + 7 * ms4h, 100000, 100500, 99500, 100000),
+      // 8: still flat
+      makeCandle(t0 + 8 * ms4h, 100000, 100500, 99500, 100000),
+      // 9: SL hit (drops below 95000)
+      makeCandle(t0 + 9 * ms4h, 100000, 100500, 94000, 95000),
+    ];
+
+    const fundingBarStrategy: Strategy = {
+      name: "funding-bar-test",
+      params: {},
+      onCandle(ctx: StrategyContext): Signal | null {
+        if (ctx.index === 5) {
+          return {
+            direction: "long",
+            entryPrice: null,
+            stopLoss: 95000,
+            takeProfits: [],
+            comment: "Funding bar test",
+          };
+        }
+        return null;
+      },
+    };
+
+    const config: BacktestConfig = {
+      ...DEFAULT_BACKTEST_CONFIG,
+      initialCapital: 10000,
+      cooldownBars: 0,
+      maxTradesPerDay: Number.MAX_SAFE_INTEGER,
+      maxDailyLossR: Number.MAX_SAFE_INTEGER,
+      maxGlobalTradesDay: Number.MAX_SAFE_INTEGER,
+      execution: { slippageBps: 0, commissionPct: 0, fundingRate8h: 0.001 },
+    };
+
+    const result = runBacktest(candles, fundingBarStrategy, config, "4h");
+
+    // Find equity points between entry (bar 6) and exit (bar 9)
+    // These should show negative deltas from funding even with flat price
+    const holdingPoints = result.equityPoints.filter(p => p.barIndex >= 7 && p.barIndex <= 8);
+    expect(holdingPoints.length).toBeGreaterThanOrEqual(1);
+
+    // Each holding bar should show equity declining from funding
+    for (const point of holdingPoints) {
+      expect(point.equity).toBeLessThan(config.initialCapital);
+    }
+
+    // Total equity change should still match trade PnL (no double-counting)
+    const trade = result.trades[0];
+    expect(result.finalEquity).toBeCloseTo(config.initialCapital + trade.pnl, 2);
+  });
 });
 
 describe("no-limits config", () => {

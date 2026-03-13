@@ -133,11 +133,13 @@ export function runBacktest(
           const pos = positionTracker.getPosition()!;
           const barsHeld = i - pos.entryBarIndex;
           const fc = calculateFundingCost(pos.entryPrice, pos.size, fundingRate8h, barsHeld, intervalMs);
+          const accFunding = positionTracker.getAccumulatedFunding();
           const trade = positionTracker.closePosition(
             fill, i, "signal", pendingExitComment, lastEntryComment, fc,
           );
           dailyPnl += trade.pnl;
-          equityCurve.record(candle.t, i, trade.pnl);
+          // Add back accFunding: it was already deducted bar-by-bar from equity curve
+          equityCurve.record(candle.t, i, trade.pnl + accFunding);
           barsSinceExit = 0;
           orderManager.clearOrders();
         }
@@ -147,6 +149,7 @@ export function runBacktest(
           const pos = positionTracker.getPosition()!;
           const barsHeld = i - pos.entryBarIndex;
           const fc = calculateFundingCost(pos.entryPrice, pos.size, fundingRate8h, barsHeld, intervalMs);
+          const accFunding = positionTracker.getAccumulatedFunding();
           const trade = handleExitFill(
             positionTracker,
             fill,
@@ -155,7 +158,8 @@ export function runBacktest(
             fc,
           );
           dailyPnl += trade.pnl;
-          equityCurve.record(candle.t, i, trade.pnl);
+          // Add back accFunding: it was already deducted bar-by-bar from equity curve
+          equityCurve.record(candle.t, i, trade.pnl + accFunding);
           // Only clear all orders when position is fully closed
           // After partial close, keep remaining SL/TP active
           if (positionTracker.isFlat()) {
@@ -166,9 +170,18 @@ export function runBacktest(
       }
     }
 
-    // Step 2: Update position MTM
+    // Step 2: Update position MTM + bar-by-bar funding deduction (KB §6.2)
     if (!positionTracker.isFlat()) {
       positionTracker.updateMtm(candle.c);
+      // Record per-bar funding cost in equity curve so drawdown reflects holding-cost erosion
+      if (fundingRate8h > 0) {
+        const pos = positionTracker.getPosition();
+        if (pos) {
+          const perBarFunding = pos.entryPrice * pos.size * fundingRate8h * intervalMs / EIGHT_HOURS_MS;
+          equityCurve.record(candle.t, i, -perBarFunding);
+          positionTracker.accumulateFunding(perBarFunding);
+        }
+      }
     }
 
     // Step 3: Strategy-driven exit check (deferred: process_orders_on_close = false)
@@ -259,10 +272,12 @@ export function runBacktest(
     };
     const barsHeld = (candles.length - 1) - pos.entryBarIndex;
     const fc = calculateFundingCost(pos.entryPrice, pos.size, fundingRate8h, barsHeld, intervalMs);
+    const accFunding = positionTracker.getAccumulatedFunding();
     const trade = positionTracker.closePosition(
       fill, candles.length - 1, "eod", "End of data", lastEntryComment, fc,
     );
-    equityCurve.record(lastCandle.t, candles.length - 1, trade.pnl);
+    // Add back accFunding: it was already deducted bar-by-bar from equity curve
+    equityCurve.record(lastCandle.t, candles.length - 1, trade.pnl + accFunding);
   }
 
   const trades = positionTracker.getCompletedTrades();

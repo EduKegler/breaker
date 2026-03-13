@@ -82,6 +82,7 @@ describe("buildContext", () => {
         entryTimestamp: 1700000000000,
         entryBarIndex: 5,
         unrealizedPnl: 10,
+        accumulatedFunding: 0,
         fills: [],
       },
       higherTimeframes: {},

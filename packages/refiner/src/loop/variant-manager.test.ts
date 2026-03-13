@@ -6,6 +6,7 @@ import {
   VariantManager,
   buildVariantId,
   selectNextCombination,
+  estimateMaxVars,
   fixFactoryName,
 } from "./variant-manager.js";
 import { buildFailureAnalysis } from "./variant-generator.js";
@@ -799,7 +800,7 @@ describe("selectNextCombination", () => {
       buildVariantId(v.components),
     ));
 
-    const result = selectNextCombination(qualityCatalog, tested, history);
+    const result = selectNextCombination(qualityCatalog, tested, { variantHistory: history });
     expect(result).not.toBeNull();
     // Should pick a range-* variant because range has avg 57.5 vs donchian 20 vs orb 25
     expect(result!["Entry Signal"]).toBe("range");
@@ -816,7 +817,7 @@ describe("selectNextCombination", () => {
       buildVariantId(v.components),
     ));
 
-    const result = selectNextCombination(qualityCatalog, tested, history);
+    const result = selectNextCombination(qualityCatalog, tested, { variantHistory: history });
     expect(result).not.toBeNull();
     // Novelty sort prefers untested slugs — should pick donchian or orb (not range)
     expect(["donchian", "orb"]).toContain(result!["Entry Signal"]);
@@ -842,7 +843,7 @@ describe("selectNextCombination", () => {
       buildVariantId(v.components),
     ));
 
-    const result = selectNextCombination(qualityCatalog, tested, history);
+    const result = selectNextCombination(qualityCatalog, tested, { variantHistory: history });
     expect(result).not.toBeNull();
     // orb-ema-partial-tp wins because untested "orb" gets slot mean (38.75)
     // paired with ema (60) + partial-tp (60) = 158.75 > range-ema-timeout (155)
@@ -869,13 +870,99 @@ describe("selectNextCombination", () => {
       buildVariantId(v.components),
     ));
 
-    const result = selectNextCombination(qualityCatalog, tested, history);
+    const result = selectNextCombination(qualityCatalog, tested, { variantHistory: history });
     expect(result).not.toBeNull();
     // Should prefer partial-tp exit (avg 65) over timeout (avg 27.5)
     if (result!["Entry Signal"] === "range") {
       // range-adx-partial-tp or range-ema-timeout — partial-tp scores higher
       expect(result!["Exit"]).toBe("partial-tp");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// estimateMaxVars
+// ---------------------------------------------------------------------------
+describe("estimateMaxVars", () => {
+  const slotMap = new Map([
+    ["Entry Signal", { slotName: "Entry Signal", candidates: [], typicalVars: "1-2" }],
+    ["Regime Filter", { slotName: "Regime Filter", candidates: [], typicalVars: "0-1" }],
+    ["Exit", { slotName: "Exit", candidates: [], typicalVars: "1-3" }],
+    ["Direction", { slotName: "Direction", candidates: [] }],
+  ]);
+
+  it("sums upper bound of typicalVars ranges", () => {
+    const combo = { "Entry Signal": "donchian", "Regime Filter": "adx", "Exit": "trail" };
+    expect(estimateMaxVars(combo, slotMap)).toBe(6); // 2 + 1 + 3
+  });
+
+  it("ignores slots without typicalVars (e.g. Direction = 0 vars)", () => {
+    const combo = { "Direction": "both", "Entry Signal": "donchian" };
+    expect(estimateMaxVars(combo, slotMap)).toBe(2); // 0 + 2
+  });
+
+  it("adds fixed var overhead when moduleId is provided", () => {
+    const combo = { "Entry Signal": "donchian", "Regime Filter": "adx" };
+    // M1 overhead = 3 (volume + ATR stop + timeout)
+    expect(estimateMaxVars(combo, slotMap, "M1")).toBe(6); // 2 + 1 + 3
+    // M4 overhead = 2 (stop + timeout)
+    expect(estimateMaxVars(combo, slotMap, "M4")).toBe(5); // 2 + 1 + 2
+  });
+
+  it("returns 0 for empty combo", () => {
+    expect(estimateMaxVars({}, slotMap)).toBe(0);
+  });
+
+  it("handles single-value typicalVars (no range)", () => {
+    const singleSlotMap = new Map([
+      ["Timeout", { slotName: "Timeout", candidates: [], typicalVars: "1" }],
+    ]);
+    expect(estimateMaxVars({ "Timeout": "30" }, singleSlotMap)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selectNextCombination with varCap
+// ---------------------------------------------------------------------------
+describe("selectNextCombination with varCap", () => {
+  const budgetCatalog: ComponentCatalog = {
+    slots: [
+      {
+        slotName: "Entry Signal",
+        candidates: [
+          { name: "SuperTrend flip", slug: "supertrend", description: "Simple" },
+          { name: "MA crossover", slug: "ema-cross", description: "Classic" },
+        ],
+        typicalVars: "1-2",
+      },
+      {
+        slotName: "Trailing Exit",
+        candidates: [
+          { name: "SuperTrend flip exit", slug: "supertrend", description: "0 vars" },
+          { name: "Chandelier Exit", slug: "chandelier", description: "1-2 vars" },
+        ],
+        typicalVars: "0-2",
+      },
+    ],
+  };
+
+  it("filters out combos that exceed varCap", () => {
+    // Slot vars: Entry(2) + Trail(2) = 4, plus M4 overhead(2) = 6
+    // With varCap=5, combos with max vars > 5 are excluded
+    // All combos have slot max 4, so with M4 overhead(2) = 6 > 5 → all filtered
+    const result = selectNextCombination(budgetCatalog, new Set(), { varCap: 5, moduleId: "M4" });
+    expect(result).toBeNull();
+  });
+
+  it("allows combos within varCap", () => {
+    // With varCap=6: slot max 4 + M4 overhead(2) = 6 ≤ 6 → allowed
+    const result = selectNextCombination(budgetCatalog, new Set(), { varCap: 6, moduleId: "M4" });
+    expect(result).not.toBeNull();
+  });
+
+  it("works without varCap (backward compatible)", () => {
+    const result = selectNextCombination(budgetCatalog, new Set());
+    expect(result).not.toBeNull();
   });
 });
 

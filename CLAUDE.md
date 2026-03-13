@@ -1,10 +1,5 @@
 # CLAUDE Instructions — Monorepo Root
 
-## Continuous improvement of CLAUDE.md
-- Identify patterns, conventions or rules that should be documented.
-- Proactively update when a new rule becomes established.
-- Shared rules go in root `CLAUDE.md`; package-specific rules stay in `packages/*/CLAUDE.md`.
-
 ## Monorepo structure (B.R.E.A.K.E.R.)
 ```
 trading/
@@ -22,11 +17,6 @@ trading/
 └── CLAUDE.md             — this file (shared rules)
 ```
 
-## Naming conventions
-- File names use **kebab-case** (hyphens, not underscores).
-- **One export per file**: each file must have a single primary function, class, or component. The file name must match the export name in kebab-case (e.g., `calculateRsi` → `calculate-rsi.ts`, `PositionCard` → `position-card.tsx`).
-- Exceptions: type-only files (`types.ts`), barrel re-exports (`index.ts`), co-located test files (`*.test.ts`), and co-located types/interfaces for params/return/config of the file's primary export.
-
 ## Configuration and secrets
 - `.env` is EXCLUSIVELY for secrets (API keys, tokens, credentials) that must not leak.
 - Everything else (timeouts, thresholds, flags) should be hardcoded or in config files.
@@ -38,11 +28,7 @@ trading/
 - Test all: `pnpm test` (root runs `pnpm -r test`)
 - Type check all: `pnpm typecheck` (root runs `pnpm -r typecheck`)
 - Run for a single package: `pnpm --filter @breaker/refiner build`
-- **Mandatory validation**: every code change (`src/`, `*.ts`) MUST end with `pnpm build && pnpm test`. Do not consider the task complete until tests pass.
-- **Regression rule**: every bug fix MUST include at least 1 test that reproduces the bug and verifies the fix.
-- **Root cause analysis**: after fixing a bug, investigate WHY it happened — trace the root cause to the code pattern, architectural decision, or missing validation that allowed it. Then apply a **structural fix** (guard, constraint, assertion, or design change) that prevents the entire class of bug from recurring, not just the specific instance. If the bug originated from a prompt-driven system (e.g. refiner), update the prompt rules too.
-- **TDD-first**: write or update tests BEFORE implementing the feature/fix.
-- **Post-implementation test review**: after finishing the implementation and all TDD tests pass, do a second pass to add tests that TDD missed — integration tests for new endpoints/WS events, edge cases only visible after seeing the final code, cross-layer interactions (e.g. REST handler → store → aggregation), and any gaps that only become apparent once the full implementation exists.
+- If a bug originated from a prompt-driven system (e.g. refiner), update the prompt rules too.
 - Mandatory pattern: every executable module in src/ must have an `isMainModule(import.meta.url)` guard from `@breaker/kit` (do not execute when imported in tests).
 
 ## Running services
@@ -73,10 +59,7 @@ explorer has no workspace deps (consumes exchange API via HTTP/WS)
 ```
 
 ## Tech stack (shared)
-- TypeScript (strict, ES2022, NodeNext modules)
-- Zod for runtime schema validation
 - Vitest for testing
-- ES Modules (`type: "module"` in package.json)
 
 ## Cross-package pitfalls
 - Must build `@breaker/backtest` before running exchange tests (workspace dep)

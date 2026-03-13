@@ -42,6 +42,7 @@ export class PositionTracker {
       entryTimestamp: fill.timestamp,
       entryBarIndex: 0, // Will be set by engine
       unrealizedPnl: 0,
+      accumulatedFunding: 0,
       fills: [fill],
     };
   }
@@ -53,6 +54,22 @@ export class PositionTracker {
     if (this.position) {
       this.position.entryBarIndex = barIndex;
     }
+  }
+
+  /**
+   * Accumulate per-bar funding cost (called by engine each bar while position is open).
+   */
+  accumulateFunding(cost: number): void {
+    if (this.position) {
+      this.position.accumulatedFunding += cost;
+    }
+  }
+
+  /**
+   * Get total funding accumulated so far via bar-by-bar tracking.
+   */
+  getAccumulatedFunding(): number {
+    return this.position?.accumulatedFunding ?? 0;
   }
 
   /**

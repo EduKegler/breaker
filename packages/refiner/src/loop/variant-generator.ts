@@ -169,7 +169,13 @@ export async function generateVariant(opts: GenerateVariantOpts): Promise<Varian
     bestScore: v.bestScore,
   }));
 
-  const preSelectedComponents = selectNextCombination(moduleContext.catalog, testedIds, variantHistory);
+  const preSelectedComponents = selectNextCombination(
+    moduleContext.catalog, testedIds, {
+      variantHistory,
+      varCap: moduleContext.varCap,
+      moduleId: moduleContext.moduleId,
+    },
+  );
   if (!preSelectedComponents) {
     log("\x1b[33mAll component combinations exhausted — cannot generate new variant\x1b[0m");
     return null;

@@ -525,22 +525,74 @@ function expectedQuality(
  * as required slots. Combinations are ranked by the sum of their slugs'
  * average bestScore. Untested slugs receive the slot mean as neutral prior.
  */
+/**
+ * Non-slot vars from KB variable budget tables (ATR stop, timeout, volume, etc.).
+ * These consume var budget but aren't swappable catalog slots.
+ * Source: docs/knowledge-base.md §5 (per-module variable budget tables).
+ */
+const FIXED_VAR_OVERHEAD: Record<string, number> = {
+  M1: 3, // Volume(1) + ATR stop(1) + Timeout(1)
+  M2: 1, // Timeout(1) — catastrophic stop is optional
+  M3: 2, // ATR stop(1) + Timeout(1)
+  M4: 2, // Stop(1) + Timeout(1)
+};
+
+/**
+ * Estimate max variable count for a combination using per-slot typicalVars.
+ * Parses "1-2" → 2 (takes upper bound for conservative filtering).
+ *
+ * @param slotMap - Map of slotName → CatalogSlot for O(1) lookups.
+ */
+export function estimateMaxVars(
+  combo: Record<string, string>,
+  slotMap: Map<string, CatalogSlot>,
+  moduleId?: string,
+): number {
+  let total = 0;
+  for (const slotName of Object.keys(combo)) {
+    const slot = slotMap.get(slotName);
+    if (!slot?.typicalVars) continue;
+    const parts = slot.typicalVars.split("-").map(Number).filter((n) => !Number.isNaN(n));
+    total += parts.length > 0 ? parts[parts.length - 1] : 0;
+  }
+  if (moduleId) {
+    total += FIXED_VAR_OVERHEAD[moduleId] ?? 0;
+  }
+  return total;
+}
+
+export interface SelectNextOpts {
+  variantHistory?: VariantPerformance[];
+  varCap?: number;
+  moduleId?: string;
+}
+
 export function selectNextCombination(
   catalog: ComponentCatalog,
   testedIds: Set<string>,
-  variantHistory?: VariantPerformance[],
+  opts?: SelectNextOpts,
 ): Record<string, string> | null {
   if (catalog.slots.length === 0) return null;
 
+  const { variantHistory, varCap, moduleId } = opts ?? {};
   const combos = cartesianProduct(catalog.slots);
 
-  const untested = combos.filter((combo) => {
+  let untested = combos.filter((combo) => {
     // Skip empty combos (all-optional slots all chose null)
     if (Object.keys(combo).length === 0) return false;
     return !testedIds.has(buildVariantId(combo));
   });
 
   if (untested.length === 0) return null;
+
+  // Filter out combinations that exceed variable budget
+  if (varCap != null) {
+    const slotMap = new Map(catalog.slots.map((s) => [s.slotName, s]));
+    untested = untested.filter(
+      (combo) => estimateMaxVars(combo, slotMap, moduleId) <= varCap,
+    );
+    if (untested.length === 0) return null;
+  }
 
   const requiredSlotCount = catalog.slots.filter((s) => !s.optional).length;
   const useQuality = variantHistory && variantHistory.length >= requiredSlotCount;

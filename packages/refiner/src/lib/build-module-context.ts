@@ -78,8 +78,9 @@ export interface FailureContext {
  * The prompt shows slugs to Claude, Claude returns slugs, buildVariantId() joins them.
  */
 export const CANDIDATE_SLUGS: Record<string, string> = {
-  // ── M1 Breakout: Direction Constraint ──
+  // ── Direction Constraint (M1, M4) ──
   "Both": "both",
+  "Both (symmetric)": "both",
   "Long only": "long",
   "Short only": "short",
   // ── M1 Breakout: Entry Signal ──
@@ -306,6 +307,7 @@ const MODULE_SLOT_HEADERS: Record<string, { slotName: string; header: string; op
     { slotName: "Exit",            header: "Exit candidates" },
   ],
   M4: [
+    { slotName: "Direction",       header: "Direction constraint candidates" },
     { slotName: "Entry Signal",    header: "Entry signal candidates" },
     { slotName: "Regime Filter",   header: "Regime filter candidates" },
     { slotName: "Trailing Exit",   header: "Trailing exit candidates" },
@@ -516,6 +518,7 @@ const STARTING_COMPONENTS: Record<string, Record<string, string>> = {
     "Exit": "swing",
   },
   M4: {
+    "Direction": "both",
     "Entry Signal": "supertrend",
     "Regime Filter": "adx",
     "Trailing Exit": "supertrend",

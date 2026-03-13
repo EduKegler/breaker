@@ -63,6 +63,9 @@ interface BuildPromptOptions {
   rejectedRepeats?: string[];
   /** Validation warnings from previous iteration (var cap, clamped values, etc.) */
   lastValidationWarnings?: string[];
+  /** Backtest window timestamps for accurate trade annualization */
+  startTime?: number;
+  endTime?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +129,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   );
   const designChecklistSection = buildDesignChecklistSection(criteria.designChecklist, globalIter);
   const filterSimsSection = buildFilterSimsSection(tradeAnalysis);
-  const diagnosticGuide = buildDiagnosticGuide(metrics, tradeAnalysis, moduleContext.moduleId);
+  const diagnosticGuide = buildDiagnosticGuide(metrics, tradeAnalysis, moduleContext.moduleId, opts.startTime, opts.endTime);
   const overfitSection = buildOverfitSection(paramHistory, tradeAnalysis, mc.minPfRatio, metrics, moduleContext.moduleId);
 
   // Research brief — updated schema matching conduct-research.ts
@@ -339,7 +342,7 @@ function buildUnmetCriteria(
   return unmet;
 }
 
-function buildDiagnosticGuide(metrics: Metrics, tradeAnalysis: TradeAnalysis | null, moduleId?: string): string {
+function buildDiagnosticGuide(metrics: Metrics, tradeAnalysis: TradeAnalysis | null, moduleId?: string, startTime?: number, endTime?: number): string {
   const hints: string[] = [];
 
   const pf = metrics.profitFactor ?? 0;
@@ -364,8 +367,14 @@ function buildDiagnosticGuide(metrics: Metrics, tradeAnalysis: TradeAnalysis | n
   if (moduleId) {
     const mc = MODULE_CRITERIA[moduleId];
     if (mc?.expectedTradesPerYear && trades > 0) {
-      // Assume ~6 month backtest window (standard config). Annualize conservatively.
-      const annualized = trades * 2;
+      // Calculate annualization from actual backtest window (not hardcoded)
+      let annualized: number;
+      if (startTime != null && endTime != null && endTime > startTime) {
+        const yearsBacktest = (endTime - startTime) / (365.25 * 24 * 60 * 60 * 1000);
+        annualized = yearsBacktest > 0 ? Math.round(trades / yearsBacktest) : trades;
+      } else {
+        annualized = trades * 2; // fallback: assume ~6 months
+      }
       if (annualized > mc.expectedTradesPerYear.max * 2) {
         hints.push(
           `ARCHETYPE DRIFT: ${trades} trades in backtest (~${annualized}/year). ` +

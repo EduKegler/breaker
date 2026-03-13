@@ -629,6 +629,16 @@ BREAKER can explore any combination fitting the trend following archetype (ident
 | Funding cost model           | 0            | Fixed estimate, not a tunable variable                                                                                |
 | **Typical total**            | **5-6**      | Tight budget forces simplicity. Trend following should be the simplest module -- Turtle Traders profited with ~4 vars |
 
+**Direction constraint candidates (optional — default: both):**
+
+| Mode             | What it does                                                  | When to use                                                                                                                                                                                                   | Vars |
+| ---------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| Both (symmetric) | Enters long and short based on regime filter direction        | Default. Baseline comparison. Best coverage across regimes                                                                                                                                                    | 0    |
+| Long only        | Only takes long entries. Short signals ignored                | BTC structural upward drift. Avoids fighting drift + squeeze risk. Fewer trades, simpler. Prefer if long-only PF exceeds symmetric PF                                                                        | 0    |
+| Short only       | Only takes short entries. Long signals ignored                | Test separately to determine if short TF edge exists on BTC. MUST backtest across bull+bear. Short-only PF is regime-dependent. Shorts receive funding in bull markets but face drift + squeeze risk           | 0    |
+
+> Direction consumes 0 vars — it's a binary filter, not a tunable parameter. BREAKER tests all three modes per variant to determine directional edge. If long-only PF significantly exceeds symmetric PF, prefer long-only — fewer trades, simpler, avoids fighting structural drift (see Long/short asymmetry note above).
+
 **Entry signal candidates (pick one architecture, then lock per variant — see 13.2):**
 
 | Approach                    | Timeframe               | What it does                                                                                                            | Tunable params                                               | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |

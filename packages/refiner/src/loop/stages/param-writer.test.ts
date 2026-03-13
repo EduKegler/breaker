@@ -504,6 +504,45 @@ describe("paramWriter.backfillLastIteration with verdictOverride (B3)", () => {
   });
 });
 
+describe("paramWriter.backfillLastIteration rollback bug regression", () => {
+  // Regression test for: after rollback, currentMetrics is reset to checkpoint values.
+  // If backfill receives rolled-back metrics, it falsely marks param changes as "no_trade_impact"
+  // even when the actual backtest produced different results. The fix captures actual backtest
+  // metrics BEFORE rollback and passes those to backfill instead.
+  it("detects real change when given actual backtest metrics (not rolled-back checkpoint)", () => {
+    const history = paramWriter.loadHistory(historyPath);
+    history.iterations = [{
+      iter: 29, date: "2026-03-12",
+      change: { param: "chandelierMult", from: 3, to: 3.5 },
+      before: { pnl: 17.04, trades: 42, pf: 1.309 }, // checkpoint metrics
+      after: null, verdict: "pending",
+    }];
+    fs.writeFileSync(historyPath, JSON.stringify(history));
+
+    // BUG scenario: passing rolled-back checkpoint metrics → false "no_trade_impact"
+    const bugResult = paramWriter.backfillLastIteration({
+      historyPath,
+      currentMetrics: { pnl: 17.04, trades: 42, pf: 1.309 }, // same as checkpoint!
+    });
+    expect(bugResult.iterations[0].after).toEqual({ pnl: 17.04, trades: 42, pf: 1.309 });
+    expect(bugResult.iterations[0].verdict).toBe("neutral"); // falsely classified
+
+    // Reset for fix scenario
+    history.iterations[0].after = null;
+    history.iterations[0].verdict = "pending";
+    (history as { neverWorked?: unknown[] }).neverWorked = [];
+    fs.writeFileSync(historyPath, JSON.stringify(history));
+
+    // FIX scenario: passing actual backtest metrics → real verdict
+    const fixResult = paramWriter.backfillLastIteration({
+      historyPath,
+      currentMetrics: { pnl: 8.5, trades: 38, pf: 1.12 }, // actual different results
+    });
+    expect(fixResult.iterations[0].after).toEqual({ pnl: 8.5, trades: 38, pf: 1.12 });
+    expect(fixResult.iterations[0].verdict).toBe("degraded"); // correct classification
+  });
+});
+
 describe("paramWriter.transitionApproach", () => {
   it("marks active approach as exhausted and adds new one", () => {
     // Seed with active approach

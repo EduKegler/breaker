@@ -183,7 +183,7 @@ export async function generateSeed(opts: GenerateSeedOptions): Promise<GenerateS
     globalIter: 0,
     moduleContext,
     existingParamCount: 0,
-    timeoutMs: 300000,
+    timeoutMs: 600000,
     cancelSignal,
   });
 

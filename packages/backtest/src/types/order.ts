@@ -29,6 +29,8 @@ export interface Position {
   entryTimestamp: number;
   entryBarIndex: number;
   unrealizedPnl: number;
+  /** Running total of funding cost accumulated bar-by-bar during the hold. */
+  accumulatedFunding: number;
   fills: Fill[];
 }
 

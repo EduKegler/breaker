@@ -66,6 +66,12 @@ import { applyRollback, applyB2Rollback } from "./loop-state.js";
 
 const shutdownController = new AbortController();
 
+/**
+ * Graceful cap: when set, the loop will finish the current iteration and
+ * exit cleanly (summary, WhatsApp, checkpoint restore). Press 'q' to trigger.
+ */
+let gracefulCapRequested = false;
+
 function installShutdownHandlers(asset: string): void {
   const handler = () => {
     // Prevent re-entrance on double Ctrl+C
@@ -79,6 +85,36 @@ function installShutdownHandlers(asset: string): void {
   };
   process.on("SIGINT", handler);
   process.on("SIGTERM", handler);
+
+  // Graceful cap: press 'q' to finish current iteration and exit cleanly
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (key: string) => {
+      // Ctrl+C still works as before (raw mode captures it as \x03)
+      if (key === "\x03") {
+        handler();
+        return;
+      }
+      if (key === "q" || key === "Q") {
+        if (!gracefulCapRequested) {
+          gracefulCapRequested = true;
+          console.log(`\n\x1b[33m⚠ Graceful stop requested — finishing current iteration then exiting cleanly...\x1b[0m`);
+        }
+      }
+    });
+  }
+}
+
+/** Disable raw mode so the process can exit cleanly. */
+function teardownStdin(): void {
+  if (process.stdin.isTTY) {
+    try {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+    } catch { /* already closed */ }
+  }
 }
 
 // ANSI color helpers (no dependency needed)
@@ -174,6 +210,7 @@ export async function orchestrate(): Promise<void> {
   }
 
   log(`${c.b}B.R.E.A.K.E.R.${c.r} starting: asset=${c.b}${cfg.asset}${c.r} strategy=${cfg.strategy} maxIter=${cfg.maxIter} runId=${cfg.runId}`);
+  logDim(`Press 'q' to gracefully stop after the current iteration`);
 
   // Build module context (strategy → KB module mapping)
   // cfg.repoRoot is the refiner package root; KB lives at monorepo root
@@ -630,6 +667,10 @@ export async function orchestrate(): Promise<void> {
   let lastContentHash: string | undefined;
   let lastRollbackReason: string | undefined;
   let pendingVerdictOverride: { verdict: string; note: string } | undefined;
+  /** Actual backtest metrics from the previous iteration — survives rollback.
+   *  Without this, backfillLastIteration would use rolled-back checkpoint metrics,
+   *  falsely reporting "no_trade_impact" for params that DID change results. */
+  let lastActualBacktestMetrics: { pnl: number; trades: number; pf: number } | undefined;
   let failedRestructures: RestructureFailure[] = [];
   let bestPFEver = initialMetrics.profitFactor ?? 0;
   /** Best metrics snapshot for dynamic budget computation — updated only on checkpoint save. */
@@ -665,6 +706,12 @@ export async function orchestrate(): Promise<void> {
   }
 
   for (let iter = 1; !baselinePassesStretch && iter <= cfg.maxIter; iter++) {
+    // ---- Graceful cap check ----
+    if (gracefulCapRequested) {
+      log(`${c.ylw}Graceful stop: finishing after iteration ${iter - 1}${c.r}`);
+      break;
+    }
+
     state.iter = iter;
     state.globalIter++;
 
@@ -799,6 +846,7 @@ export async function orchestrate(): Promise<void> {
       failedRestructures = [];
       lastContentHash = undefined;
       pendingVerdictOverride = undefined;
+      lastActualBacktestMetrics = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
       bestVariantMetrics = {
         profitFactor: currentMetrics.profitFactor ?? 0,
@@ -944,6 +992,7 @@ export async function orchestrate(): Promise<void> {
       failedRestructures = [];
       lastContentHash = undefined;
       pendingVerdictOverride = undefined;
+      lastActualBacktestMetrics = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
       bestVariantMetrics = {
         profitFactor: currentMetrics.profitFactor ?? 0,
@@ -1059,18 +1108,22 @@ export async function orchestrate(): Promise<void> {
     }
 
     // ---- Backfill previous iteration's param-history (early, before any continue) ----
-    // Uses persistent currentMetrics which reflects the state after the previous iteration completed.
+    // Uses lastActualBacktestMetrics (captured before rollback) so the "after" field
+    // reflects the REAL backtest result, not rolled-back checkpoint metrics.
+    // Falls back to currentMetrics for iterations that didn't run a backtest (e.g. no-op).
     try {
+      const backfillMetrics = lastActualBacktestMetrics ?? {
+        pnl: currentPnl,
+        trades: currentMetrics.numTrades ?? 0,
+        pf: currentMetrics.profitFactor ?? 0,
+      };
       paramWriter.backfillLastIteration({
         historyPath: cfg.paramHistoryFile,
-        currentMetrics: {
-          pnl: currentPnl,
-          trades: currentMetrics.numTrades ?? 0,
-          pf: currentMetrics.profitFactor ?? 0,
-        },
+        currentMetrics: backfillMetrics,
         verdictOverride: pendingVerdictOverride,
       });
       pendingVerdictOverride = undefined;
+      lastActualBacktestMetrics = undefined; // Consumed — reset for next iteration
     } catch (err) {
       logWarn(`Param-history backfill error (non-blocking): ${(err as Error).message}`);
     }
@@ -1153,6 +1206,8 @@ export async function orchestrate(): Promise<void> {
       walkForward: (currentAnalysis ?? lastAnalysis)?.walkForward ?? null,
       rejectedRepeats: recentRejects.length > 0 ? recentRejects : undefined,
       lastValidationWarnings: lastValidationWarnings.length > 0 ? lastValidationWarnings : undefined,
+      startTime: cfg.startTime,
+      endTime: cfg.endTime,
     });
 
     emitEvent({
@@ -1556,6 +1611,14 @@ export async function orchestrate(): Promise<void> {
     actor.send({ type: "BACKTEST_OK", currentScore: scoreResult.weighted, currentPnl: iterPnl });
     lastContentHash = contentHash;
 
+    // Capture actual backtest metrics BEFORE any rollback can reset them.
+    // Used by backfillLastIteration to record the real result, not checkpoint metrics.
+    lastActualBacktestMetrics = {
+      pnl: iterPnl,
+      trades: metrics.numTrades ?? 0,
+      pf: metrics.profitFactor ?? 0,
+    };
+
     // Update persistent variables with backtest result
     currentMetrics = metrics;
     currentAnalysis = analysis;
@@ -1845,6 +1908,7 @@ export async function orchestrate(): Promise<void> {
       failedRestructures = [];
       lastContentHash = undefined;
       pendingVerdictOverride = undefined;
+      lastActualBacktestMetrics = undefined;
       bestPFEver = currentMetrics.profitFactor ?? 0;
       bestVariantMetrics = {
         profitFactor: currentMetrics.profitFactor ?? 0,
@@ -2186,6 +2250,7 @@ export async function orchestrate(): Promise<void> {
   // Stop the actor and clean up
   actor.stop();
   closeLoggers();
+  teardownStdin();
 
   } finally {
     lock.release(cfg.asset);
