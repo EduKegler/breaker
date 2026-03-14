@@ -35,16 +35,48 @@ export function replayStrategy(params: ReplayParams): ReplaySignal[] {
   // Initialize strategy
   strategy.init?.(candles, higherTimeframes);
 
+  // Simulate minimal position tracking so the strategy sees realistic state.
+  // Without this, onCandle fires on every bar (position: null, barsSinceExit: 999)
+  // producing duplicate markers on consecutive candles.
+  let inPosition = false;
+  let positionDirection: "long" | "short" | null = null;
+  let positionEntryBar = 0;
+  let barsSinceExit = 999;
+
   // Run strategy on each candle
   for (let i = 0; i < candles.length; i++) {
+    // Simulate position exit after timeout (approximate — uses strategy's timeoutBars or 30 default)
+    if (inPosition) {
+      const barsHeld = i - positionEntryBar;
+      const timeoutBars = Number(strategy.params?.timeoutBars?.value ?? 30);
+      if (barsHeld >= timeoutBars) {
+        inPosition = false;
+        positionDirection = null;
+        barsSinceExit = 0;
+      }
+    }
+
+    if (!inPosition) {
+      barsSinceExit++;
+    }
+
     const ctx = buildContext({
       candles,
       index: i,
-      position: null,
+      position: inPosition ? {
+        direction: positionDirection ?? "long",
+        entryPrice: candles[positionEntryBar]?.c ?? 0,
+        size: 0.001,
+        entryTimestamp: candles[positionEntryBar]?.t ?? 0,
+        entryBarIndex: positionEntryBar,
+        unrealizedPnl: 0,
+        accumulatedFunding: 0,
+        fills: [],
+      } : null,
       higherTimeframes,
       dailyPnl: 0,
       tradesToday: 0,
-      barsSinceExit: 999,
+      barsSinceExit,
     });
 
     const signal = strategy.onCandle(ctx);
@@ -57,6 +89,11 @@ export function replayStrategy(params: ReplayParams): ReplaySignal[] {
         comment: signal.comment,
         strategyName: params.strategyName ?? "",
       });
+
+      // Mark as in-position to suppress subsequent signals
+      inPosition = true;
+      positionDirection = signal.direction;
+      positionEntryBar = i;
     }
   }
 
