@@ -14,6 +14,11 @@ describe("computeScore", () => {
     avgLossR: -0.7,
     maxLossR: -1.2,
     expectancy: 0.3,
+    edgeBpsGross: null,
+    edgeBpsNet: null,
+    avgCostBps: null,
+    tradesPerDay: null,
+    totalCostPct: null,
   };
 
   it("returns score in 0-100 range", () => {
@@ -25,7 +30,7 @@ describe("computeScore", () => {
   it("returns higher score for better metrics", () => {
     const good = computeScore(goodMetrics, 3, 200);
     const bad = computeScore(
-      { totalPnl: 50, numTrades: 80, profitFactor: 0.8, maxDrawdownPct: 20, winRate: 15, avgR: 0.05, avgWinR: 0.5, avgLossR: -0.4, maxLossR: -1.0, expectancy: -0.1 },
+      { totalPnl: 50, numTrades: 80, profitFactor: 0.8, maxDrawdownPct: 20, winRate: 15, avgR: 0.05, avgWinR: 0.5, avgLossR: -0.4, maxLossR: -1.0, expectancy: -0.1, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null },
       3,
       80,
     );
@@ -90,6 +95,11 @@ describe("computeScore", () => {
       avgLossR: null,
       maxLossR: null,
       expectancy: null,
+      edgeBpsGross: null,
+      edgeBpsNet: null,
+      avgCostBps: null,
+      tradesPerDay: null,
+      totalCostPct: null,
     };
     const score = computeScore(nullMetrics, 0, 0);
     expect(score.weighted).toBeGreaterThanOrEqual(0);
@@ -111,6 +121,7 @@ describe("computeScore", () => {
       totalPnl: -500, numTrades: 177, profitFactor: 0.32,
       maxDrawdownPct: -50.6, winRate: 30, avgR: -0.26,
       avgWinR: 0.4, avgLossR: -0.56, maxLossR: -1.7, expectancy: -0.26,
+      edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null,
     };
     const score = computeScore(catastrophic, 7, 177);
     for (const [key, val] of Object.entries(score.raw)) {
@@ -132,11 +143,13 @@ describe("computeScore", () => {
       totalPnl: -505, numTrades: 177, profitFactor: 0.32,
       maxDrawdownPct: -50.6, winRate: 30.5, avgR: -0.26,
       avgWinR: 0.4, avgLossR: -0.56, maxLossR: -1.7, expectancy: -0.26,
+      edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null,
     };
     const decent: Metrics = {
       totalPnl: 60, numTrades: 26, profitFactor: 1.91,
       maxDrawdownPct: -5.6, winRate: 61.5, avgR: 0.22,
       avgWinR: 1.0, avgLossR: -0.3, maxLossR: -1.0, expectancy: 0.22,
+      edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null,
     };
     const catScore = computeScore(catastrophic, 7, 177);
     const decScore = computeScore(decent, 6, 26);
@@ -163,6 +176,7 @@ describe("computeScore", () => {
       totalPnl: 12, numTrades: 2, profitFactor: 0,
       maxDrawdownPct: 0, winRate: 100, avgR: 0.6,
       avgWinR: 0.6, avgLossR: 0, maxLossR: 0, expectancy: 0.6,
+      edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null,
     };
     const score = computeScore(twoTradeMetrics, 3, 2);
     expect(score.weighted).toBeLessThan(10);
@@ -178,6 +192,7 @@ describe("computeScore", () => {
       totalPnl: 50, numTrades: 10, profitFactor: 1.5,
       maxDrawdownPct: 5, winRate: 50, avgR: 0.3,
       avgWinR: 1.0, avgLossR: -0.5, maxLossR: -1.0, expectancy: 0.3,
+      edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null,
     };
     const score10 = computeScore(metrics, 3, 10);
     const score20 = computeScore({ ...metrics, numTrades: 20 }, 3, 20);

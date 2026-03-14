@@ -13,6 +13,7 @@ import type {
   TradeAnalysis,
   CompletedTrade,
 } from "@breaker/backtest";
+import { tradingDaysFromCandles } from "@breaker/backtest";
 
 interface EngineResult {
   metrics: Metrics;
@@ -41,7 +42,7 @@ export function runEngineInProcess(opts: {
 
   const result = runBacktest(candles, strategy, backtestConfig, sourceInterval);
 
-  const metrics = computeMetrics(result.trades, result.maxDrawdownPct);
+  const metrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDaysFromCandles(candles), backtestConfig.initialCapital);
   const analysis = analyzeTradeList(result.trades);
 
   return { metrics, analysis, trades: result.trades };

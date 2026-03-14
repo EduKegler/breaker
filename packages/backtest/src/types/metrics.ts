@@ -11,6 +11,13 @@ export interface Metrics {
   avgLossR: number | null;
   maxLossR: number | null;
   expectancy: number | null;
+
+  // Cost-aware metrics
+  edgeBpsGross: number | null;
+  edgeBpsNet: number | null;
+  avgCostBps: number | null;
+  tradesPerDay: number | null;
+  totalCostPct: number | null;
 }
 
 export interface Thresholds {

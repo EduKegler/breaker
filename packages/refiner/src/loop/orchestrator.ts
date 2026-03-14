@@ -1984,7 +1984,9 @@ export async function orchestrate(): Promise<void> {
         avgR: metrics.avgR ?? 0,
         winRate: metrics.winRate ?? 0,
       };
-      logOk(`💾 Checkpoint saved: iter=${iter} score=${scoreResult.weighted.toFixed(1)} PnL=$${iterPnl.toFixed(2)} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)}`);
+      const edgeInfo = metrics.edgeBpsNet != null ? ` Edge(net)=${metrics.edgeBpsNet.toFixed(0)}bps` : "";
+      const tpdInfo = metrics.tradesPerDay != null ? ` T/day=${metrics.tradesPerDay.toFixed(2)}` : "";
+      logOk(`💾 Checkpoint saved: iter=${iter} score=${scoreResult.weighted.toFixed(1)} PnL=$${iterPnl.toFixed(2)} trades=${metrics.numTrades} PF=${metrics.profitFactor?.toFixed(2)}${edgeInfo}${tpdInfo}`);
       log(`${c.b}${c.grn}⭐ New best: Score=${scoreResult.weighted.toFixed(1)} PnL=$${iterPnl.toFixed(2)} at iter ${iter}${c.r}`);
 
       // Detect restructure→refine transition: reload factory so refine sees new params

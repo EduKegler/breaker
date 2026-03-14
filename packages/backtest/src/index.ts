@@ -67,6 +67,12 @@ export { analyzeTradeList } from "./analysis/trade-analysis.js";
 export { getSessionForTimestamp } from "./analysis/get-session-for-hour.js";
 export { computeWalkForward } from "./analysis/walk-forward.js";
 export { computeFilterSimulations } from "./analysis/filter-simulation.js";
+export { runCostScenarios, tradingDaysFromCandles } from "./analysis/run-cost-scenarios.js";
+export type { CostScenarioResult, DeltaVsBase } from "./analysis/run-cost-scenarios.js";
+export { runSlippageStress, DEFAULT_SCENARIOS } from "./analysis/slippage-stress.js";
+export type { SlippageScenario, SlippageStressResult } from "./analysis/slippage-stress.js";
+export { runFeeScenarios, DEFAULT_FEE_SCENARIOS } from "./analysis/fee-scenarios.js";
+export type { FeeScenario, FeeScenarioResult } from "./analysis/fee-scenarios.js";
 
 // Data
 export { fetchCandles } from "./data/fetch-candles.js";

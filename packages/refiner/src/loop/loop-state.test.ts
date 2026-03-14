@@ -20,6 +20,11 @@ function makeMetrics(overrides: Partial<Metrics> = {}): Metrics {
     avgLossR: -0.2,
     maxLossR: -1.5,
     expectancy: 0.1,
+    edgeBpsGross: null,
+    edgeBpsNet: null,
+    avgCostBps: null,
+    tradesPerDay: null,
+    totalCostPct: null,
     ...overrides,
   };
 }

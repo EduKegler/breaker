@@ -8,6 +8,9 @@ import type { Strategy } from "./types/strategy.js";
 import path from "node:path";
 import fs from "node:fs";
 import { isMainModule } from "@breaker/kit";
+import { runSlippageStress } from "./analysis/slippage-stress.js";
+import { runFeeScenarios } from "./analysis/fee-scenarios.js";
+import type { CostScenarioResult } from "./analysis/run-cost-scenarios.js";
 
 if (isMainModule(import.meta.url)) {
   main().catch((err) => {
@@ -27,6 +30,8 @@ async function main(): Promise<void> {
   cli.option("--strategy <name>", "Strategy name (matched against deployed barrel exports)");
   cli.option("--cash", "Use cash sizing mode ($100 per trade)");
   cli.option("--limits", "Enable trade limits (use --no-limits to disable)");
+  cli.option("--stress", "Run slippage stress test");
+  cli.option("--fee-scenarios", "Run fee scenario comparison (maker vs taker)");
 
   cli.help();
 
@@ -129,7 +134,7 @@ async function main(): Promise<void> {
   const trades = result.trades;
 
   // Compute metrics on filtered trades
-  const metrics = computeMetrics(trades, result.maxDrawdownPct);
+  const metrics = computeMetrics(trades, result.maxDrawdownPct, days, config.initialCapital);
   const analysis = analyzeTradeList(trades);
 
   // Output results
@@ -144,6 +149,8 @@ async function main(): Promise<void> {
   console.log(`Avg R: ${metrics.avgR?.toFixed(2) ?? "N/A"}`);
   console.log(`Avg Win R: ${metrics.avgWinR?.toFixed(2) ?? "N/A"} | Avg Loss R: ${metrics.avgLossR?.toFixed(2) ?? "N/A"} | Max Loss R: ${metrics.maxLossR?.toFixed(2) ?? "N/A"}`);
   console.log(`Expectancy: ${metrics.expectancy?.toFixed(3) ?? "N/A"}R per trade`);
+  console.log(`Edge (gross): ${metrics.edgeBpsGross?.toFixed(1) ?? "N/A"} bps/trade | Edge (net): ${metrics.edgeBpsNet?.toFixed(1) ?? "N/A"} bps/trade | Avg cost: ${metrics.avgCostBps?.toFixed(1) ?? "N/A"} bps/trade`);
+  console.log(`Trades/day: ${metrics.tradesPerDay?.toFixed(2) ?? "N/A"} | Total costs: ${metrics.totalCostPct?.toFixed(2) ?? "N/A"}% of capital`);
   console.log(`Final Equity: $${result.finalEquity.toFixed(2)}`);
 
   if (analysis.byDirection["Long"]) {
@@ -175,4 +182,35 @@ async function main(): Promise<void> {
   // Output full JSON for piping
   const output = { metrics, analysis, config };
   console.log("\n" + JSON.stringify(output, null, 2));
+
+  // Slippage stress test
+  if (options.stress) {
+    console.log("\n=== Slippage Stress Test ===");
+    printScenarioTable(runSlippageStress(candles, strategy, config, interval));
+  }
+
+  // Fee scenario comparison
+  if (options["fee-scenarios"] || options.feeScenarios) {
+    console.log("\n=== Fee Scenario Comparison ===");
+    printScenarioTable(runFeeScenarios(candles, strategy, config, interval));
+  }
+}
+
+function printScenarioTable(results: CostScenarioResult<{ label: string }>[]): void {
+  const hdr = "Scenario".padEnd(16) + "PnL".padStart(10) + "PF".padStart(8) +
+    "Edge(net)".padStart(12) + "Δ PnL".padStart(10);
+  console.log(hdr);
+  console.log("─".repeat(56));
+  for (const r of results) {
+    const pnl = `$${(r.metrics.totalPnl ?? 0).toFixed(2)}`;
+    const pf = (r.metrics.profitFactor ?? 0).toFixed(2);
+    const edge = `${(r.metrics.edgeBpsNet ?? 0).toFixed(1)} bps`;
+    const delta = r.deltaVsBase.pnlDelta === 0
+      ? "—"
+      : `${r.deltaVsBase.pnlDelta >= 0 ? "+" : ""}$${r.deltaVsBase.pnlDelta.toFixed(2)}`;
+    console.log(
+      r.scenario.label.padEnd(16) + pnl.padStart(10) + pf.padStart(8) +
+      edge.padStart(12) + delta.padStart(10),
+    );
+  }
 }

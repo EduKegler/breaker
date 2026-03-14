@@ -145,17 +145,17 @@ function checkCriteria(m: Metrics, a: TradeAnalysis | null, cr: Criteria): Crite
 // Output: ranking table
 // ---------------------------------------------------------------------------
 
-function printRanking(sorted: StrategyResult[], cr: Criteria): void {
-  const W = { rank: 4, name: 42, type: 10, trades: 6, pf: 6, wr: 5, dd: 5, avgR: 5, pnl: 9, wf: 3 };
+function printRanking(sorted: StrategyResult[]): void {
+  const W = { rank: 4, name: 42, type: 10, trades: 6, pf: 6, wr: 5, dd: 5, avgR: 5, edge: 7, tpd: 5, pnl: 9, wf: 3 };
 
   // Header
   const hdr =
     ` ${A.b}${"#".padEnd(W.rank)}${"Strategy".padEnd(W.name)}${"Type".padEnd(W.type)}` +
     `${"Trd".padStart(W.trades)} ${"PF".padStart(W.pf)} ${"WR%".padStart(W.wr)} ` +
-    `${"DD%".padStart(W.dd)} ${"AvgR".padStart(W.avgR)} ${"PnL".padStart(W.pnl)} ` +
+    `${"DD%".padStart(W.dd)} ${"AvgR".padStart(W.avgR)} ${"Edge".padStart(W.edge)} ${"T/d".padStart(W.tpd)} ${"PnL".padStart(W.pnl)} ` +
     `${"WF".padStart(W.wf)}${A.r}`;
 
-  const totalW = W.rank + W.name + W.type + W.trades + W.pf + W.wr + W.dd + W.avgR + W.pnl + W.wf + 10;
+  const totalW = W.rank + W.name + W.type + W.trades + W.pf + W.wr + W.dd + W.avgR + W.edge + W.tpd + W.pnl + W.wf + 12;
   const rule = dim("─".repeat(totalW));
 
   console.log(` ${rule}`);
@@ -176,12 +176,15 @@ function printRanking(sorted: StrategyResult[], cr: Criteria): void {
     const wr = padL(crit(ch.minWR, (m.winRate ?? 0).toFixed(0)), W.wr);
     const dd = padL(crit(ch.maxDD, Math.abs(m.maxDrawdownPct ?? 0).toFixed(0)), W.dd);
     const avgR = padL(crit(ch.minAvgR, (m.avgR ?? 0).toFixed(2)), W.avgR);
+    const edgeNet = m.edgeBpsNet ?? 0;
+    const edge = padL(edgeNet >= 0 ? ok(edgeNet.toFixed(0)) : fail(edgeNet.toFixed(0)), W.edge);
+    const tpd = padL(dim((m.tradesPerDay ?? 0).toFixed(1)), W.tpd);
     const pnlVal = (m.totalPnl ?? 0);
     const pnl = padL(pnlVal >= 0 ? ok("$" + pnlVal.toFixed(0)) : fail("$" + pnlVal.toFixed(0)), W.pnl);
     const wf = padL(r.analysis?.walkForward?.overfitFlag ? fail("✗") : ok("✓"), W.wf);
     const pass = badge(ch.passAll);
 
-    console.log(` ${rank}${name}${type}${trades} ${pf} ${wr} ${dd} ${avgR} ${pnl} ${wf}  ${pass}`);
+    console.log(` ${rank}${name}${type}${trades} ${pf} ${wr} ${dd} ${avgR} ${edge} ${tpd} ${pnl} ${wf}  ${pass}`);
   }
 
   console.log(` ${rule}`);
@@ -238,6 +241,21 @@ function printCard(r: StrategyResult, rank: number, cr: Criteria): void {
     `${dim("Max Loss")} ${fail(maxLoss.toFixed(2) + "R")}`,
   ];
   console.log(`      ${stats.join("  ")}`);
+
+  // Cost-aware stats line
+  const edgeGross = m.edgeBpsGross ?? 0;
+  const edgeNet = m.edgeBpsNet ?? 0;
+  const avgCost = m.avgCostBps ?? 0;
+  const tpd = m.tradesPerDay ?? 0;
+  const costPct = m.totalCostPct ?? 0;
+  const costStats = [
+    `${dim("Edge(gross)")} ${edgeGross >= 0 ? ok(edgeGross.toFixed(1) + " bps") : fail(edgeGross.toFixed(1) + " bps")}`,
+    `${dim("Edge(net)")} ${edgeNet >= 0 ? ok(edgeNet.toFixed(1) + " bps") : fail(edgeNet.toFixed(1) + " bps")}`,
+    `${dim("Avg cost")} ${dim(avgCost.toFixed(1) + " bps")}`,
+    `${dim("T/day")} ${dim(tpd.toFixed(2))}`,
+    `${dim("Total costs")} ${dim(costPct.toFixed(2) + "%")}`,
+  ];
+  console.log(`      ${costStats.join("  ")}`);
 
   // Params
   console.log(`      ${dim("Params")} ${r.paramCount}${r.paramCount > 8 ? fail(" (>8 free vars)") : ""}`);
@@ -309,7 +327,7 @@ function printReport(results: StrategyResult[], cr: Criteria, period: string, as
 
   // ── Ranking ──
   console.log(bold(" RANKING"));
-  printRanking(sorted, cr);
+  printRanking(sorted);
   console.log("");
 
   // ── Details ──
@@ -505,7 +523,8 @@ export async function main(): Promise<void> {
 
       console.log(`${A.d}  Running ${strategy.name ?? path.basename(file, ".ts")}...${A.r}`);
       const result = runBacktest(candles, strategy, config, interval);
-      const metrics = computeMetrics(result.trades, result.maxDrawdownPct);
+      const tradingDays = Math.ceil((endTime - startTime) / 86_400_000);
+      const metrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDays, config.initialCapital);
       const analysis = analyzeTradeList(result.trades);
 
       // Count optimizable params

@@ -24,6 +24,11 @@ const sampleMetrics: Metrics = {
   avgLossR: -0.7,
   maxLossR: -1.2,
   expectancy: 0.257,
+  edgeBpsGross: null,
+  edgeBpsNet: null,
+  avgCostBps: null,
+  tradesPerDay: null,
+  totalCostPct: null,
 };
 
 describe("checkpoint.save / checkpoint.load", () => {

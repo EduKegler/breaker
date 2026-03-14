@@ -80,6 +80,11 @@ export function computeScore(
     complexityScore * w.complexity +
     sampleScore * w.sampleConfidence) * sampleMultiplier;
 
+  const costAwareParts = [
+    metrics.tradesPerDay != null ? `T/day: ${metrics.tradesPerDay.toFixed(2)}` : null,
+    metrics.edgeBpsNet != null ? `Edge(net): ${metrics.edgeBpsNet.toFixed(0)} bps` : null,
+  ].filter(Boolean);
+
   const breakdown = [
     `PF: ${(pfScore * w.pf).toFixed(1)}/${w.pf}`,
     `avgR: ${(avgRScore * w.avgR).toFixed(1)}/${w.avgR}`,
@@ -87,6 +92,7 @@ export function computeScore(
     `DD: ${(ddScore * w.dd).toFixed(1)}/${w.dd}`,
     `Complex: ${(complexityScore * w.complexity).toFixed(1)}/${w.complexity}`,
     `Sample: ${(sampleScore * w.sampleConfidence).toFixed(1)}/${w.sampleConfidence}`,
+    ...costAwareParts,
   ].join(" | ");
 
   return { raw, weighted: Math.round(weighted * 100) / 100, breakdown };
