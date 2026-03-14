@@ -3,7 +3,7 @@ import type { CompletedTrade } from "../types/order.js";
 import type { RegimeName, RegimeStats } from "../types/metrics.js";
 import { adx } from "../indicators/adx.js";
 
-const ADX_PERIOD = 14;
+export const REGIME_ADX_PERIOD = 14;
 const LOOKBACK_BARS = 20;
 const ADX_TRENDING_THRESHOLD = 25;
 const ADX_RANGING_THRESHOLD = 20;
@@ -16,13 +16,16 @@ const ADX_RANGING_THRESHOLD = 20;
 export function computeRegimeStats(
   trades: CompletedTrade[],
   candles: Candle[],
+  precomputedAdx?: number[],
 ): Record<string, RegimeStats> | null {
   if (trades.length === 0 || candles.length === 0) return null;
 
   const buckets: Record<string, { count: number; pnl: number; wins: number; grossWin: number; grossLoss: number }> = {};
 
-  // Pre-compute ADX on full candle series (O(n) once, not per trade)
-  const adxResult = adx(candles, ADX_PERIOD);
+  // Use pre-computed ADX if provided, otherwise compute O(n) once
+  const adxResult = precomputedAdx
+    ? { adx: precomputedAdx }
+    : adx(candles, REGIME_ADX_PERIOD);
 
   for (const t of trades) {
     const regime = classifyRegime(t.entryBarIndex, adxResult.adx);

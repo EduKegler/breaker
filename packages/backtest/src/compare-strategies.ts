@@ -8,7 +8,8 @@ import { analyzeTradeList } from "./analysis/trade-analysis.js";
 import { computeMinWarmupBars } from "./engine/compute-min-warmup-bars.js";
 import { isMainModule } from "@breaker/kit";
 import { computeRiskMetrics } from "./analysis/compute-risk-metrics.js";
-import { computeRegimeStats } from "./analysis/regime-stats.js";
+import { computeRegimeStats, REGIME_ADX_PERIOD } from "./analysis/regime-stats.js";
+import { adx } from "./indicators/adx.js";
 import type { Strategy, Metrics, TradeAnalysis } from "./index.js";
 import type { CandleClientOptions } from "./data/fetch-candles.js";
 import { CandleInterval } from "./types/candle.js";
@@ -525,6 +526,9 @@ export async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Pre-compute ADX once for regime classification (shared across all strategies)
+  const regimeAdx = adx(candles, REGIME_ADX_PERIOD).adx;
+
   // Run each strategy
   const results: StrategyResult[] = [];
 
@@ -571,7 +575,7 @@ export async function main(): Promise<void> {
       const rawMetrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDays, config.initialCapital);
       const metrics = { ...rawMetrics, ...computeRiskMetrics(result.equityPoints) };
       const analysis = analyzeTradeList(result.trades);
-      analysis.byRegime = computeRegimeStats(result.trades, candles);
+      analysis.byRegime = computeRegimeStats(result.trades, candles, regimeAdx);
 
       // Count optimizable params
       const paramCount = Object.values(strategy.params).filter(
