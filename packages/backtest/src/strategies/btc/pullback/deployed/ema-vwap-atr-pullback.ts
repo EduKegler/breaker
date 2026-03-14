@@ -108,6 +108,10 @@ export function createEmaVwapAtrPullback(
   let htfDiMinusCache1h: number[] = [];
   let htfEmaSlopeNorm: number[] = [];
 
+  // Anti-repeat: track last signal to prevent same-direction re-entry
+  let lastSignalDirection: "long" | "short" | null = null;
+  let lastSignalBarIndex = -Infinity;
+
   /** O(n) rolling VWAP via sliding window — no session reset. */
   function computeRollingVwap(candles: Candle[], period: number): number[] {
     const len = candles.length;
@@ -243,7 +247,10 @@ export function createEmaVwapAtrPullback(
       // Dead market filter
       if (atr15mVal < DEAD_MARKET_PCT * close) return null;
 
-      // Impulse check is direction-specific — applied below per side.
+      // Anti-repeat: block same-direction re-entry within 96 bars (24h).
+      // Prevents consecutive entries on the same lingering pullback setup.
+      const SAME_DIR_COOLDOWN = 96;
+      const barsSinceLastSignal = index - lastSignalBarIndex;
 
       // 1H ATR for stop distance
       const atr1hVal = findHtfValue(currentCandle.t, htfAtrCache1h);
@@ -327,19 +334,9 @@ export function createEmaVwapAtrPullback(
         ? ctx.track("L:slope_positive", !isNaN(slopeNormVal) && slopeNormVal > slopeThresh, slopeNormVal, slopeThresh)
         : true;
 
-      // Impulse check: require a prior impulse — at least 1 bar in last 20
-      // where close was ABOVE ema + 1.5*ATR. This ensures a real trend impulse
-      // preceded the pullback, preventing re-entry on consolidation around EMA.
-      let longImpulse = false;
-      for (let k = 1; k <= 20 && index - k >= 0; k++) {
-        const pi = index - k;
-        const pe = emaFastCache[pi];
-        if (!isNaN(pe) && candles[pi].c > pe + 1.5 * atr15mVal) {
-          longImpulse = true;
-          break;
-        }
-      }
-      ctx.track("L:impulse", longImpulse);
+      // Same-direction cooldown: don't re-enter LONG if last signal was LONG within 96 bars
+      const longCooldownOk = lastSignalDirection !== "long" || barsSinceLastSignal >= SAME_DIR_COOLDOWN;
+      ctx.track("L:dir_cooldown", longCooldownOk);
 
       // Multi-bar pullback confirmation
       let longMultiBar = true;
@@ -365,7 +362,7 @@ export function createEmaVwapAtrPullback(
       }
 
       if (longTrend && longVwap && longPullback && longHold && longStrength &&
-          longDi && longSlope && longMultiBar && longDepthOk && longImpulse) {
+          longDi && longSlope && longMultiBar && longDepthOk && longCooldownOk) {
         const stopDist = stopMult * atr1hVal;
         const pullbackStop = low - 0.1 * atr1hVal;
         const atrStop = close - stopDist;
@@ -373,6 +370,8 @@ export function createEmaVwapAtrPullback(
         const actualStopDist = close - stopLoss;
         const tp1Price = close + actualStopDist * tp1RR;
 
+        lastSignalDirection = "long";
+        lastSignalBarIndex = index;
         return {
           direction: "long",
           entryPrice: null,
@@ -402,18 +401,9 @@ export function createEmaVwapAtrPullback(
         ? ctx.track("S:slope_negative", !isNaN(slopeNormVal) && slopeNormVal < -slopeThresh, slopeNormVal, -slopeThresh)
         : true;
 
-      // Impulse check: require prior impulse — at least 1 bar in last 20
-      // where close was BELOW ema - 1.5*ATR (trend was running down before pullback).
-      let shortImpulse = false;
-      for (let k = 1; k <= 20 && index - k >= 0; k++) {
-        const pi = index - k;
-        const pe = emaFastCache[pi];
-        if (!isNaN(pe) && candles[pi].c < pe - 1.5 * atr15mVal) {
-          shortImpulse = true;
-          break;
-        }
-      }
-      ctx.track("S:impulse", shortImpulse);
+      // Same-direction cooldown: don't re-enter SHORT if last signal was SHORT within 96 bars
+      const shortCooldownOk = lastSignalDirection !== "short" || barsSinceLastSignal >= SAME_DIR_COOLDOWN;
+      ctx.track("S:dir_cooldown", shortCooldownOk);
 
       // Multi-bar pullback confirmation
       let shortMultiBar = true;
@@ -439,7 +429,7 @@ export function createEmaVwapAtrPullback(
       }
 
       if (shortTrend && shortVwap && shortPullback && shortHold && shortStrength &&
-          shortDi && shortSlope && shortMultiBar && shortDepthOk && shortImpulse) {
+          shortDi && shortSlope && shortMultiBar && shortDepthOk && shortCooldownOk) {
         const stopDist = stopMult * atr1hVal;
         const pullbackStop = high + 0.1 * atr1hVal;
         const atrStop = close + stopDist;
@@ -447,6 +437,8 @@ export function createEmaVwapAtrPullback(
         const actualStopDist = stopLoss - close;
         const tp1Price = close - actualStopDist * tp1RR;
 
+        lastSignalDirection = "short";
+        lastSignalBarIndex = index;
         return {
           direction: "short",
           entryPrice: null,
