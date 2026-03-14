@@ -42,3 +42,4 @@ claude-raw-output.log
 .claude/worktrees/
 .claude/settings.local.json
 .mcp.json
+.agents/
