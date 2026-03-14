@@ -12,10 +12,10 @@ export interface SlippageScenario {
 export type SlippageStressResult = CostScenarioResult<SlippageScenario>;
 
 export const DEFAULT_SCENARIOS: SlippageScenario[] = [
-  { label: "optimistic", slippageBps: 5 },
-  { label: "base", slippageBps: 10 },
-  { label: "conservative", slippageBps: 20 },
-  { label: "worst-case", slippageBps: 30 },
+  { label: "optimistic", slippageBps: 1 },
+  { label: "base", slippageBps: 3 },
+  { label: "conservative", slippageBps: 8 },
+  { label: "worst-case", slippageBps: 15 },
 ];
 
 export function runSlippageStress(

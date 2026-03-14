@@ -165,12 +165,14 @@ describe("analyzeTradeList", () => {
 
     const result = analyzeTradeList(trades);
     const asia = result.bySession!["Asia"];
-    // Asia avg: edgeBpsNet = (1000 + -500) / 2 = 250 bps
-    // Asia avg: avgCostBps = (100 + 150) / 2 = 125 bps
+    // All Asia trades have same notional (100), so weighted = unweighted
+    // Asia weighted: edgeBpsNet = sum(pnl) / sum(notional) * 10000 = (10-5) / 200 * 10000 = 250
+    // Asia weighted: avgCostBps = sum(cost) / sum(notional) * 10000 = (1.0+1.5) / 200 * 10000 = 125
     expect(asia.edgeBpsNet).toBeCloseTo(250, 1);
     expect(asia.avgCostBps).toBeCloseTo(125, 1);
 
     const ny = result.bySession!["NY"];
+    // NY weighted: edgeBpsNet = 20 / 100 * 10000 = 2000
     expect(ny.edgeBpsNet).toBeCloseTo(2000, 1);
     expect(ny.avgCostBps).toBeCloseTo(50, 1);
   });
@@ -188,5 +190,29 @@ describe("analyzeTradeList", () => {
     expect(london.count).toBe(0);
     expect(london.edgeBpsNet).toBe(0);
     expect(london.avgCostBps).toBe(0);
+  });
+
+  it("session edgeBpsNet uses notional-weighted calculation", () => {
+    // Small winner + large loser in same session → edgeBpsNet must be negative
+    const trades = [
+      makeTrade({
+        entryTimestamp: new Date("2024-07-15T03:00:00Z").getTime(), // Asia
+        entryPrice: 100, size: 0.1, pnl: 2,  // notional=10
+        commission: 0, slippageCost: 0, fundingCost: 0,
+      }),
+      makeTrade({
+        entryTimestamp: new Date("2024-07-15T04:00:00Z").getTime(), // Asia
+        entryPrice: 100, size: 10, pnl: -50,  // notional=1000
+        commission: 0, slippageCost: 0, fundingCost: 0,
+      }),
+    ];
+    const result = analyzeTradeList(trades);
+    const asia = result.bySession!["Asia"];
+
+    // totalPnl for session = 2 + (-50) = -48
+    expect(asia.pnl).toBe(-48);
+    // notional-weighted: (-48) / (10 + 1000) * 10000 ≈ -475.25
+    expect(asia.edgeBpsNet).toBeLessThan(0);
+    expect(asia.edgeBpsNet).toBeCloseTo((-48 / 1010) * 10_000, 1);
   });
 });

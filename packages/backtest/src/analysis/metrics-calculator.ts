@@ -59,29 +59,24 @@ export function computeMetrics(
   const wr = wins.length / trades.length;
   const expectancy = (avgWinR ?? 0) * wr + (avgLossR ?? 0) * (1 - wr);
 
-  // Cost-aware metrics
-  let sumGrossBps = 0;
-  let sumNetBps = 0;
-  let sumCostBps = 0;
-  let totalCosts = 0;
+  // Cost-aware metrics (notional-weighted)
+  // weighted = sum(pnl) / sum(notional) * 10_000
+  // This ensures edgeBpsNet sign always matches totalPnl sign,
+  // even when trade sizes vary (risk-based sizing).
+  let sumCosts = 0;
+  let sumNotional = 0;
 
   for (const t of trades) {
     const notional = t.entryPrice * t.size;
-    const tradeCost = t.commission + t.slippageCost + (t.fundingCost ?? 0);
-    const grossPnl = t.pnl + tradeCost;
-
-    sumGrossBps += (grossPnl / notional) * 10_000;
-    sumNetBps += (t.pnl / notional) * 10_000;
-    sumCostBps += (tradeCost / notional) * 10_000;
-    totalCosts += tradeCost;
+    sumNotional += notional;
+    sumCosts += t.commission + t.slippageCost + (t.fundingCost ?? 0);
   }
 
-  const n = trades.length;
-  const edgeBpsGross = sumGrossBps / n;
-  const edgeBpsNet = sumNetBps / n;
-  const avgCostBps = sumCostBps / n;
-  const tradesPerDay = tradingDays > 0 ? n / tradingDays : null;
-  const totalCostPct = initialCapital > 0 ? (totalCosts / initialCapital) * 100 : null;
+  const edgeBpsGross = sumNotional > 0 ? ((totalPnl + sumCosts) / sumNotional) * 10_000 : 0;
+  const edgeBpsNet = sumNotional > 0 ? (totalPnl / sumNotional) * 10_000 : 0;
+  const avgCostBps = sumNotional > 0 ? (sumCosts / sumNotional) * 10_000 : 0;
+  const tradesPerDay = tradingDays > 0 ? trades.length / tradingDays : null;
+  const totalCostPct = initialCapital > 0 ? (sumCosts / initialCapital) * 100 : null;
 
   return {
     totalPnl,

@@ -46,7 +46,7 @@ describe("calculateCommission", () => {
 
 describe("DEFAULT_EXECUTION", () => {
   it("has expected defaults", () => {
-    expect(DEFAULT_EXECUTION.slippageBps).toBe(10);
+    expect(DEFAULT_EXECUTION.slippageBps).toBe(3);
     expect(DEFAULT_EXECUTION.commissionPct).toBe(0.045);
     expect(DEFAULT_EXECUTION.fundingRate8h).toBe(0.0006);
   });

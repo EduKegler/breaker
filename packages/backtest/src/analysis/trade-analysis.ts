@@ -199,11 +199,11 @@ function computeSessionStats(trades: CompletedTrade[]): Record<SessionName, Sess
     wins: number;
     grossWin: number;
     grossLoss: number;
-    sumEdgeBps: number;
-    sumCostBps: number;
+    sumNotional: number;
+    sumCost: number;
   }
 
-  const empty = (): Bucket => ({ count: 0, pnl: 0, wins: 0, grossWin: 0, grossLoss: 0, sumEdgeBps: 0, sumCostBps: 0 });
+  const empty = (): Bucket => ({ count: 0, pnl: 0, wins: 0, grossWin: 0, grossLoss: 0, sumNotional: 0, sumCost: 0 });
 
   const buckets: Record<SessionName, Bucket> = {
     Asia: empty(),
@@ -226,8 +226,8 @@ function computeSessionStats(trades: CompletedTrade[]): Record<SessionName, Sess
 
     const notional = t.entryPrice * t.size;
     if (notional > 0) {
-      b.sumEdgeBps += (t.pnl / notional) * 10_000;
-      b.sumCostBps += ((t.commission + t.slippageCost + (t.fundingCost ?? 0)) / notional) * 10_000;
+      b.sumNotional += notional;
+      b.sumCost += t.commission + t.slippageCost + (t.fundingCost ?? 0);
     }
   }
 
@@ -238,8 +238,8 @@ function computeSessionStats(trades: CompletedTrade[]): Record<SessionName, Sess
       pnl: b.pnl,
       winRate: b.count > 0 ? (b.wins / b.count) * 100 : 0,
       profitFactor: b.grossLoss > 0 ? b.grossWin / b.grossLoss : b.grossWin > 0 ? Infinity : 0,
-      edgeBpsNet: b.count > 0 ? b.sumEdgeBps / b.count : 0,
-      avgCostBps: b.count > 0 ? b.sumCostBps / b.count : 0,
+      edgeBpsNet: b.sumNotional > 0 ? (b.pnl / b.sumNotional) * 10_000 : 0,
+      avgCostBps: b.sumNotional > 0 ? (b.sumCost / b.sumNotional) * 10_000 : 0,
     };
   }
   return result as Record<SessionName, SessionStats>;

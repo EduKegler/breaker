@@ -140,11 +140,12 @@ describe("computeMetrics", () => {
     // costBps per trade = 0.8 / 100 * 10000 = 80
     const metrics = computeMetrics(trades, -10, 30, 1000);
 
-    // edgeBpsGross = avg of [1080, -420, 1580, -220] = 2020/4 = 505
+    // All trades have same notional (100), so weighted = unweighted
+    // edgeBpsGross = sum(grossPnl) / sum(notional) * 10000 = (10.8-4.2+15.8-2.2) / 400 * 10000 = 505
     expect(metrics.edgeBpsGross).toBeCloseTo(505, 1);
-    // edgeBpsNet = avg of [1000, -500, 1500, -300] = 1700/4 = 425
+    // edgeBpsNet = sum(pnl) / sum(notional) * 10000 = (10-5+15-3) / 400 * 10000 = 425
     expect(metrics.edgeBpsNet).toBeCloseTo(425, 1);
-    // avgCostBps = 80 (same for all trades)
+    // avgCostBps = sum(cost) / sum(notional) * 10000 = (0.8*4) / 400 * 10000 = 80
     expect(metrics.avgCostBps).toBeCloseTo(80, 1);
     // tradesPerDay = 4 / 30
     expect(metrics.tradesPerDay).toBeCloseTo(4 / 30, 5);
@@ -187,5 +188,67 @@ describe("computeMetrics", () => {
     expect(metrics.edgeBpsGross).not.toBeNull();
     expect(metrics.edgeBpsNet).not.toBeNull();
     expect(metrics.avgCostBps).not.toBeNull();
+  });
+
+  it("edgeBpsNet uses notional-weighted calculation (consistent with totalPnl sign)", () => {
+    // Scenario: one small winner, one large loser → totalPnl negative.
+    // Unweighted mean would give positive edgeBpsNet (diverging from PnL sign).
+    // Notional-weighted gives negative edgeBpsNet (matching PnL sign).
+    const trades: CompletedTrade[] = [
+      {
+        direction: "long",
+        entryPrice: 100,
+        exitPrice: 120,
+        size: 0.1,         // small position → notional = 10
+        pnl: 2,            // +2 on notional 10 → +2000 bps (per-trade)
+        pnlPct: 20,
+        rMultiple: 2,
+        entryTimestamp: Date.now(),
+        exitTimestamp: Date.now() + 3600000,
+        entryBarIndex: 0,
+        exitBarIndex: 10,
+        barsHeld: 10,
+        exitType: "tp1",
+        commission: 0,
+        slippageCost: 0,
+        fundingCost: 0,
+        entryComment: "test",
+        exitComment: "test",
+      },
+      {
+        direction: "short",
+        entryPrice: 100,
+        exitPrice: 105,
+        size: 10,           // large position → notional = 1000
+        pnl: -50,           // -50 on notional 1000 → -500 bps (per-trade)
+        pnlPct: -5,
+        rMultiple: -1,
+        entryTimestamp: Date.now(),
+        exitTimestamp: Date.now() + 3600000,
+        entryBarIndex: 0,
+        exitBarIndex: 10,
+        barsHeld: 10,
+        exitType: "sl",
+        commission: 0,
+        slippageCost: 0,
+        fundingCost: 0,
+        entryComment: "test",
+        exitComment: "test",
+      },
+    ];
+
+    const metrics = computeMetrics(trades, -5);
+
+    // totalPnl = 2 + (-50) = -48 → NEGATIVE
+    expect(metrics.totalPnl).toBe(-48);
+
+    // Notional-weighted edgeBpsNet = sum(pnl) / sum(notional) * 10000
+    // = (-48) / (10 + 1000) * 10000 = -48/1010 * 10000 ≈ -475.25
+    // Must be NEGATIVE (same sign as totalPnl)
+    expect(metrics.edgeBpsNet).toBeLessThan(0);
+    expect(metrics.edgeBpsNet).toBeCloseTo((-48 / 1010) * 10_000, 1);
+
+    // Notional-weighted edgeBpsGross (no costs here, so same as net)
+    expect(metrics.edgeBpsGross).toBeCloseTo((-48 / 1010) * 10_000, 1);
   });
 });
