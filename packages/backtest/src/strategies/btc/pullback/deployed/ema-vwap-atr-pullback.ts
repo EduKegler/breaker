@@ -243,6 +243,8 @@ export function createEmaVwapAtrPullback(
       // Dead market filter
       if (atr15mVal < DEAD_MARKET_PCT * close) return null;
 
+      // Impulse check is direction-specific — applied below per side.
+
       // 1H ATR for stop distance
       const atr1hVal = findHtfValue(currentCandle.t, htfAtrCache1h);
       if (isNaN(atr1hVal)) return null;
@@ -325,6 +327,20 @@ export function createEmaVwapAtrPullback(
         ? ctx.track("L:slope_positive", !isNaN(slopeNormVal) && slopeNormVal > slopeThresh, slopeNormVal, slopeThresh)
         : true;
 
+      // Impulse check: require a prior impulse — at least 1 bar in last 20
+      // where close was ABOVE ema + 1.5*ATR. This ensures a real trend impulse
+      // preceded the pullback, preventing re-entry on consolidation around EMA.
+      let longImpulse = false;
+      for (let k = 1; k <= 20 && index - k >= 0; k++) {
+        const pi = index - k;
+        const pe = emaFastCache[pi];
+        if (!isNaN(pe) && candles[pi].c > pe + 1.5 * atr15mVal) {
+          longImpulse = true;
+          break;
+        }
+      }
+      ctx.track("L:impulse", longImpulse);
+
       // Multi-bar pullback confirmation
       let longMultiBar = true;
       if (minPullbackBars >= 2) {
@@ -349,7 +365,7 @@ export function createEmaVwapAtrPullback(
       }
 
       if (longTrend && longVwap && longPullback && longHold && longStrength &&
-          longDi && longSlope && longMultiBar && longDepthOk) {
+          longDi && longSlope && longMultiBar && longDepthOk && longImpulse) {
         const stopDist = stopMult * atr1hVal;
         const pullbackStop = low - 0.1 * atr1hVal;
         const atrStop = close - stopDist;
@@ -386,6 +402,19 @@ export function createEmaVwapAtrPullback(
         ? ctx.track("S:slope_negative", !isNaN(slopeNormVal) && slopeNormVal < -slopeThresh, slopeNormVal, -slopeThresh)
         : true;
 
+      // Impulse check: require prior impulse — at least 1 bar in last 20
+      // where close was BELOW ema - 1.5*ATR (trend was running down before pullback).
+      let shortImpulse = false;
+      for (let k = 1; k <= 20 && index - k >= 0; k++) {
+        const pi = index - k;
+        const pe = emaFastCache[pi];
+        if (!isNaN(pe) && candles[pi].c < pe - 1.5 * atr15mVal) {
+          shortImpulse = true;
+          break;
+        }
+      }
+      ctx.track("S:impulse", shortImpulse);
+
       // Multi-bar pullback confirmation
       let shortMultiBar = true;
       if (minPullbackBars >= 2) {
@@ -410,7 +439,7 @@ export function createEmaVwapAtrPullback(
       }
 
       if (shortTrend && shortVwap && shortPullback && shortHold && shortStrength &&
-          shortDi && shortSlope && shortMultiBar && shortDepthOk) {
+          shortDi && shortSlope && shortMultiBar && shortDepthOk && shortImpulse) {
         const stopDist = stopMult * atr1hVal;
         const pullbackStop = high + 0.1 * atr1hVal;
         const atrStop = close + stopDist;
