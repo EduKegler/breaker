@@ -605,7 +605,7 @@ describe("buildOptimizePrompt structural diagnostics", () => {
     return {
       totalExitRows: total,
       byDirection: { Long: { count: 24, pnl: -15, winRate: 45, profitFactor: 0.8, avgTrade: -0.6 }, Short: { count: 53, pnl: -56, winRate: 39, profitFactor: 0.67, avgTrade: -1.06 } },
-      bySession: { Asia: { count: 18, pnl: -21, winRate: 33, profitFactor: 0.59 }, London: { count: 9, pnl: -21, winRate: 33, profitFactor: 0.41 }, NY: { count: 47, pnl: -18, winRate: 46, profitFactor: 0.87 }, "Off-peak": { count: 3, pnl: -10, winRate: 33, profitFactor: 0.24 } },
+      bySession: { Asia: { count: 18, pnl: -21, winRate: 33, profitFactor: 0.59, edgeBpsNet: 0, avgCostBps: 0 }, London: { count: 9, pnl: -21, winRate: 33, profitFactor: 0.41, edgeBpsNet: 0, avgCostBps: 0 }, NY: { count: 47, pnl: -18, winRate: 46, profitFactor: 0.87, edgeBpsNet: 0, avgCostBps: 0 }, "Off-peak": { count: 3, pnl: -10, winRate: 33, profitFactor: 0.24, edgeBpsNet: 0, avgCostBps: 0 } },
       byExitType: exitTypes,
       byDayOfWeek: { Mon: { count: 16, pnl: -3 }, Sun: { count: 10, pnl: -50 }, Wed: { count: 8, pnl: 20 } },
       best3TradesPnl: [20, 16, 11],

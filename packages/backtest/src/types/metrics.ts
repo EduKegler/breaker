@@ -120,6 +120,25 @@ export interface WalkForward {
   overfitFlag: boolean;
 }
 
+export interface RollingWfWindow {
+  windowIndex: number;
+  trainTrades: number;
+  testTrades: number;
+  trainPF: number | null;
+  testPF: number | null;
+  pfRatio: number | null;
+  pass: boolean;
+}
+
+export interface RollingWalkForward {
+  windows: RollingWfWindow[];
+  windowsPassed: number;
+  windowsTotal: number;
+  passRate: number;
+  worstPfRatio: number | null;
+  overfitFlag: boolean;
+}
+
 export type SessionName = "Asia" | "London" | "NY" | "Off-peak";
 
 export interface SessionStats {
@@ -127,6 +146,18 @@ export interface SessionStats {
   pnl: number;
   winRate: number;
   profitFactor: number;
+  edgeBpsNet: number;
+  avgCostBps: number;
+}
+
+export type RegimeName = "trending" | "ranging" | "unclear";
+
+export interface RegimeStats {
+  count: number;
+  pnl: number;
+  winRate: number;
+  profitFactor: number;
+  avgTrade: number;
 }
 
 export interface TradeAnalysis {
@@ -142,5 +173,7 @@ export interface TradeAnalysis {
   worst3TradesPnl: number[];
   filterSimulations: FilterSimulations;
   walkForward: WalkForward | null;
+  rollingWalkForward: RollingWalkForward | null;
   bySession: Record<SessionName, SessionStats> | null;
+  byRegime: Record<string, RegimeStats> | null;
 }

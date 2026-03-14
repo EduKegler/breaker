@@ -12,7 +12,7 @@ import fs from "node:fs";
 import { z } from "zod";
 import { isMainModule } from "@breaker/kit";
 
-import type { Metrics, TradeAnalysis, StrategyParam, SessionName, WalkForward } from "@breaker/backtest";
+import type { Metrics, TradeAnalysis, StrategyParam, SessionName, WalkForward, RollingWalkForward } from "@breaker/backtest";
 import type { ResolvedCriteria, CoreParameterDef, ScoringWeights } from "../types/config.js";
 import type { ParameterHistory, ApproachRecord, TestedCombination, ParameterHistoryIteration } from "../types/parameter-history.js";
 import type { ScoreRaw } from "../loop/stages/scoring.js";
@@ -57,6 +57,7 @@ interface BuildPromptOptions {
   bestScoreBreakdown?: ScoreRaw;
   bestScore?: number;
   walkForward?: WalkForward | null;
+  rollingWalkForward?: RollingWalkForward | null;
   /** Pre-selected components for restructure — skips Claude's selection step */
   preSelectedComponents?: Record<string, string>;
   /** Recent suggestions rejected as no-op or historical repeat (for prompt feedback) */
@@ -140,7 +141,7 @@ export function buildOptimizePrompt(opts: BuildPromptOptions): string {
   const stretchSection = buildStretchSection(moduleContext.moduleId);
   const scoringSection = buildScoringSection(scoreBreakdown, scoringWeights, currentScore);
   const scoreDeltaSection = buildScoreDeltaSection(scoreBreakdown, bestScoreBreakdown, scoringWeights, currentScore, bestScore);
-  const walkForwardSection = buildWalkForwardSection(opts.walkForward, mc);
+  const walkForwardSection = buildWalkForwardSection(opts.walkForward, mc, opts.rollingWalkForward);
   const lastIterationSection = buildLastIterationSection(paramHistory);
   const exploredSpaceEnriched = buildExploredSpaceEnriched(paramHistory, globalIter, iter, maxIter);
   const repeatWarningSection = buildRepeatWarningSection(rejectedRepeats);
@@ -1161,7 +1162,20 @@ ${Object.entries(ta.byDirection)
 
 ${sessionBlock}${dayOfWeekBlock}
 Best trades: ${ta.best3TradesPnl.join(", ")} USD | Worst: ${ta.worst3TradesPnl.join(", ")} USD
-${diagnostics}`;
+${buildRegimeBlock(ta)}${diagnostics}`;
+}
+
+function buildRegimeBlock(ta: TradeAnalysis): string {
+  if (!ta.byRegime) return "";
+  const entries = Object.entries(ta.byRegime).filter(([, r]) => r.count > 0);
+  if (entries.length === 0) return "";
+  const lines = entries
+    .map(([name, r]) => {
+      const pf = r.profitFactor === Infinity ? "Inf" : r.profitFactor.toFixed(2);
+      return `  ${name.padEnd(12)}: ${String(r.count).padStart(3)}t | WR=${r.winRate.toFixed(1).padStart(5)}% | PF=${pf.padStart(5)} | avg=$${r.avgTrade.toFixed(2)}`;
+    })
+    .join("\n");
+  return `\nBy regime (ADX-based, ex-post classification):\n${lines}\n`;
 }
 
 /**
@@ -1233,25 +1247,44 @@ function buildRollbackSection(reason?: string): string {
 function buildWalkForwardSection(
   wf?: WalkForward | null,
   mc?: { wrWarnMax: number | null; wrRejectMax: number | null } | null,
+  rollingWf?: RollingWalkForward | null,
 ): string {
-  if (!wf) return "";
-  const lines = ["\n## WALK-FORWARD VALIDATION (train 70% / test 30%)"];
-  lines.push(`trainPF=${wf.trainPF?.toFixed(2) ?? "?"} | testPF=${wf.testPF?.toFixed(2) ?? "?"} | pfRatio=${wf.pfRatio?.toFixed(2) ?? "?"} | overfitFlag=${wf.overfitFlag}`);
-  const ratio = wf.pfRatio ?? 0;
-  if (ratio >= 0.85) {
-    lines.push("-> pfRatio 0.85+ — excellent generalization. Strategy is robust.");
-  } else if (ratio >= 0.70) {
-    lines.push("-> pfRatio 0.70-0.84 — good. Minor complexity increases may still be safe.");
-  } else if (ratio >= 0.60) {
-    lines.push("-> pfRatio 0.60-0.69 — borderline. Any further complexity risks tipping into overfit.");
-  } else {
-    lines.push("-> pfRatio < 0.60 — currently overfitting. Reduce model complexity, simplify conditions, or widen parameter ranges.");
-    lines.push("  Prefer changes that improve TEST PF. Do NOT add new indicators or conditions.");
+  if (!wf && !rollingWf) return "";
+  const lines: string[] = [];
+
+  if (wf) {
+    lines.push("\n## WALK-FORWARD VALIDATION (train 70% / test 30%)");
+    lines.push(`trainPF=${wf.trainPF?.toFixed(2) ?? "?"} | testPF=${wf.testPF?.toFixed(2) ?? "?"} | pfRatio=${wf.pfRatio?.toFixed(2) ?? "?"} | overfitFlag=${wf.overfitFlag}`);
+    const ratio = wf.pfRatio ?? 0;
+    if (ratio >= 0.85) {
+      lines.push("-> pfRatio 0.85+ — excellent generalization. Strategy is robust.");
+    } else if (ratio >= 0.70) {
+      lines.push("-> pfRatio 0.70-0.84 — good. Minor complexity increases may still be safe.");
+    } else if (ratio >= 0.60) {
+      lines.push("-> pfRatio 0.60-0.69 — borderline. Any further complexity risks tipping into overfit.");
+    } else {
+      lines.push("-> pfRatio < 0.60 — currently overfitting. Reduce model complexity, simplify conditions, or widen parameter ranges.");
+      lines.push("  Prefer changes that improve TEST PF. Do NOT add new indicators or conditions.");
+    }
+    // trainPF < 1.0 warning
+    if (wf.trainPF !== null && wf.trainPF !== undefined && wf.trainPF < 1.0) {
+      lines.push(`-> trainPF < 1.00 — strategy barely profitable on 70% of data. All profit comes from the test window.`);
+    }
   }
-  // trainPF < 1.0 warning
-  if (wf.trainPF !== null && wf.trainPF !== undefined && wf.trainPF < 1.0) {
-    lines.push(`-> trainPF < 1.00 — strategy barely profitable on 70% of data. All profit comes from the test window.`);
+
+  if (rollingWf) {
+    lines.push("\n## ROLLING WALK-FORWARD VALIDATION");
+    lines.push(`windows=${rollingWf.windowsTotal} | passed=${rollingWf.windowsPassed}/${rollingWf.windowsTotal} (${(rollingWf.passRate * 100).toFixed(0)}%) | worstPfRatio=${rollingWf.worstPfRatio?.toFixed(2) ?? "N/A"} | overfitFlag=${rollingWf.overfitFlag}`);
+    for (const w of rollingWf.windows) {
+      const status = w.pass ? "PASS" : "FAIL";
+      lines.push(`  window ${w.windowIndex}: trainPF=${w.trainPF?.toFixed(2) ?? "?"} testPF=${w.testPF?.toFixed(2) ?? "?"} pfRatio=${w.pfRatio?.toFixed(2) ?? "?"} [${status}]`);
+    }
+    if (rollingWf.overfitFlag) {
+      lines.push("-> Rolling WF overfit detected: strategy degrades across multiple time windows.");
+      lines.push("  This indicates the edge is not stable over time. Simplify the strategy or reduce parameter count.");
+    }
   }
+
   return lines.join("\n") + "\n";
 }
 

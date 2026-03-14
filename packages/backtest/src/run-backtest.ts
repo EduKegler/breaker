@@ -11,7 +11,9 @@ import { isMainModule } from "@breaker/kit";
 import { runSlippageStress } from "./analysis/slippage-stress.js";
 import { runFeeScenarios } from "./analysis/fee-scenarios.js";
 import { computeRiskMetrics } from "./analysis/compute-risk-metrics.js";
+import { computeRegimeStats } from "./analysis/regime-stats.js";
 import type { CostScenarioResult } from "./analysis/run-cost-scenarios.js";
+import type { HourStats } from "./types/metrics.js";
 
 if (isMainModule(import.meta.url)) {
   main().catch((err) => {
@@ -139,6 +141,7 @@ async function main(): Promise<void> {
   const riskMetrics = computeRiskMetrics(result.equityPoints);
   const metrics = { ...rawMetrics, ...riskMetrics };
   const analysis = analyzeTradeList(trades);
+  analysis.byRegime = computeRegimeStats(trades, candles);
 
   // Output results
   console.log("\n=== Backtest Results ===");
@@ -164,9 +167,75 @@ async function main(): Promise<void> {
     console.log(`Short trades: ${analysis.byDirection["Short"].count} (WR: ${analysis.byDirection["Short"].winRate.toFixed(1)}%)`);
   }
 
+  // Session breakdown
+  if (analysis.bySession) {
+    console.log("\n=== Session Breakdown ===");
+    const sHdr = "Session".padEnd(12) + "Trades".padStart(8) + "PnL".padStart(10) +
+      "WR%".padStart(7) + "PF".padStart(7) + "Edge(net)".padStart(12) + "Avg cost".padStart(11);
+    console.log(sHdr);
+    console.log("─".repeat(67));
+    for (const [name, s] of Object.entries(analysis.bySession)) {
+      if (s.count === 0) continue;
+      const pf = s.profitFactor === Infinity ? "Inf" : s.profitFactor.toFixed(2);
+      console.log(
+        name.padEnd(12) +
+        String(s.count).padStart(8) +
+        `$${s.pnl.toFixed(2)}`.padStart(10) +
+        s.winRate.toFixed(1).padStart(7) +
+        pf.padStart(7) +
+        `${s.edgeBpsNet.toFixed(1)} bps`.padStart(12) +
+        `${s.avgCostBps.toFixed(1)} bps`.padStart(11),
+      );
+    }
+  }
+
+  // Regime breakdown
+  if (analysis.byRegime) {
+    console.log("\n=== Regime Breakdown ===");
+    const rHdr = "Regime".padEnd(12) + "Trades".padStart(8) + "PnL".padStart(10) +
+      "WR%".padStart(7) + "PF".padStart(7) + "Avg".padStart(9);
+    console.log(rHdr);
+    console.log("─".repeat(53));
+    for (const [name, r] of Object.entries(analysis.byRegime)) {
+      if (r.count === 0) continue;
+      const pf = r.profitFactor === Infinity ? "Inf" : r.profitFactor.toFixed(2);
+      console.log(
+        name.padEnd(12) +
+        String(r.count).padStart(8) +
+        `$${r.pnl.toFixed(2)}`.padStart(10) +
+        r.winRate.toFixed(1).padStart(7) +
+        pf.padStart(7) +
+        `$${r.avgTrade.toFixed(2)}`.padStart(9),
+      );
+    }
+  }
+
+  // Best/worst hours
+  if (analysis.bestHoursUTC.length > 0) {
+    const fmtHour = (h: HourStats): string =>
+      `${String(h.hour).padStart(2, "0")}h ($${h.pnl.toFixed(2)}, ${h.count} trades)`;
+    console.log(`\nBest hours (UTC): ${analysis.bestHoursUTC.map(fmtHour).join(", ")}`);
+    console.log(`Worst hours (UTC): ${analysis.worstHoursUTC.map(fmtHour).join(", ")}`);
+  }
+
   if (analysis.walkForward) {
     console.log(`\nWalk-Forward: Train PF=${analysis.walkForward.trainPF?.toFixed(2)}, Test PF=${analysis.walkForward.testPF?.toFixed(2)}, Ratio=${analysis.walkForward.pfRatio?.toFixed(2)}`);
     console.log(`  Overfit flag: ${analysis.walkForward.overfitFlag}`);
+  }
+
+  if (analysis.rollingWalkForward) {
+    const rwf = analysis.rollingWalkForward;
+    console.log(`\nRolling Walk-Forward: ${rwf.windowsPassed}/${rwf.windowsTotal} windows pass (worst pfRatio=${rwf.worstPfRatio?.toFixed(2) ?? "N/A"})`);
+    for (const w of rwf.windows) {
+      const mark = w.pass ? "✓" : "✗";
+      const trainPF = w.trainPF?.toFixed(2) ?? "?";
+      const testPF = w.testPF?.toFixed(2) ?? "?";
+      const ratio = w.pfRatio?.toFixed(2) ?? "?";
+      console.log(`  ${mark} W${w.windowIndex}: train ${w.trainTrades}t PF=${trainPF} → test ${w.testTrades}t PF=${testPF} ratio=${ratio}`);
+    }
+    console.log(`  Overfit flag: ${rwf.overfitFlag}`);
+  } else {
+    console.log(`\nRolling Walk-Forward: N/A (<40 trades)`);
   }
 
   // Print individual trades for TV comparison

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { checkCriteria, checkStretchCriteria } from "./check-criteria.js";
-import type { WalkForward } from "@breaker/backtest";
+import type { WalkForward, RollingWalkForward } from "@breaker/backtest";
 
 const goodMetrics = {
   totalPnl: 100,
@@ -28,6 +28,18 @@ function mkWalkForward(overrides: Partial<WalkForward> = {}): WalkForward {
     trainPF: 1.5,
     testPF: 1.2,
     pfRatio: 0.8,
+    overfitFlag: false,
+    ...overrides,
+  };
+}
+
+function mkRollingWalkForward(overrides: Partial<RollingWalkForward> = {}): RollingWalkForward {
+  return {
+    windows: [],
+    windowsPassed: 2,
+    windowsTotal: 3,
+    passRate: 0.67,
+    worstPfRatio: 0.65,
     overfitFlag: false,
     ...overrides,
   };
@@ -106,6 +118,20 @@ describe("checkCriteria", () => {
     };
     expect(checkCriteria(nullMetrics, baseCriteria)).toBe(false);
   });
+
+  it("returns false when rollingWalkForward.overfitFlag is true", () => {
+    const rwf = mkRollingWalkForward({ overfitFlag: true });
+    expect(checkCriteria(goodMetrics, baseCriteria, null, rwf)).toBe(false);
+  });
+
+  it("returns true when rollingWalkForward.overfitFlag is false", () => {
+    const rwf = mkRollingWalkForward({ overfitFlag: false });
+    expect(checkCriteria(goodMetrics, baseCriteria, null, rwf)).toBe(true);
+  });
+
+  it("returns true when rollingWalkForward is null", () => {
+    expect(checkCriteria(goodMetrics, baseCriteria, null, null)).toBe(true);
+  });
 });
 
 describe("checkStretchCriteria", () => {
@@ -137,5 +163,11 @@ describe("checkStretchCriteria", () => {
   it("still checks other criteria (trades, DD, WR)", () => {
     const lowTrades = { ...goodMetrics, profitFactor: 2.0, numTrades: 10, avgR: 0.3 };
     expect(checkStretchCriteria(lowTrades, baseCriteria, 1.86, 0.21)).toBe(false);
+  });
+
+  it("returns false when rollingWalkForward has overfitFlag", () => {
+    const stretchMetrics = { ...goodMetrics, profitFactor: 2.0, avgR: 0.3 };
+    const rwf = mkRollingWalkForward({ overfitFlag: true });
+    expect(checkStretchCriteria(stretchMetrics, baseCriteria, 1.86, 0.21, null, rwf)).toBe(false);
   });
 });

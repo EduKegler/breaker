@@ -1,4 +1,4 @@
-import type { WalkForward } from "@breaker/backtest";
+import type { WalkForward, RollingWalkForward } from "@breaker/backtest";
 import type { LoopConfig } from "./types.js";
 
 type MetricsInput = { totalPnl: number | null; numTrades: number | null; profitFactor: number | null; maxDrawdownPct: number | null; winRate: number | null; avgR: number | null };
@@ -14,6 +14,7 @@ export function checkCriteria(
   metrics: MetricsInput,
   criteria: LoopConfig["criteria"],
   walkForward?: WalkForward | null,
+  rollingWalkForward?: RollingWalkForward | null,
 ): boolean {
   const pnl = metrics.totalPnl ?? 0;
   const trades = metrics.numTrades ?? 0;
@@ -30,6 +31,9 @@ export function checkCriteria(
 
   // Walk-forward overfit gate (KB §10.1): overfitFlag=true means pfRatio < 0.6
   if (walkForward?.overfitFlag) return false;
+
+  // Rolling walk-forward overfit gate: majority of windows failed
+  if (rollingWalkForward?.overfitFlag) return false;
 
   return (
     pnl > 0 &&
@@ -51,8 +55,10 @@ export function checkStretchCriteria(
   stretchPF: number,
   stretchAvgR: number | null,
   walkForward?: WalkForward | null,
+  rollingWalkForward?: RollingWalkForward | null,
 ): boolean {
   if (walkForward?.overfitFlag) return false;
+  if (rollingWalkForward?.overfitFlag) return false;
 
   const pnl = metrics.totalPnl ?? 0;
   const trades = metrics.numTrades ?? 0;

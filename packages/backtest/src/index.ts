@@ -17,6 +17,10 @@ export type {
   FilterSimulations,
   HourConsistency,
   WalkForward,
+  RollingWfWindow,
+  RollingWalkForward,
+  RegimeName,
+  RegimeStats,
   SessionName,
   SessionStats,
   TradeAnalysis,
@@ -65,7 +69,8 @@ export type { ExecutionConfig } from "./engine/execution-model.js";
 export { computeMetrics } from "./analysis/metrics-calculator.js";
 export { analyzeTradeList } from "./analysis/trade-analysis.js";
 export { getSessionForTimestamp } from "./analysis/get-session-for-hour.js";
-export { computeWalkForward } from "./analysis/walk-forward.js";
+export { computeWalkForward, computeRollingWalkForward } from "./analysis/walk-forward.js";
+export { computeRegimeStats, classifyRegime } from "./analysis/regime-stats.js";
 export { computeFilterSimulations } from "./analysis/filter-simulation.js";
 export { runCostScenarios, tradingDaysFromCandles } from "./analysis/run-cost-scenarios.js";
 export type { CostScenarioResult, DeltaVsBase } from "./analysis/run-cost-scenarios.js";

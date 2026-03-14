@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { validateGuardrails, validateParamGuardrails, validateWalkForward, validateArchetypeWR, validateFreeVariableCount, validateDiagnosticTracking, validateStrategyStructure, validateProfitabilityRegression } from "./guardrails.js";
+import { validateGuardrails, validateParamGuardrails, validateWalkForward, validateRollingWalkForward, validateArchetypeWR, validateFreeVariableCount, validateDiagnosticTracking, validateStrategyStructure, validateProfitabilityRegression } from "./guardrails.js";
 import type { Guardrails } from "../../types/config.js";
-import type { StrategyParam, WalkForward } from "@breaker/backtest";
+import type { StrategyParam, WalkForward, RollingWalkForward } from "@breaker/backtest";
 
 const defaultGuardrails: Guardrails = {
   maxRiskTradeUsd: 25,
@@ -153,6 +153,50 @@ describe("validateWalkForward", () => {
     const v = validateWalkForward(wf);
     expect(v).toHaveLength(1);
     expect(v[0].reason).toContain("pfRatio=N/A");
+  });
+});
+
+function mkRollingWalkForward(overrides: Partial<RollingWalkForward> = {}): RollingWalkForward {
+  return {
+    windows: [],
+    windowsPassed: 2,
+    windowsTotal: 3,
+    passRate: 0.67,
+    worstPfRatio: 0.65,
+    overfitFlag: false,
+    ...overrides,
+  };
+}
+
+describe("validateRollingWalkForward", () => {
+  it("returns empty when rolling WF is null", () => {
+    expect(validateRollingWalkForward(null)).toEqual([]);
+  });
+
+  it("returns empty when overfitFlag is false", () => {
+    expect(validateRollingWalkForward(mkRollingWalkForward())).toEqual([]);
+  });
+
+  it("detects overfitFlag true with window details in reason message", () => {
+    const rwf = mkRollingWalkForward({
+      overfitFlag: true,
+      windowsPassed: 1,
+      windowsTotal: 3,
+      passRate: 0.33,
+      windows: [
+        { windowIndex: 0, trainTrades: 40, testTrades: 20, trainPF: 1.5, testPF: 1.2, pfRatio: 0.8, pass: true },
+        { windowIndex: 1, trainTrades: 40, testTrades: 20, trainPF: 1.8, testPF: 0.6, pfRatio: 0.33, pass: false },
+        { windowIndex: 2, trainTrades: 40, testTrades: 20, trainPF: 2.0, testPF: 0.5, pfRatio: 0.25, pass: false },
+      ],
+    });
+    const v = validateRollingWalkForward(rwf);
+    expect(v).toHaveLength(1);
+    expect(v[0].field).toBe("rollingWfOverfit");
+    expect(v[0].reason).toContain("1/3 passed");
+    expect(v[0].reason).toContain("33%");
+    expect(v[0].reason).toContain("win1");
+    expect(v[0].reason).toContain("win2");
+    expect(v[0].reason).not.toContain("win0");
   });
 });
 

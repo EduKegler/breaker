@@ -8,6 +8,7 @@ import { analyzeTradeList } from "./analysis/trade-analysis.js";
 import { computeMinWarmupBars } from "./engine/compute-min-warmup-bars.js";
 import { isMainModule } from "@breaker/kit";
 import { computeRiskMetrics } from "./analysis/compute-risk-metrics.js";
+import { computeRegimeStats } from "./analysis/regime-stats.js";
 import type { Strategy, Metrics, TradeAnalysis } from "./index.js";
 import type { CandleClientOptions } from "./data/fetch-candles.js";
 import { CandleInterval } from "./types/candle.js";
@@ -35,6 +36,7 @@ interface CriteriaCheck {
   minWR: boolean;
   minAvgR: boolean;
   wfOverfit: boolean;
+  rwfOverfit: boolean;
   failCount: number;
 }
 
@@ -134,10 +136,11 @@ function checkCriteria(m: Metrics, a: TradeAnalysis | null, cr: Criteria): Crite
   const minWR = (m.winRate ?? 0) >= cr.minWR;
   const minAvgR = (m.avgR ?? 0) >= cr.minAvgR;
   const wfOverfit = !(a?.walkForward?.overfitFlag === true);
-  const checks = [minTrades, minPF, maxDD, minWR, minAvgR, wfOverfit];
+  const rwfOverfit = !(a?.rollingWalkForward?.overfitFlag === true);
+  const checks = [minTrades, minPF, maxDD, minWR, minAvgR, wfOverfit, rwfOverfit];
   return {
     passAll: checks.every(Boolean),
-    minTrades, minPF, maxDD, minWR, minAvgR, wfOverfit,
+    minTrades, minPF, maxDD, minWR, minAvgR, wfOverfit, rwfOverfit,
     failCount: checks.filter(c => !c).length,
   };
 }
@@ -260,6 +263,20 @@ function printCard(r: StrategyResult, rank: number, cr: Criteria): void {
   ];
   console.log(`      ${costStats.join("  ")}`);
 
+  // Session breakdown
+  if (a?.bySession) {
+    const parts: string[] = [];
+    for (const [name, s] of Object.entries(a.bySession)) {
+      if (s.count === 0) continue;
+      const pfStr = s.profitFactor === Infinity ? "Inf" : s.profitFactor.toFixed(2);
+      const edgeStr = s.edgeBpsNet >= 0 ? ok(s.edgeBpsNet.toFixed(0) + "bps") : fail(s.edgeBpsNet.toFixed(0) + "bps");
+      parts.push(`${name}: ${s.count}t PF=${pfStr} edge=${edgeStr}`);
+    }
+    if (parts.length > 0) {
+      console.log(`      ${dim("Sessions")}  ${parts.join("  ")}`);
+    }
+  }
+
   // Params
   console.log(`      ${dim("Params")} ${r.paramCount}${r.paramCount > 8 ? fail(" (>8 free vars)") : ""}`);
 
@@ -284,6 +301,29 @@ function printCard(r: StrategyResult, rank: number, cr: Criteria): void {
     console.log(`      ${dim("Walk-Fwd")}  ${dim("N/A")}`);
   }
 
+  // Rolling Walk-Forward
+  const rwf = a?.rollingWalkForward;
+  if (rwf) {
+    const rwfStr = `${rwf.windowsPassed}/${rwf.windowsTotal} pass, worst=${rwf.worstPfRatio?.toFixed(2) ?? "?"}`;
+    const rwfStatus = rwf.overfitFlag ? fail("OVERFIT") : ok("OK");
+    console.log(`      ${dim("Rolling-WF")}  ${rwfStr}  ${rwfStatus}`);
+  } else {
+    console.log(`      ${dim("Rolling-WF")}  ${dim("N/A (<40 trades)")}`);
+  }
+
+  // Regime breakdown
+  if (a?.byRegime) {
+    const parts: string[] = [];
+    for (const [name, r] of Object.entries(a.byRegime)) {
+      if (r.count === 0) continue;
+      const pfStr = r.profitFactor === Infinity ? "Inf" : r.profitFactor.toFixed(2);
+      parts.push(`${name}: ${r.count}t PF=${pfStr}`);
+    }
+    if (parts.length > 0) {
+      console.log(`      ${dim("Regime")}    ${parts.join("  ")}`);
+    }
+  }
+
   // Failing criteria
   if (!ch.passAll) {
     const failing: string[] = [];
@@ -293,6 +333,7 @@ function printCard(r: StrategyResult, rank: number, cr: Criteria): void {
     if (!ch.minWR) failing.push(`WR ${(m.winRate ?? 0).toFixed(1)}% < ${cr.minWR}%`);
     if (!ch.minAvgR) failing.push(`avgR ${(m.avgR ?? 0).toFixed(2)} < ${cr.minAvgR}`);
     if (!ch.wfOverfit) failing.push("walk-forward overfit");
+    if (!ch.rwfOverfit) failing.push("rolling walk-forward overfit");
     console.log(`      ${A.ylw}✗ ${failing.join(", ")}${A.r}`);
   }
 
@@ -325,7 +366,7 @@ function printReport(results: StrategyResult[], cr: Criteria, period: string, as
   console.log("");
   console.log(` ${dim("Period")}      ${period}`);
   console.log(` ${dim("Strategies")}  ${total} found (${deployed} deployed, ${variants} variants)`);
-  console.log(` ${dim("Criteria")}    PF≥${cr.minPF}  DD≤${cr.maxDD}%  Trades≥${cr.minTrades}  WR≥${cr.minWR}%  AvgR≥${cr.minAvgR}  WF=no-overfit`);
+  console.log(` ${dim("Criteria")}    PF≥${cr.minPF}  DD≤${cr.maxDD}%  Trades≥${cr.minTrades}  WR≥${cr.minWR}%  AvgR≥${cr.minAvgR}  WF=no-overfit  RWF=no-overfit`);
   console.log("");
 
   // ── Ranking ──
@@ -530,6 +571,7 @@ export async function main(): Promise<void> {
       const rawMetrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDays, config.initialCapital);
       const metrics = { ...rawMetrics, ...computeRiskMetrics(result.equityPoints) };
       const analysis = analyzeTradeList(result.trades);
+      analysis.byRegime = computeRegimeStats(result.trades, candles);
 
       // Count optimizable params
       const paramCount = Object.values(strategy.params).filter(

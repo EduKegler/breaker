@@ -1,5 +1,5 @@
 import type { Guardrails } from "../../types/config.js";
-import type { StrategyParam, WalkForward } from "@breaker/backtest";
+import type { StrategyParam, WalkForward, RollingWalkForward } from "@breaker/backtest";
 
 interface GuardrailViolation {
   field: string;
@@ -85,6 +85,28 @@ export function validateWalkForward(
   return [{
     field: "overfitFlag",
     reason: `Walk-forward overfit: trainPF=${trainPFStr}, testPF=${testPFStr}, pfRatio=${pfRatioStr}`,
+  }];
+}
+
+/**
+ * Validate rolling walk-forward results for overfitting.
+ * Rolling WF splits data into multiple overlapping windows and checks each.
+ * overfitFlag → reject (majority of windows show degradation).
+ */
+export function validateRollingWalkForward(
+  rollingWf: RollingWalkForward | null,
+): GuardrailViolation[] {
+  if (!rollingWf) return [];
+  if (!rollingWf.overfitFlag) return [];
+
+  const failedWindows = rollingWf.windows.filter((w) => !w.pass);
+  const failedDetails = failedWindows
+    .map((w) => `win${w.windowIndex}(pfRatio=${w.pfRatio?.toFixed(2) ?? "N/A"})`)
+    .join(", ");
+
+  return [{
+    field: "rollingWfOverfit",
+    reason: `Rolling WF overfit: ${rollingWf.windowsPassed}/${rollingWf.windowsTotal} passed (${(rollingWf.passRate * 100).toFixed(0)}%), failed=[${failedDetails}]`,
   }];
 }
 

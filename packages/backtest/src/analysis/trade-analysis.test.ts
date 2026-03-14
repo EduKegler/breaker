@@ -19,6 +19,7 @@ function makeTrade(overrides: Partial<CompletedTrade> = {}): CompletedTrade {
     exitType: "tp1",
     commission: 0.5,
     slippageCost: 0.1,
+    fundingCost: 0,
     entryComment: "entry",
     exitComment: "TP1",
     ...overrides,
@@ -133,5 +134,59 @@ describe("analyzeTradeList", () => {
     expect(result.bySession!["NY"].pnl).toBe(-5);
     expect(result.bySession!["Off-peak"].count).toBe(1);
     expect(result.bySession!["Off-peak"].pnl).toBe(-2);
+  });
+
+  it("computes edge and cost bps per session", () => {
+    // Trade: entryPrice=100, size=1 → notional=100
+    // pnl=10, commission=0.5, slippageCost=0.1, fundingCost=0.4 → totalCost=1.0
+    // netBps = (10 / 100) * 10000 = 1000 bps
+    // costBps = (1.0 / 100) * 10000 = 100 bps
+    const trades = [
+      makeTrade({
+        entryTimestamp: new Date("2024-07-15T03:00:00Z").getTime(), // Asia
+        entryPrice: 100, size: 1, pnl: 10,
+        commission: 0.5, slippageCost: 0.1, fundingCost: 0.4,
+      }),
+      makeTrade({
+        entryTimestamp: new Date("2024-07-15T04:00:00Z").getTime(), // Asia
+        entryPrice: 200, size: 0.5, pnl: -5,
+        commission: 1.0, slippageCost: 0.2, fundingCost: 0.3,
+        // notional=100, netBps = (-5/100)*10000 = -500 bps
+        // costBps = (1.5/100)*10000 = 150 bps
+      }),
+      makeTrade({
+        entryTimestamp: new Date("2024-07-15T15:00:00Z").getTime(), // NY
+        entryPrice: 50, size: 2, pnl: 20,
+        commission: 0.3, slippageCost: 0.1, fundingCost: 0.1,
+        // notional=100, netBps = (20/100)*10000 = 2000 bps
+        // costBps = (0.5/100)*10000 = 50 bps
+      }),
+    ];
+
+    const result = analyzeTradeList(trades);
+    const asia = result.bySession!["Asia"];
+    // Asia avg: edgeBpsNet = (1000 + -500) / 2 = 250 bps
+    // Asia avg: avgCostBps = (100 + 150) / 2 = 125 bps
+    expect(asia.edgeBpsNet).toBeCloseTo(250, 1);
+    expect(asia.avgCostBps).toBeCloseTo(125, 1);
+
+    const ny = result.bySession!["NY"];
+    expect(ny.edgeBpsNet).toBeCloseTo(2000, 1);
+    expect(ny.avgCostBps).toBeCloseTo(50, 1);
+  });
+
+  it("returns zero edge/cost for sessions with no trades", () => {
+    const trades = [
+      makeTrade({
+        entryTimestamp: new Date("2024-07-15T03:00:00Z").getTime(), // Asia only
+        entryPrice: 100, size: 1, pnl: 5,
+        commission: 0.2, slippageCost: 0.1, fundingCost: 0.1,
+      }),
+    ];
+    const result = analyzeTradeList(trades);
+    const london = result.bySession!["London"];
+    expect(london.count).toBe(0);
+    expect(london.edgeBpsNet).toBe(0);
+    expect(london.avgCostBps).toBe(0);
   });
 });

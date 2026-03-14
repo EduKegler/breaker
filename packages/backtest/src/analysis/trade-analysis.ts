@@ -9,7 +9,7 @@ import type {
   TradeAnalysis,
 } from "../types/metrics.js";
 import { computeFilterSimulations } from "./filter-simulation.js";
-import { computeWalkForward } from "./walk-forward.js";
+import { computeWalkForward, computeRollingWalkForward } from "./walk-forward.js";
 import { getSessionForTimestamp } from "./get-session-for-hour.js";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -28,6 +28,7 @@ export function analyzeTradeList(trades: CompletedTrade[]): TradeAnalysis {
   const { best3TradesPnl, worst3TradesPnl } = extremeTrades(trades);
   const filterSimulations = computeFilterSimulations(trades);
   const walkForward = computeWalkForward(trades);
+  const rollingWalkForward = computeRollingWalkForward(trades);
   const bySession = computeSessionStats(trades);
 
   return {
@@ -43,7 +44,9 @@ export function analyzeTradeList(trades: CompletedTrade[]): TradeAnalysis {
     worst3TradesPnl,
     filterSimulations,
     walkForward,
+    rollingWalkForward,
     bySession,
+    byRegime: null,
   };
 }
 
@@ -67,7 +70,9 @@ function emptyAnalysis(): TradeAnalysis {
       removeAllSL: { tradesRemoved: 0, pnlDelta: 0, pnlAfter: 0, tradesAfter: 0 },
     },
     walkForward: null,
+    rollingWalkForward: null,
     bySession: null,
+    byRegime: null,
   };
 }
 
@@ -188,22 +193,41 @@ function extremeTrades(trades: CompletedTrade[]): { best3TradesPnl: number[]; wo
 function computeSessionStats(trades: CompletedTrade[]): Record<SessionName, SessionStats> | null {
   if (trades.length === 0) return null;
 
-  const buckets: Record<SessionName, { count: number; pnl: number; wins: number; grossWin: number; grossLoss: number }> = {
-    Asia: { count: 0, pnl: 0, wins: 0, grossWin: 0, grossLoss: 0 },
-    London: { count: 0, pnl: 0, wins: 0, grossWin: 0, grossLoss: 0 },
-    NY: { count: 0, pnl: 0, wins: 0, grossWin: 0, grossLoss: 0 },
-    "Off-peak": { count: 0, pnl: 0, wins: 0, grossWin: 0, grossLoss: 0 },
+  interface Bucket {
+    count: number;
+    pnl: number;
+    wins: number;
+    grossWin: number;
+    grossLoss: number;
+    sumEdgeBps: number;
+    sumCostBps: number;
+  }
+
+  const empty = (): Bucket => ({ count: 0, pnl: 0, wins: 0, grossWin: 0, grossLoss: 0, sumEdgeBps: 0, sumCostBps: 0 });
+
+  const buckets: Record<SessionName, Bucket> = {
+    Asia: empty(),
+    London: empty(),
+    NY: empty(),
+    "Off-peak": empty(),
   };
 
   for (const t of trades) {
     const session = getSessionForTimestamp(t.entryTimestamp);
-    buckets[session].count++;
-    buckets[session].pnl += t.pnl;
+    const b = buckets[session];
+    b.count++;
+    b.pnl += t.pnl;
     if (t.pnl > 0) {
-      buckets[session].wins++;
-      buckets[session].grossWin += t.pnl;
+      b.wins++;
+      b.grossWin += t.pnl;
     } else {
-      buckets[session].grossLoss += Math.abs(t.pnl);
+      b.grossLoss += Math.abs(t.pnl);
+    }
+
+    const notional = t.entryPrice * t.size;
+    if (notional > 0) {
+      b.sumEdgeBps += (t.pnl / notional) * 10_000;
+      b.sumCostBps += ((t.commission + t.slippageCost + (t.fundingCost ?? 0)) / notional) * 10_000;
     }
   }
 
@@ -214,6 +238,8 @@ function computeSessionStats(trades: CompletedTrade[]): Record<SessionName, Sess
       pnl: b.pnl,
       winRate: b.count > 0 ? (b.wins / b.count) * 100 : 0,
       profitFactor: b.grossLoss > 0 ? b.grossWin / b.grossLoss : b.grossWin > 0 ? Infinity : 0,
+      edgeBpsNet: b.count > 0 ? b.sumEdgeBps / b.count : 0,
+      avgCostBps: b.count > 0 ? b.sumCostBps / b.count : 0,
     };
   }
   return result as Record<SessionName, SessionStats>;

@@ -30,7 +30,7 @@ import { checkCriteria, checkStretchCriteria } from "./check-criteria.js";
 import { phaseHelpers } from "./phase-helpers.js";
 import { emitEvent, closeLoggers } from "./stages/events.js";
 import { checkpoint } from "./stages/checkpoint.js";
-import { validateParamGuardrails, validateWalkForward, validateArchetypeWR, validateFreeVariableCount, validateStrategyStructure, validateProfitabilityRegression } from "./stages/guardrails.js";
+import { validateParamGuardrails, validateWalkForward, validateRollingWalkForward, validateArchetypeWR, validateFreeVariableCount, validateStrategyStructure, validateProfitabilityRegression } from "./stages/guardrails.js";
 import { buildSessionSummary, buildConsoleSummary } from "./stages/summary.js";
 import type { VariantSummaryInfo } from "./stages/summary.js";
 import { runEngineInProcess } from "./stages/run-engine-in-process.js";
@@ -588,8 +588,8 @@ export async function orchestrate(): Promise<void> {
 
   // Check if baseline/checkpoint already passes all criteria.
   // If yes, don't stop on first criteria pass — run all iterations to maximize score.
-  const baselinePassesCriteria = checkCriteria(initialMetrics, cfg.criteria, lastAnalysis?.walkForward ?? null);
-  const baselinePassesStretch = baselinePassesCriteria && checkStretchCriteria(initialMetrics, cfg.criteria, stretchTargets.stretchPF, stretchTargets.stretchAvgR, lastAnalysis?.walkForward ?? null);
+  const baselinePassesCriteria = checkCriteria(initialMetrics, cfg.criteria, lastAnalysis?.walkForward ?? null, lastAnalysis?.rollingWalkForward ?? null);
+  const baselinePassesStretch = baselinePassesCriteria && checkStretchCriteria(initialMetrics, cfg.criteria, stretchTargets.stretchPF, stretchTargets.stretchAvgR, lastAnalysis?.walkForward ?? null, lastAnalysis?.rollingWalkForward ?? null);
   if (baselinePassesStretch) {
     logOk(`Baseline already meets ALL stretch targets (PF=${(initialMetrics.profitFactor ?? 0).toFixed(2)} ≥ ${stretchTargets.stretchPF}) — nothing to optimize`);
   } else if (baselinePassesCriteria) {
@@ -1194,6 +1194,7 @@ export async function orchestrate(): Promise<void> {
       bestScoreBreakdown,
       bestScore: actor.getSnapshot().context.bestScore,
       walkForward: (currentAnalysis ?? lastAnalysis)?.walkForward ?? null,
+      rollingWalkForward: (currentAnalysis ?? lastAnalysis)?.rollingWalkForward ?? null,
       rejectedRepeats: recentRejects.length > 0 ? recentRejects : undefined,
       lastValidationWarnings: lastValidationWarnings.length > 0 ? lastValidationWarnings : undefined,
       startTime: cfg.startTime,
@@ -1682,6 +1683,19 @@ export async function orchestrate(): Promise<void> {
       actor.send({ type: "WF_REJECT" });
     }
 
+    // Rolling walk-forward overfit gate: reject if majority of windows fail
+    const rwfViolations = validateRollingWalkForward(analysis.rollingWalkForward);
+    if (rwfViolations.length > 0 && effectiveVerdict === "accept") {
+      logWarn(`⛔ Rolling walk-forward overfit detected: ${rwfViolations.map((v) => v.reason).join("; ")} — forcing reject`);
+      emitEvent({
+        artifactsDir: cfg.artifactsDir, runId: cfg.runId, asset: cfg.asset, iter,
+        stage: "GUARDRAIL_VIOLATION", status: "warn",
+        message: rwfViolations.map((v) => v.reason).join("; "),
+      });
+      effectiveVerdict = "reject";
+      actor.send({ type: "WF_REJECT" });
+    }
+
     // Free variable count gate (KB §13.1): reject if optimizable params exceed profile limit
     const fvViolations = validateFreeVariableCount(paramCount, cfg.criteria.maxFreeVariables);
     if (fvViolations.length > 0 && effectiveVerdict === "accept") {
@@ -1752,9 +1766,9 @@ export async function orchestrate(): Promise<void> {
     // If baseline already passed criteria, don't stop early — run all iterations
     // to maximize score. Only stop early when going FROM failing TO passing.
     // With stretch targets: even when criteria pass, continue until stretch met.
-    if (checkCriteria(metrics, cfg.criteria, analysis.walkForward)) {
+    if (checkCriteria(metrics, cfg.criteria, analysis.walkForward, analysis.rollingWalkForward)) {
       success = true;
-      const meetsStretch = checkStretchCriteria(metrics, cfg.criteria, stretchTargets.stretchPF, stretchTargets.stretchAvgR, analysis.walkForward);
+      const meetsStretch = checkStretchCriteria(metrics, cfg.criteria, stretchTargets.stretchPF, stretchTargets.stretchAvgR, analysis.walkForward, analysis.rollingWalkForward);
       if (!baselinePassesCriteria) {
         if (meetsStretch) {
           log(`${c.b}${c.grn}🏆 ALL CRITERIA + STRETCH TARGETS PASSED at iter ${iter}!${c.r}`);
