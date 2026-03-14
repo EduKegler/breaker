@@ -4,6 +4,7 @@ import { connectWebSocket, setWsQueryClient } from "./store/websocket.js";
 import {
   deriveCoinList,
   deriveCoinStrategies,
+  deriveCoinStrategyConfigs,
   deriveCoinInterval,
   selectCurrentEnabledStrategies,
 } from "./store/selectors.js";
@@ -89,6 +90,10 @@ export function App() {
     () => deriveCoinStrategies(config?.coins, selectedCoin),
     [config?.coins, selectedCoin],
   );
+  const selectedCoinStrategyConfigs = useMemo(
+    () => deriveCoinStrategyConfigs(config?.coins, selectedCoin),
+    [config?.coins, selectedCoin],
+  );
   const selectedCoinInterval = useMemo(
     () => deriveCoinInterval(config?.coins, selectedCoin),
     [config?.coins, selectedCoin],
@@ -171,16 +176,9 @@ export function App() {
           <div className="w-px h-5 bg-terminal-border" />
 
           {isOnline && (
-            <>
-              <span className="font-mono text-sm font-medium text-txt-primary">
-                {headerCoinsLabel}
-              </span>
-              {c?.coins?.[0] && (
-                <span className="font-mono text-xs text-txt-secondary">
-                  {c.coins[0].leverage}x
-                </span>
-              )}
-            </>
+            <span className="font-mono text-sm font-medium text-txt-primary">
+              {headerCoinsLabel}
+            </span>
           )}
 
           <div className="ml-auto flex items-center gap-3">
@@ -280,6 +278,7 @@ export function App() {
                   selectedCoin={selectedCoin}
                   onSelectCoin={selectCoin}
                   strategies={selectedCoinStrategies}
+                  strategyConfigs={selectedCoinStrategyConfigs}
                   enabledStrategies={currentEnabledStrategies}
                   onToggleStrategy={toggleStrategy}
                   pendingCoins={new Set(pendingEntries.map((e) => e.coin))}

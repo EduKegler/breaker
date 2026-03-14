@@ -27,6 +27,7 @@ export interface UseChartMarkersOptions {
   replaySignals: ReplaySignal[];
   markersRef: RefObject<ISeriesMarkersPluginApi<Time> | null>;
   seriesRef: RefObject<ISeriesApi<SeriesType> | null>;
+  moduleTypeMap?: Record<string, string>;
 }
 
 export function useChartMarkers(opts: UseChartMarkersOptions): void {
@@ -81,7 +82,7 @@ export function useChartMarkers(opts: UseChartMarkersOptions): void {
         position: isLong ? "belowBar" : "aboveBar",
         color: "#3b82f6",
         shape: isLong ? "arrowUp" : "arrowDown",
-        text: strategyLabel(rs.direction, rs.strategyName),
+        text: strategyLabel(rs.direction, rs.strategyName, opts.moduleTypeMap?.[rs.strategyName]),
         size: 1,
       });
     }
@@ -105,7 +106,7 @@ export function useChartMarkers(opts: UseChartMarkersOptions): void {
         position: isLong ? "belowBar" : "aboveBar",
         color,
         shape: isLong ? "arrowUp" : "arrowDown",
-        text: strategyLabel(direction, s.strategy_name),
+        text: strategyLabel(direction, s.strategy_name, s.strategy_name ? opts.moduleTypeMap?.[s.strategy_name] : undefined),
         size: 1,
       });
 

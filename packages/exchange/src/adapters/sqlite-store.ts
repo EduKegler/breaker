@@ -227,6 +227,19 @@ export class SqliteStore {
     return this.db.prepare("SELECT * FROM equity_snapshots ORDER BY id DESC LIMIT ?").all(limit) as EquitySnapshotRow[];
   }
 
+  getHourlyEquitySnapshots(hours: number = 168): EquitySnapshotRow[] {
+    return this.db.prepare(`
+      SELECT es.* FROM equity_snapshots es
+      INNER JOIN (
+        SELECT MAX(id) as max_id
+        FROM equity_snapshots
+        WHERE timestamp >= datetime('now', '-' || ? || ' hours')
+        GROUP BY strftime('%Y-%m-%d %H', timestamp)
+      ) grouped ON es.id = grouped.max_id
+      ORDER BY es.id DESC
+    `).all(hours) as EquitySnapshotRow[];
+  }
+
   getTodayTradeCount(asset: string): number {
     const row = this.db.prepare(`
       SELECT COUNT(*) as cnt FROM signals

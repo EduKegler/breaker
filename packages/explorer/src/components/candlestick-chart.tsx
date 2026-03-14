@@ -66,12 +66,23 @@ export const CandlestickChart = memo(function CandlestickChart() {
     isLive,
   });
 
+  const moduleTypeMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of config?.coins ?? []) {
+      for (const st of c.strategies) {
+        if (st.moduleType) map[st.name] = st.moduleType;
+      }
+    }
+    return map;
+  }, [config?.coins]);
+
   useChartMarkers({
     candles,
     signals,
     replaySignals,
     markersRef,
     seriesRef,
+    moduleTypeMap,
   });
 
   useChartPriceLines({

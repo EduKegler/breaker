@@ -120,6 +120,7 @@ export interface CoinStrategyConfig {
   name: string;
   interval: string;
   autoTradingEnabled: boolean;
+  moduleType?: string;
 }
 
 export interface CoinConfig {

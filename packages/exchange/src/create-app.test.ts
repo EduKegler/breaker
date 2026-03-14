@@ -119,6 +119,7 @@ beforeEach(() => {
         getStrategyName: () => "test-strat",
         getInterval: () => "15m",
         getAutoTradingEnabled: () => true,
+        getModuleType: () => "breakout",
         setAutoTradingEnabled: vi.fn(),
         getLastExitLevel: () => null,
         generateManualSignal: () => null,
@@ -129,6 +130,7 @@ beforeEach(() => {
         getStrategyName: () => "test-strat",
         getInterval: () => "15m",
         getAutoTradingEnabled: () => true,
+        getModuleType: () => "breakout",
         setAutoTradingEnabled: vi.fn(),
         getLastExitLevel: () => null,
         generateManualSignal: () => null,
@@ -727,7 +729,7 @@ describe("Exchange server", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.coins[0].strategies).toEqual([
-      { name: "test-strat", interval: "15m", autoTradingEnabled: true },
+      { name: "test-strat", interval: "15m", autoTradingEnabled: true, moduleType: "breakout" },
     ]);
     expect(res.body.availableStrategies).toContain("test-strat");
   });

@@ -1,13 +1,14 @@
-import {
-  strategyDisplayName,
-  strategyTooltip,
-} from "../lib/strategy-abbreviations.js";
+import { moduleTypeLabel } from "../lib/strategy-abbreviations.js";
+import { getStrategyMeta } from "../lib/strategy-metadata.js";
+import { humanizeStrategyName } from "../lib/strategy-abbreviations.js";
+import type { CoinStrategyConfig } from "../types/api.js";
 
 interface CoinChartToolbarProps {
   coins: string[];
   selectedCoin: string;
   onSelectCoin: (coin: string) => void;
   strategies: string[];
+  strategyConfigs: CoinStrategyConfig[];
   enabledStrategies: string[];
   onToggleStrategy: (strategy: string) => void;
   pendingCoins?: Set<string>;
@@ -19,6 +20,7 @@ export function CoinChartToolbar({
   selectedCoin,
   onSelectCoin,
   strategies,
+  strategyConfigs,
   enabledStrategies,
   onToggleStrategy,
   pendingCoins,
@@ -64,7 +66,9 @@ export function CoinChartToolbar({
             {strategies.map((s) => {
               const isEnabled = enabledStrategies.includes(s);
               const canToggle = strategies.length >= 2;
-              const tip = strategyTooltip(s);
+              const cfg = strategyConfigs.find((c) => c.name === s);
+              const label = moduleTypeLabel(cfg?.moduleType);
+              const meta = getStrategyMeta(s);
               const isLoading = loadingStrategies?.has(`${selectedCoin}:${s}`);
               return (
                 <div key={s} className="relative group">
@@ -86,30 +90,75 @@ export function CoinChartToolbar({
                     {isLoading && (
                       <span className="inline-block w-2.5 h-2.5 mr-1 rounded-full border border-txt-secondary/40 border-t-amber animate-spin align-[-2px]" />
                     )}
-                    {strategyDisplayName(s)}
+                    {label}
                   </button>
-                  {/* Tooltip */}
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none z-50">
-                    <div className="bg-[#141420] border border-terminal-border rounded px-3 py-2.5 shadow-lg w-max max-w-[320px]">
-                      <div className="text-[10px] font-bold text-amber tracking-wider uppercase mb-1.5">
-                        {tip.title}
-                      </div>
-                      <div className="text-[10px] font-mono text-txt-secondary/80 mb-1.5">
-                        {tip.lines[0]}
-                      </div>
-                      {tip.lines.slice(1).map((line, i) => (
-                        <div
-                          key={i}
-                          className="text-[10px] font-mono leading-relaxed text-txt-secondary"
-                        >
-                          <span className="text-txt-secondary/50">{line.split("▸")[0]}▸</span>
-                          {line.split("▸").slice(1).join("▸")}
-                        </div>
-                      ))}
-                    </div>
-                    {/* Arrow */}
+                  {/* ── Strategy Tooltip ────────────────── */}
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none z-50">
+                    {/* Arrow (top) */}
                     <div className="flex justify-center">
-                      <div className="w-2 h-2 bg-[#141420] border-r border-b border-terminal-border rotate-45 -mt-[5px]" />
+                      <div
+                        className="w-2 h-2 rotate-45 -mb-[5px] border-l border-t"
+                        style={{
+                          background: "#111120",
+                          borderColor: "rgba(255,170,0,0.15)",
+                        }}
+                      />
+                    </div>
+                    <div
+                      className="rounded border shadow-2xl"
+                      style={{
+                        background: "linear-gradient(180deg, #111120 0%, #0c0c18 100%)",
+                        borderColor: "rgba(255,170,0,0.15)",
+                        width: 360,
+                        boxShadow: "0 8px 32px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.03)",
+                      }}
+                    >
+                      {/* Header — strategy file name + module type badge */}
+                      <div
+                        className="px-3 py-2 border-b flex items-center gap-2"
+                        style={{ borderColor: "rgba(255,255,255,0.06)" }}
+                      >
+                        <span className="text-[11px] font-mono font-medium text-txt-primary">
+                          {s}
+                        </span>
+                        <span
+                          className="text-[9px] font-bold tracking-[0.1em] uppercase px-1.5 py-px rounded"
+                          style={{ color: "#ffaa00", background: "rgba(255,170,0,0.1)", border: "1px solid rgba(255,170,0,0.2)" }}
+                        >
+                          {label}
+                        </span>
+                      </div>
+
+                      {/* Components */}
+                      <div className="px-3 py-2">
+                        {meta ? meta.components.map((comp, i) => (
+                          <div key={i} className={i > 0 ? "mt-2 pt-2 border-t border-white/[0.04]" : ""}>
+                            <div className="flex items-baseline gap-2">
+                              <span
+                                className="text-[10px] font-mono uppercase tracking-wider shrink-0"
+                                style={{ color: "#6b6b80", width: 68 }}
+                              >
+                                {comp.label}
+                              </span>
+                              <span className="text-[11px] font-mono font-medium text-txt-primary leading-tight">
+                                {comp.value}
+                              </span>
+                            </div>
+                            {comp.detail && (
+                              <div
+                                className="text-[10px] font-mono leading-snug mt-0.5"
+                                style={{ color: "#555568", paddingLeft: 76 }}
+                              >
+                                {comp.detail}
+                              </div>
+                            )}
+                          </div>
+                        )) : (
+                          <div className="text-[11px] font-mono text-txt-secondary">
+                            {humanizeStrategyName(s)}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

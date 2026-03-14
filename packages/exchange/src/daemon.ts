@@ -418,7 +418,7 @@ async function main() {
       wsBroker.broadcastEvent("positions", data.positions);
       wsBroker.broadcastEvent("orders", data.orders);
       wsBroker.broadcastEvent("open-orders", data.openOrders);
-      wsBroker.broadcastEvent("equity", store.getEquitySnapshots(500));
+      wsBroker.broadcastEvent("equity", store.getHourlyEquitySnapshots(168));
     },
     onAutoClose: (coin, strategyName, pnl) => {
       const moduleId = `${coin}:${strategyName ?? "unknown"}`;
@@ -486,7 +486,7 @@ async function main() {
         log.warn({ action: "snapshotOpenOrders", err }, "Failed to fetch open orders for snapshot");
         return [];
       }),
-      equity: store.getEquitySnapshots(500),
+      equity: store.getHourlyEquitySnapshots(168),
       health: { status: "ok", mode: config.mode, coins: coinsSummary, dryRun: isDryRun, uptime: process.uptime() },
       signals: store.getRecentSignals(100),
       positionHistory: aggregatePositionHistory(store.getPositionHistoryRows(500)),
@@ -737,6 +737,14 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     logger.info("Shutting down...");
+
+    // Close HTTP server FIRST to release the port immediately.
+    // In watch mode, tsx spawns the new process right after SIGTERM —
+    // if we do async cleanup before server.close(), the new process
+    // hits EADDRINUSE because the port is still bound.
+    server.close();
+    wsBroker.close();
+
     for (const runner of runners) runner.stop();
     reconciler.stop();
     if (priceTickInterval) clearInterval(priceTickInterval);
@@ -746,7 +754,6 @@ async function main() {
     await cancelPendingGtcOrders({ pendingEntryBook, hlClient, log });
 
     eventStream?.stop();
-    wsBroker.close();
 
     await eventLog.append({
       type: "daemon_stopped",
@@ -754,7 +761,6 @@ async function main() {
       data: {},
     });
 
-    server.close();
     candleCache.close();
     store.close();
     logger.info("Shutdown complete");

@@ -40,6 +40,14 @@ export function deriveCoinStrategies(coins: CoinConfig[] | undefined, selectedCo
   return cc ? cc.strategies.map((st) => st.name) : EMPTY_STRINGS;
 }
 
+const EMPTY_STRATEGY_CONFIGS: import("../types/api.js").CoinStrategyConfig[] = [];
+
+export function deriveCoinStrategyConfigs(coins: CoinConfig[] | undefined, selectedCoin: string): import("../types/api.js").CoinStrategyConfig[] {
+  if (!coins || !selectedCoin) return EMPTY_STRATEGY_CONFIGS;
+  const cc = coins.find((c) => c.coin === selectedCoin);
+  return cc?.strategies ?? EMPTY_STRATEGY_CONFIGS;
+}
+
 export function deriveCoinInterval(coins: CoinConfig[] | undefined, selectedCoin: string): string | null {
   if (!coins || !selectedCoin) return null;
   const cc = coins.find((c) => c.coin === selectedCoin);

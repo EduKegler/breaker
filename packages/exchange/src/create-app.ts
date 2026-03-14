@@ -103,7 +103,7 @@ export function createApp(deps: ServerDeps): AppResult {
   });
 
   app.get("/equity", (_req, res) => {
-    const snapshots = deps.store.getEquitySnapshots(500);
+    const snapshots = deps.store.getHourlyEquitySnapshots(168);
     res.json({ snapshots });
   });
 
@@ -257,6 +257,7 @@ export function createApp(deps: ServerDeps): AppResult {
           name: r.getStrategyName(),
           interval: r.getInterval(),
           autoTradingEnabled: r.getAutoTradingEnabled(),
+          moduleType: r.getModuleType(),
         })),
     }));
     const availableStrategies = [...new Set(deps.runners.map(r => r.getStrategyName()))];

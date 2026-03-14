@@ -10,7 +10,7 @@ trading/
 │   ├── alerts/           — A · WhatsApp messaging via Evolution API
 │   ├── kit/              — K · shared utilities (isMainModule, parseEnv, formatZodErrors)
 │   ├── explorer/         — E · live trading dashboard (Vite + React)
-│   └── router/           — R · TradingView alert receiver & forwarder
+│   └── router/           — R · webhook receiver & WhatsApp forwarder
 ├── package.json          — root (private, workspaces)
 ├── pnpm-workspace.yaml   — declares packages/*
 ├── tsconfig.base.json    — shared TypeScript config
@@ -33,20 +33,25 @@ trading/
 
 ## Running services
 - `pnpm daemon` — exchange daemon (tsx --watch, requires `.env` with HL keys)
-- `pnpm router` — TradingView webhook receiver
-- `pnpm alerts` — WhatsApp gateway
+- `pnpm router` — webhook receiver (forwards to WhatsApp via alerts)
+- `pnpm alerts` — WhatsApp gateway (Evolution API)
 - `pnpm dev` — explorer Vite dev server (port 5173, proxies `/api/*` to `:3200`)
 - `pnpm dashboard` — refiner optimization dashboard
 - `pnpm validate` — full pre-submit: build + test + typecheck
 
 ## Architecture & data flow
 ```
-TradingView → [webhook] → Router → Alerts → WhatsApp
-                                      ↑
-Backtest ←→ Refiner (Claude AI)       |
-                                      |
-                          Exchange ----+
-                         (Hyperliquid)
+Backtest ←→ Refiner (Claude AI)
+
+Exchange (Hyperliquid) ──→ Alerts ──→ WhatsApp
+  │  autonomous trading       ↑
+  │  (strategies from         │
+  │   backtest/deployed)      │
+  └───────────────────────────┘
+     position opened, trailing SL, warnings
+
+Router ──→ Alerts ──→ WhatsApp
+  (webhook receiver, legacy TradingView path)
 ```
 
 ### Workspace dependency graph (build order matters)

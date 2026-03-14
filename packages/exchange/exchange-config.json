@@ -3,12 +3,25 @@
   "port": 3200,
   "gatewayUrl": "https://tv.kegler.dev/send/pine-alerts-2026",
   "coins": [
-    { "coin": "BTC", "leverage": 5 },
-    { "coin": "SOL", "leverage": 3 }
+    {
+      "coin": "BTC",
+      "leverage": 5
+    },
+    {
+      "coin": "SOL",
+      "leverage": 3
+    }
   ],
   "strategyOverrides": {
-    "short-range-retest-ema-macd-partial-tp": { "autoTradingEnabled": true },
-    "ema-pullback": { "autoTradingEnabled": true }
+    "short-range-retest-ema-macd-partial-tp": {
+      "autoTradingEnabled": true
+    },
+    "ema-pullback": {
+      "autoTradingEnabled": true
+    },
+    "macd-htf-adx-high-chandelier": {
+      "autoTradingEnabled": true
+    }
   },
   "dataSource": "binance",
   "marginType": "isolated",

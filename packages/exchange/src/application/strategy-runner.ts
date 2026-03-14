@@ -786,6 +786,10 @@ export class StrategyRunner {
     return `${this.deps.coin}:${this.deps.strategyConfigName}`;
   }
 
+  getModuleType(): string | undefined {
+    return this.deps.moduleType;
+  }
+
   getLastSignalResult(): { t: number; hadSignal: boolean } | null {
     return this.lastSignalResult;
   }

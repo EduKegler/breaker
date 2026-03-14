@@ -654,5 +654,41 @@ describe("SqliteStore", () => {
       expect(snapshots).toHaveLength(2);
       expect(snapshots[0].equity).toBe(1010); // DESC order
     });
+
+    it("getHourlyEquitySnapshots returns last snapshot per hour", () => {
+      // Same hour: two snapshots at 00:00 and 00:30
+      store.insertEquitySnapshot({
+        timestamp: "2026-03-13T10:00:00Z",
+        equity: 100,
+        unrealized_pnl: 0,
+        realized_pnl: 0,
+        open_positions: 0,
+        cumulative_funding: 0,
+      });
+      store.insertEquitySnapshot({
+        timestamp: "2026-03-13T10:30:00Z",
+        equity: 105,
+        unrealized_pnl: 2,
+        realized_pnl: 0,
+        open_positions: 1,
+        cumulative_funding: 0,
+      });
+      // Different hour
+      store.insertEquitySnapshot({
+        timestamp: "2026-03-13T11:05:00Z",
+        equity: 110,
+        unrealized_pnl: 5,
+        realized_pnl: 0,
+        open_positions: 1,
+        cumulative_funding: 0,
+      });
+
+      const hourly = store.getHourlyEquitySnapshots(24);
+      // Should collapse the 10:xx snapshots into one (the latest: 10:30 with equity=105)
+      expect(hourly).toHaveLength(2);
+      // DESC order: 11:05 first, then 10:30
+      expect(hourly[0].equity).toBe(110);
+      expect(hourly[1].equity).toBe(105);
+    });
   });
 });
