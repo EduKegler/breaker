@@ -13,6 +13,7 @@ const STRENGTH_THRESHOLD = 0.67; // Close must be in upper/lower third of candle
 const DEAD_MARKET_PCT = 0.001; // ATR must be > 0.1% of price
 const MAX_HOLD_BARS = 96; // 24h hard timeout to prevent funding bleed
 const SLOPE_LOOKBACK = 5; // 1H bars for slope calculation
+const ADX_RISING_LOOKBACK = 3; // ADX must rise for this many 1H bars
 
 interface EmaVwapAtrPullbackParams {
   emaFast: StrategyParam;
@@ -25,6 +26,11 @@ interface EmaVwapAtrPullbackParams {
   adxThreshold: StrategyParam;
   slopeThreshold: StrategyParam;
   pullbackBars: StrategyParam;
+  // V-A / V-C filters
+  adxRising: StrategyParam;
+  useDiDirection: StrategyParam;
+  pullbackDepthMin: StrategyParam;
+  pullbackDepthMax: StrategyParam;
 }
 
 const DEFAULT_PARAMS: EmaVwapAtrPullbackParams = {
@@ -41,28 +47,44 @@ const DEFAULT_PARAMS: EmaVwapAtrPullbackParams = {
     description: "Rolling VWAP period in bars (96 = 1 day of 15m)",
   },
   atrStopMult: {
-    value: 1.5, min: 1.0, max: 2.5, step: 0.25, optimizable: true,
+    value: 2.5, min: 1.0, max: 3.5, step: 0.25, optimizable: true,
     description: "ATR(14) 1H multiplier for stop and ATR trailing",
   },
   tp1RR: {
-    value: 1.0, min: 0.75, max: 2.0, step: 0.25, optimizable: true,
+    value: 1.5, min: 0.75, max: 2.5, step: 0.25, optimizable: true,
     description: "TP1 target as R:R multiple (closes 50% of position)",
   },
   timeoutBars: {
-    value: 10, min: 6, max: 16, step: 2, optimizable: true,
+    value: 30, min: 10, max: 48, step: 2, optimizable: true,
     description: "Exit at-loss trades after N bars (no follow-through)",
   },
   adxThreshold: {
-    value: 0, min: 0, max: 35, step: 1, optimizable: true,
+    value: 25, min: 18, max: 35, step: 1, optimizable: true,
     description: "1H ADX(14) minimum for trending regime (0 = disabled)",
   },
   slopeThreshold: {
-    value: 0, min: 0, max: 1.0, step: 0.1, optimizable: true,
+    value: 0.7, min: 0, max: 1.0, step: 0.1, optimizable: true,
     description: "EMA(slow) slope / ATR minimum for trend quality (0 = disabled)",
   },
   pullbackBars: {
-    value: 1, min: 1, max: 4, step: 1, optimizable: true,
+    value: 3, min: 1, max: 4, step: 1, optimizable: true,
     description: "Minimum bars in pullback zone before trigger (1 = single-bar, 2+ = multi-bar)",
+  },
+  adxRising: {
+    value: 1, min: 0, max: 1, step: 1, optimizable: false,
+    description: "Require ADX rising for 3 consecutive 1H bars (0 = disabled, 1 = enabled)",
+  },
+  useDiDirection: {
+    value: 1, min: 0, max: 1, step: 1, optimizable: false,
+    description: "Use +DI/-DI for direction confirmation (0 = disabled, 1 = enabled)",
+  },
+  pullbackDepthMin: {
+    value: 0, min: 0, max: 1.5, step: 0.1, optimizable: true,
+    description: "Min pullback depth as ATR(14,15m) multiple (0 = disabled)",
+  },
+  pullbackDepthMax: {
+    value: 0, min: 0, max: 3.0, step: 0.2, optimizable: true,
+    description: "Max pullback depth as ATR(14,15m) multiple (0 = disabled)",
   },
 };
 
@@ -82,7 +104,8 @@ export function createEmaVwapAtrPullback(
   let htf1hCandles: Candle[] = [];
   let htfAtrCache1h: number[] = [];
   let htfAdxCache1h: number[] = [];
-  // EMA slope on 1H: slope of emaSlow equivalent, normalized by ATR
+  let htfDiPlusCache1h: number[] = [];
+  let htfDiMinusCache1h: number[] = [];
   let htfEmaSlopeNorm: number[] = [];
 
   /** O(n) rolling VWAP via sliding window — no session reset. */
@@ -119,6 +142,50 @@ export function createEmaVwapAtrPullback(
     return NaN;
   }
 
+  /** Find index of last completed 1H bar. */
+  function findHtfIndex(currentT: number): number {
+    for (let j = htf1hCandles.length - 1; j >= 0; j--) {
+      if (htf1hCandles[j].t + MS_1H <= currentT) return j;
+    }
+    return -1;
+  }
+
+  /** Check if ADX has been rising for N consecutive 1H bars. */
+  function isAdxRising(htfIdx: number): boolean {
+    if (htfIdx < ADX_RISING_LOOKBACK) return false;
+    for (let k = 0; k < ADX_RISING_LOOKBACK - 1; k++) {
+      const curr = htfAdxCache1h[htfIdx - k];
+      const prev = htfAdxCache1h[htfIdx - k - 1];
+      if (isNaN(curr) || isNaN(prev) || curr <= prev) return false;
+    }
+    return true;
+  }
+
+  /** Measure pullback depth: distance from recent swing extreme to current pullback. */
+  function measurePullbackDepth(
+    candles: Candle[],
+    index: number,
+    direction: "long" | "short",
+    lookback: number,
+  ): number {
+    const start = Math.max(0, index - lookback);
+    if (direction === "long") {
+      // Find recent swing high, then measure distance to current low
+      let swingHigh = -Infinity;
+      for (let k = start; k < index; k++) {
+        if (candles[k].h > swingHigh) swingHigh = candles[k].h;
+      }
+      return swingHigh - candles[index].l;
+    } else {
+      // Find recent swing low, then measure distance to current high
+      let swingLow = Infinity;
+      for (let k = start; k < index; k++) {
+        if (candles[k].l < swingLow) swingLow = candles[k].l;
+      }
+      return candles[index].h - swingLow;
+    }
+  }
+
   return {
     name: "BTC 15m Pullback — EMA VWAP ATR",
     params,
@@ -134,11 +201,13 @@ export function createEmaVwapAtrPullback(
 
       htf1hCandles = higherTimeframes["1h"] ?? [];
       if (htf1hCandles.length > 0) {
+        const adxResult = computeAdx(htf1hCandles, ATR_PERIOD);
         htfAtrCache1h = atr(htf1hCandles, ATR_PERIOD);
-        htfAdxCache1h = computeAdx(htf1hCandles, ATR_PERIOD).adx;
+        htfAdxCache1h = adxResult.adx;
+        htfDiPlusCache1h = adxResult.diPlus;
+        htfDiMinusCache1h = adxResult.diMinus;
 
         // Compute EMA slope on 1H, normalized by ATR
-        // Use emaSlow/4 as equivalent period on 1H (60 on 15m ≈ 15 on 1H)
         const htfCloses = htf1hCandles.map(c => c.c);
         const htfEmaPeriod = Math.max(5, Math.round(params.emaSlow.value / 4));
         const htfEmaArr = ema(htfCloses, htfEmaPeriod);
@@ -178,18 +247,27 @@ export function createEmaVwapAtrPullback(
       const atr1hVal = findHtfValue(currentCandle.t, htfAtrCache1h);
       if (isNaN(atr1hVal)) return null;
 
-      // --- Optional filters ---
+      // --- Filter config ---
       const adxThresh = params.adxThreshold.value;
       const slopeThresh = params.slopeThreshold.value;
       const minPullbackBars = Math.round(params.pullbackBars.value);
+      const requireAdxRising = params.adxRising.value > 0;
+      const requireDiDirection = params.useDiDirection.value > 0;
+      const pbDepthMin = params.pullbackDepthMin.value;
+      const pbDepthMax = params.pullbackDepthMax.value;
 
-      // ADX filter (1H)
+      // --- HTF lookups ---
+      const htfIdx = findHtfIndex(currentCandle.t);
       let adx1hVal = NaN;
-      if (adxThresh > 0) {
-        adx1hVal = findHtfValue(currentCandle.t, htfAdxCache1h);
+      let diPlus1h = NaN;
+      let diMinus1h = NaN;
+
+      if (adxThresh > 0 || requireAdxRising || requireDiDirection) {
+        adx1hVal = htfIdx >= 0 ? htfAdxCache1h[htfIdx] : NaN;
+        diPlus1h = htfIdx >= 0 ? htfDiPlusCache1h[htfIdx] : NaN;
+        diMinus1h = htfIdx >= 0 ? htfDiMinusCache1h[htfIdx] : NaN;
       }
 
-      // EMA slope filter (1H, normalized by ATR)
       let slopeNormVal = NaN;
       if (slopeThresh > 0) {
         slopeNormVal = findHtfValue(currentCandle.t, htfEmaSlopeNorm);
@@ -201,10 +279,31 @@ export function createEmaVwapAtrPullback(
       ctx.indicator("atr1h", atr1hVal);
       ctx.indicator("rollingVwap", vwapVal);
       if (!isNaN(adx1hVal)) ctx.indicator("adx1h", adx1hVal);
+      if (!isNaN(diPlus1h)) ctx.indicator("diPlus1h", diPlus1h);
+      if (!isNaN(diMinus1h)) ctx.indicator("diMinus1h", diMinus1h);
       if (!isNaN(slopeNormVal)) ctx.indicator("slopeNorm1h", slopeNormVal);
 
       const stopMult = params.atrStopMult.value;
       const tp1RR = params.tp1RR.value;
+
+      // ==========================================================
+      // Shared filters (applied to both long and short)
+      // ==========================================================
+
+      // ADX threshold gate
+      const adxOk = adxThresh > 0
+        ? ctx.track("adx_trending", !isNaN(adx1hVal) && adx1hVal > adxThresh, adx1hVal, adxThresh)
+        : true;
+
+      // ADX rising gate (V-A)
+      const adxRisingOk = requireAdxRising
+        ? ctx.track("adx_rising", htfIdx >= 0 && isAdxRising(htfIdx))
+        : true;
+
+      // EMA slope quality gate
+      // (direction-specific — computed per side below)
+
+      if (!adxOk || !adxRisingOk) return null;
 
       // ==========================================================
       // LONG: EMA(fast) > EMA(slow), price > VWAP, pullback to EMA
@@ -216,22 +315,21 @@ export function createEmaVwapAtrPullback(
       const longStrength = ctx.track("L:bullish_close",
         close > low + STRENGTH_THRESHOLD * range, close, low + STRENGTH_THRESHOLD * range);
 
-      // Optional: ADX regime gate
-      const longAdx = adxThresh > 0
-        ? ctx.track("L:adx_trending", !isNaN(adx1hVal) && adx1hVal > adxThresh, adx1hVal, adxThresh)
+      // DI direction (V-A): +DI > -DI for longs
+      const longDi = requireDiDirection
+        ? ctx.track("L:di_direction", !isNaN(diPlus1h) && !isNaN(diMinus1h) && diPlus1h > diMinus1h, diPlus1h, diMinus1h)
         : true;
 
-      // Optional: EMA slope quality gate
+      // EMA slope (positive for longs)
       const longSlope = slopeThresh > 0
         ? ctx.track("L:slope_positive", !isNaN(slopeNormVal) && slopeNormVal > slopeThresh, slopeNormVal, slopeThresh)
         : true;
 
-      // Optional: Multi-bar pullback confirmation
+      // Multi-bar pullback confirmation
       let longMultiBar = true;
       if (minPullbackBars >= 2) {
-        // Count previous bars where close was below emaFast (genuine pullback dip)
         let pullbackCount = 0;
-        const lookWindow = Math.min(minPullbackBars + 2, index); // check recent bars
+        const lookWindow = Math.min(minPullbackBars + 2, index);
         for (let k = 1; k <= lookWindow; k++) {
           const prevIdx = index - k;
           if (prevIdx < 0) break;
@@ -240,7 +338,18 @@ export function createEmaVwapAtrPullback(
         longMultiBar = ctx.track("L:multi_bar_pb", pullbackCount >= minPullbackBars - 1, pullbackCount, minPullbackBars - 1);
       }
 
-      if (longTrend && longVwap && longPullback && longHold && longStrength && longAdx && longSlope && longMultiBar) {
+      // Pullback depth filter (V-C): depth must be between min and max ATR multiples
+      let longDepthOk = true;
+      if (pbDepthMin > 0 || pbDepthMax > 0) {
+        const depth = measurePullbackDepth(candles, index, "long", 20);
+        const depthAtr = atr15mVal > 0 ? depth / atr15mVal : 0;
+        const minOk = pbDepthMin > 0 ? depthAtr >= pbDepthMin : true;
+        const maxOk = pbDepthMax > 0 ? depthAtr <= pbDepthMax : true;
+        longDepthOk = ctx.track("L:pb_depth", minOk && maxOk, depthAtr, pbDepthMin);
+      }
+
+      if (longTrend && longVwap && longPullback && longHold && longStrength &&
+          longDi && longSlope && longMultiBar && longDepthOk) {
         const stopDist = stopMult * atr1hVal;
         const pullbackStop = low - 0.1 * atr1hVal;
         const atrStop = close - stopDist;
@@ -267,17 +376,17 @@ export function createEmaVwapAtrPullback(
       const shortStrength = ctx.track("S:bearish_close",
         close < high - STRENGTH_THRESHOLD * range, close, high - STRENGTH_THRESHOLD * range);
 
-      // Optional: ADX regime gate
-      const shortAdx = adxThresh > 0
-        ? ctx.track("S:adx_trending", !isNaN(adx1hVal) && adx1hVal > adxThresh, adx1hVal, adxThresh)
+      // DI direction (V-A): -DI > +DI for shorts
+      const shortDi = requireDiDirection
+        ? ctx.track("S:di_direction", !isNaN(diPlus1h) && !isNaN(diMinus1h) && diMinus1h > diPlus1h, diMinus1h, diPlus1h)
         : true;
 
-      // Optional: EMA slope quality gate (negative slope for shorts)
+      // EMA slope (negative for shorts)
       const shortSlope = slopeThresh > 0
         ? ctx.track("S:slope_negative", !isNaN(slopeNormVal) && slopeNormVal < -slopeThresh, slopeNormVal, -slopeThresh)
         : true;
 
-      // Optional: Multi-bar pullback confirmation
+      // Multi-bar pullback confirmation
       let shortMultiBar = true;
       if (minPullbackBars >= 2) {
         let pullbackCount = 0;
@@ -290,7 +399,18 @@ export function createEmaVwapAtrPullback(
         shortMultiBar = ctx.track("S:multi_bar_pb", pullbackCount >= minPullbackBars - 1, pullbackCount, minPullbackBars - 1);
       }
 
-      if (shortTrend && shortVwap && shortPullback && shortHold && shortStrength && shortAdx && shortSlope && shortMultiBar) {
+      // Pullback depth filter (V-C)
+      let shortDepthOk = true;
+      if (pbDepthMin > 0 || pbDepthMax > 0) {
+        const depth = measurePullbackDepth(candles, index, "short", 20);
+        const depthAtr = atr15mVal > 0 ? depth / atr15mVal : 0;
+        const minOk = pbDepthMin > 0 ? depthAtr >= pbDepthMin : true;
+        const maxOk = pbDepthMax > 0 ? depthAtr <= pbDepthMax : true;
+        shortDepthOk = ctx.track("S:pb_depth", minOk && maxOk, depthAtr, pbDepthMin);
+      }
+
+      if (shortTrend && shortVwap && shortPullback && shortHold && shortStrength &&
+          shortDi && shortSlope && shortMultiBar && shortDepthOk) {
         const stopDist = stopMult * atr1hVal;
         const pullbackStop = high + 0.1 * atr1hVal;
         const atrStop = close + stopDist;
@@ -316,12 +436,10 @@ export function createEmaVwapAtrPullback(
       const barsInTrade = ctx.index - ctx.positionEntryBarIndex;
       const close = ctx.currentCandle.c;
 
-      // Hard timeout: no trade should exceed 24h (funding costs)
       if (barsInTrade >= MAX_HOLD_BARS) {
         return { exit: true, comment: "Max hold timeout" };
       }
 
-      // Conditional time-stop: exit at-loss trades after N bars
       const timeoutBars = Math.round(params.timeoutBars.value);
       const isLosing = ctx.positionDirection === "long"
         ? close <= ctx.positionEntryPrice
