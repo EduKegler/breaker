@@ -9,6 +9,8 @@ import { computeMinWarmupBars } from "./engine/compute-min-warmup-bars.js";
 import { isMainModule } from "@breaker/kit";
 import type { Strategy, Metrics, TradeAnalysis } from "./index.js";
 import type { CandleClientOptions } from "./data/fetch-candles.js";
+import { CandleInterval } from "./types/candle.js";
+import type { CandleInterval as CandleIntervalType } from "./types/candle.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -377,8 +379,25 @@ export async function main(): Promise<void> {
   const category = options.category ?? "breakout";
   const source = (options.source ?? "binance") as "binance" | "hyperliquid";
   const coin = asset;
-  const interval = "15m" as const;
   const noLimits = options.limits === false;
+
+  // Load breaker-config.json once for interval + criteria
+  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
+  const repoRoot = path.resolve(scriptDir, "../../..");
+  const configPath = path.join(repoRoot, "packages/refiner/breaker-config.json");
+  let breakerConfig: Record<string, unknown> = {};
+  try {
+    breakerConfig = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  } catch {
+    // Config not found or malformed — continue with defaults
+  }
+
+  // Resolve interval per asset+category, fallback to 15m
+  let interval: CandleIntervalType = "15m";
+  const stratCfg = (breakerConfig as Record<string, any>).assets?.[asset]?.strategies?.[category];
+  if (stratCfg?.interval && CandleInterval.includes(stratCfg.interval)) {
+    interval = stratCfg.interval as CandleIntervalType;
+  }
 
   const startDate: string | undefined = options.start;
   const endDate: string | undefined = options.end;
@@ -396,24 +415,17 @@ export async function main(): Promise<void> {
 
   const periodStr = `${new Date(startTime).toISOString().slice(0, 10)} → ${new Date(endTime).toISOString().slice(0, 10)}`;
 
-  // Load criteria from breaker-config.json
-  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
-  const repoRoot = path.resolve(scriptDir, "../../..");
-  const configPath = path.join(repoRoot, "packages/refiner/breaker-config.json");
-  let criteria: Criteria = { minTrades: 50, minPF: 1.3, maxDD: 10, minWR: 0, minAvgR: 0.15 };
-
-  if (fs.existsSync(configPath)) {
-    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    const profile = config.strategyProfiles?.[category];
-    const assetClass = config.assetClasses?.[config.assets?.[asset]?.class];
-    criteria = {
-      minTrades: profile?.minTrades ?? assetClass?.minTrades ?? config.criteria?.minTrades ?? 50,
-      minPF: profile?.minPF ?? assetClass?.minPF ?? config.criteria?.minPF ?? 1.3,
-      maxDD: profile?.maxDD ?? assetClass?.maxDD ?? config.criteria?.maxDD ?? 10,
-      minWR: profile?.minWR ?? assetClass?.minWR ?? config.criteria?.minWR ?? 0,
-      minAvgR: profile?.minAvgR ?? assetClass?.minAvgR ?? config.criteria?.minAvgR ?? 0.15,
-    };
-  }
+  // Resolve criteria from config (profile → assetClass → global → defaults)
+  const cfgAny = breakerConfig as Record<string, any>;
+  const profile = cfgAny.strategyProfiles?.[category];
+  const assetClass = cfgAny.assetClasses?.[cfgAny.assets?.[asset]?.class];
+  let criteria: Criteria = {
+    minTrades: profile?.minTrades ?? assetClass?.minTrades ?? cfgAny.criteria?.minTrades ?? 50,
+    minPF: profile?.minPF ?? assetClass?.minPF ?? cfgAny.criteria?.minPF ?? 1.3,
+    maxDD: profile?.maxDD ?? assetClass?.maxDD ?? cfgAny.criteria?.maxDD ?? 10,
+    minWR: profile?.minWR ?? assetClass?.minWR ?? cfgAny.criteria?.minWR ?? 0,
+    minAvgR: profile?.minAvgR ?? assetClass?.minAvgR ?? cfgAny.criteria?.minAvgR ?? 0.15,
+  };
 
   // Discover strategies
   const stratDir = path.join(repoRoot, "packages/backtest/src/strategies", asset.toLowerCase(), category);
