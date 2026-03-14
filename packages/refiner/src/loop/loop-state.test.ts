@@ -25,6 +25,8 @@ function makeMetrics(overrides: Partial<Metrics> = {}): Metrics {
     avgCostBps: null,
     tradesPerDay: null,
     totalCostPct: null,
+    sharpeRatio: null,
+    sortinoRatio: null,
     ...overrides,
   };
 }

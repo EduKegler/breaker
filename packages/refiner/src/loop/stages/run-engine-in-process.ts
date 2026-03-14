@@ -1,6 +1,7 @@
 import {
   runBacktest,
   computeMetrics,
+  computeRiskMetrics,
   analyzeTradeList,
   DEFAULT_BACKTEST_CONFIG,
 } from "@breaker/backtest";
@@ -42,7 +43,8 @@ export function runEngineInProcess(opts: {
 
   const result = runBacktest(candles, strategy, backtestConfig, sourceInterval);
 
-  const metrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDaysFromCandles(candles), backtestConfig.initialCapital);
+  const rawMetrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDaysFromCandles(candles), backtestConfig.initialCapital);
+  const metrics = { ...rawMetrics, ...computeRiskMetrics(result.equityPoints) };
   const analysis = analyzeTradeList(result.trades);
 
   return { metrics, analysis, trades: result.trades };

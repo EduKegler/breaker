@@ -7,6 +7,7 @@ import { computeMetrics } from "./analysis/metrics-calculator.js";
 import { analyzeTradeList } from "./analysis/trade-analysis.js";
 import { computeMinWarmupBars } from "./engine/compute-min-warmup-bars.js";
 import { isMainModule } from "@breaker/kit";
+import { computeRiskMetrics } from "./analysis/compute-risk-metrics.js";
 import type { Strategy, Metrics, TradeAnalysis } from "./index.js";
 import type { CandleClientOptions } from "./data/fetch-candles.js";
 import { CandleInterval } from "./types/candle.js";
@@ -254,6 +255,8 @@ function printCard(r: StrategyResult, rank: number, cr: Criteria): void {
     `${dim("Avg cost")} ${dim(avgCost.toFixed(1) + " bps")}`,
     `${dim("T/day")} ${dim(tpd.toFixed(2))}`,
     `${dim("Total costs")} ${dim(costPct.toFixed(2) + "%")}`,
+    `${dim("Sharpe")} ${(m.sharpeRatio ?? 0) >= 0 ? ok((m.sharpeRatio ?? 0).toFixed(2)) : fail((m.sharpeRatio ?? 0).toFixed(2))}`,
+    `${dim("Sortino")} ${(m.sortinoRatio ?? 0) >= 0 ? ok((m.sortinoRatio ?? 0).toFixed(2)) : fail((m.sortinoRatio ?? 0).toFixed(2))}`,
   ];
   console.log(`      ${costStats.join("  ")}`);
 
@@ -524,7 +527,8 @@ export async function main(): Promise<void> {
       console.log(`${A.d}  Running ${strategy.name ?? path.basename(file, ".ts")}...${A.r}`);
       const result = runBacktest(candles, strategy, config, interval);
       const tradingDays = Math.ceil((endTime - startTime) / 86_400_000);
-      const metrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDays, config.initialCapital);
+      const rawMetrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDays, config.initialCapital);
+      const metrics = { ...rawMetrics, ...computeRiskMetrics(result.equityPoints) };
       const analysis = analyzeTradeList(result.trades);
 
       // Count optimizable params

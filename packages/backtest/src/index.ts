@@ -69,6 +69,8 @@ export { computeWalkForward } from "./analysis/walk-forward.js";
 export { computeFilterSimulations } from "./analysis/filter-simulation.js";
 export { runCostScenarios, tradingDaysFromCandles } from "./analysis/run-cost-scenarios.js";
 export type { CostScenarioResult, DeltaVsBase } from "./analysis/run-cost-scenarios.js";
+export { computeRiskMetrics } from "./analysis/compute-risk-metrics.js";
+export type { RiskMetrics } from "./analysis/compute-risk-metrics.js";
 export { runSlippageStress, DEFAULT_SCENARIOS } from "./analysis/slippage-stress.js";
 export type { SlippageScenario, SlippageStressResult } from "./analysis/slippage-stress.js";
 export { runFeeScenarios, DEFAULT_FEE_SCENARIOS } from "./analysis/fee-scenarios.js";

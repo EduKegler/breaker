@@ -15,6 +15,7 @@ import {
   CandleCache,
   runBacktest,
   computeMetrics,
+  computeRiskMetrics,
   analyzeTradeList,
   DEFAULT_BACKTEST_CONFIG,
 } from "@breaker/backtest";
@@ -85,7 +86,8 @@ async function main(): Promise<void> {
     const config = { ...DEFAULT_BACKTEST_CONFIG, warmupBars: input.warmupBars ?? 0 };
     const result = runBacktest(candles, strategy, config, input.interval);
     const tradingDays = (input.endTime - input.startTime) / 86_400_000;
-    const metrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDays, config.initialCapital);
+    const rawMetrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDays, config.initialCapital);
+    const metrics = { ...rawMetrics, ...computeRiskMetrics(result.equityPoints) };
     const analysis = analyzeTradeList(result.trades);
 
     // B3: Include paramCount from the freshly-loaded strategy (ESM cache is clean in child process)

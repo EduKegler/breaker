@@ -31,6 +31,8 @@ export function computeMetrics(
       avgCostBps: null,
       tradesPerDay: null,
       totalCostPct: null,
+      sharpeRatio: null,
+      sortinoRatio: null,
     };
   }
 
@@ -97,5 +99,7 @@ export function computeMetrics(
     avgCostBps,
     tradesPerDay,
     totalCostPct,
+    sharpeRatio: null,
+    sortinoRatio: null,
   };
 }

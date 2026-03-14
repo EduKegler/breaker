@@ -83,6 +83,7 @@ export function computeScore(
   const costAwareParts = [
     metrics.tradesPerDay != null ? `T/day: ${metrics.tradesPerDay.toFixed(2)}` : null,
     metrics.edgeBpsNet != null ? `Edge(net): ${metrics.edgeBpsNet.toFixed(0)} bps` : null,
+    metrics.sharpeRatio != null ? `Sharpe: ${metrics.sharpeRatio.toFixed(2)}` : null,
   ].filter(Boolean);
 
   const breakdown = [

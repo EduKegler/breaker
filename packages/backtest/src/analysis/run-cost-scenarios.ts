@@ -4,6 +4,7 @@ import type { BacktestConfig } from "../engine/engine.js";
 import type { Metrics } from "../types/metrics.js";
 import { runBacktest } from "../engine/engine.js";
 import { computeMetrics } from "./metrics-calculator.js";
+import { computeRiskMetrics } from "./compute-risk-metrics.js";
 
 export interface DeltaVsBase {
   pnlDelta: number;
@@ -38,7 +39,8 @@ export function runCostScenarios<S extends { label: string }>(
   for (const scenario of scenarios) {
     const config = applyScenario(baseConfig, scenario);
     const result = runBacktest(candles, strategy, config, interval);
-    const metrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDays, baseConfig.initialCapital);
+    const rawMetrics = computeMetrics(result.trades, result.maxDrawdownPct, tradingDays, baseConfig.initialCapital);
+    const metrics = { ...rawMetrics, ...computeRiskMetrics(result.equityPoints) };
     results.push({ scenario, metrics });
   }
 

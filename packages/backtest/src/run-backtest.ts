@@ -10,6 +10,7 @@ import fs from "node:fs";
 import { isMainModule } from "@breaker/kit";
 import { runSlippageStress } from "./analysis/slippage-stress.js";
 import { runFeeScenarios } from "./analysis/fee-scenarios.js";
+import { computeRiskMetrics } from "./analysis/compute-risk-metrics.js";
 import type { CostScenarioResult } from "./analysis/run-cost-scenarios.js";
 
 if (isMainModule(import.meta.url)) {
@@ -134,7 +135,9 @@ async function main(): Promise<void> {
   const trades = result.trades;
 
   // Compute metrics on filtered trades
-  const metrics = computeMetrics(trades, result.maxDrawdownPct, days, config.initialCapital);
+  const rawMetrics = computeMetrics(trades, result.maxDrawdownPct, days, config.initialCapital);
+  const riskMetrics = computeRiskMetrics(result.equityPoints);
+  const metrics = { ...rawMetrics, ...riskMetrics };
   const analysis = analyzeTradeList(trades);
 
   // Output results
@@ -151,6 +154,7 @@ async function main(): Promise<void> {
   console.log(`Expectancy: ${metrics.expectancy?.toFixed(3) ?? "N/A"}R per trade`);
   console.log(`Edge (gross): ${metrics.edgeBpsGross?.toFixed(1) ?? "N/A"} bps/trade | Edge (net): ${metrics.edgeBpsNet?.toFixed(1) ?? "N/A"} bps/trade | Avg cost: ${metrics.avgCostBps?.toFixed(1) ?? "N/A"} bps/trade`);
   console.log(`Trades/day: ${metrics.tradesPerDay?.toFixed(2) ?? "N/A"} | Total costs: ${metrics.totalCostPct?.toFixed(2) ?? "N/A"}% of capital`);
+  console.log(`Sharpe: ${metrics.sharpeRatio?.toFixed(2) ?? "N/A"} | Sortino: ${metrics.sortinoRatio?.toFixed(2) ?? "N/A"}`);
   console.log(`Final Equity: $${result.finalEquity.toFixed(2)}`);
 
   if (analysis.byDirection["Long"]) {

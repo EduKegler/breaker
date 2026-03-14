@@ -18,6 +18,10 @@ export interface Metrics {
   avgCostBps: number | null;
   tradesPerDay: number | null;
   totalCostPct: number | null;
+
+  // Risk metrics (equity-curve based)
+  sharpeRatio: number | null;
+  sortinoRatio: number | null;
 }
 
 export interface Thresholds {

@@ -341,7 +341,7 @@ describe("restructure prompt slug reference", () => {
   it("includes slug reference with exact slot names and slugs near metadata template", () => {
     const prompt = buildOptimizePrompt({
       ...baseOpts,
-      metrics: { totalPnl: -800, numTrades: 300, profitFactor: 0.44, maxDrawdownPct: 80, winRate: 54, avgR: -0.07, avgWinR: 0.5, avgLossR: -0.5, maxLossR: -1, expectancy: -2, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null },
+      metrics: { totalPnl: -800, numTrades: 300, profitFactor: 0.44, maxDrawdownPct: 80, winRate: 54, avgR: -0.07, avgWinR: 0.5, avgLossR: -0.5, maxLossR: -1, expectancy: -2, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null },
       tradeAnalysis: null,
     });
 
@@ -359,7 +359,7 @@ describe("restructure prompt slug reference", () => {
   it("uses IMPLEMENT template when preSelectedComponents is provided", () => {
     const prompt = buildOptimizePrompt({
       ...baseOpts,
-      metrics: { totalPnl: -800, numTrades: 300, profitFactor: 0.44, maxDrawdownPct: 80, winRate: 54, avgR: -0.07, avgWinR: 0.5, avgLossR: -0.5, maxLossR: -1, expectancy: -2, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null },
+      metrics: { totalPnl: -800, numTrades: 300, profitFactor: 0.44, maxDrawdownPct: 80, winRate: 54, avgR: -0.07, avgWinR: 0.5, avgLossR: -0.5, maxLossR: -1, expectancy: -2, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null },
       tradeAnalysis: null,
       preSelectedComponents: {
         "Entry Signal": "squeeze",
@@ -385,7 +385,7 @@ describe("restructure prompt slug reference", () => {
   it("falls back to SELECT template when preSelectedComponents is absent", () => {
     const prompt = buildOptimizePrompt({
       ...baseOpts,
-      metrics: { totalPnl: -800, numTrades: 300, profitFactor: 0.44, maxDrawdownPct: 80, winRate: 54, avgR: -0.07, avgWinR: 0.5, avgLossR: -0.5, maxLossR: -1, expectancy: -2, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null },
+      metrics: { totalPnl: -800, numTrades: 300, profitFactor: 0.44, maxDrawdownPct: 80, winRate: 54, avgR: -0.07, avgWinR: 0.5, avgLossR: -0.5, maxLossR: -1, expectancy: -2, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null },
       tradeAnalysis: null,
     });
 
@@ -432,6 +432,8 @@ describe("buildOptimizePrompt session sanity (KB §13.2)", () => {
       avgCostBps: null,
       tradesPerDay: null,
       totalCostPct: null,
+      sharpeRatio: null,
+      sortinoRatio: null,
       ...overrides,
     };
   }
@@ -566,7 +568,7 @@ describe("buildOptimizePrompt pctOfPosition rule", () => {
   it("includes pctOfPosition fraction convention in optimization rules", () => {
     const prompt = buildOptimizePrompt({
       ...baseOpts,
-      metrics: { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: 5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null },
+      metrics: { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: 5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null },
       tradeAnalysis: null,
     });
     expect(prompt).toContain("pctOfPosition is a FRACTION (0-1)");
@@ -595,7 +597,7 @@ describe("buildOptimizePrompt pctOfPosition rule", () => {
 
 describe("buildOptimizePrompt structural diagnostics", () => {
   function makeMetrics(overrides?: Partial<Metrics>): Metrics {
-    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, ...overrides };
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null, ...overrides };
   }
 
   function makeAnalysisWithExits(exitTypes: Array<{ signal: string; count: number; pnl: number; winRate: number }>): TradeAnalysis {
@@ -822,7 +824,7 @@ describe("buildOptimizePrompt structural diagnostics", () => {
 
 describe("G5: walk-forward section in prompt", () => {
   function makeMetrics(overrides?: Partial<Metrics>): Metrics {
-    return { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: -5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, ...overrides };
+    return { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: -5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null, ...overrides };
   }
 
   const baseOpts = {
@@ -931,7 +933,7 @@ describe("G5: walk-forward section in prompt", () => {
 
 describe("P1.1: scoring transparency in prompt", () => {
   function makeMetrics(overrides?: Partial<Metrics>): Metrics {
-    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, ...overrides };
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null, ...overrides };
   }
 
   const baseOpts = {
@@ -998,7 +1000,7 @@ describe("P1.1: scoring transparency in prompt", () => {
 
 describe("P1.2: score delta section", () => {
   function makeMetrics(overrides?: Partial<Metrics>): Metrics {
-    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, ...overrides };
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null, ...overrides };
   }
 
   const baseOpts = {
@@ -1074,7 +1076,7 @@ describe("P1.2: score delta section", () => {
 
 describe("P2.1: last iteration result", () => {
   function makeMetrics(overrides?: Partial<Metrics>): Metrics {
-    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, ...overrides };
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null, ...overrides };
   }
 
   const baseOpts = {
@@ -1224,7 +1226,7 @@ describe("P2.1: last iteration result", () => {
 // ---------------------------------------------------------------------------
 describe("P1: diagnostic guide", () => {
   function makeMetrics(overrides?: Partial<Metrics>): Metrics {
-    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: -22, winRate: 25, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, ...overrides };
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: -22, winRate: 25, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null, ...overrides };
   }
 
   const baseOpts = {
@@ -1368,7 +1370,7 @@ describe("P1: diagnostic guide", () => {
 // ---------------------------------------------------------------------------
 describe("P2: param effect map", () => {
   function makeMetrics(overrides?: Partial<Metrics>): Metrics {
-    return { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: -5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, ...overrides };
+    return { totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: -5, winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null, ...overrides };
   }
 
   const baseOpts = {
@@ -1417,7 +1419,7 @@ describe("P2: param effect map", () => {
 
 describe("P2.2: explored ranges with metrics", () => {
   function makeMetrics(overrides?: Partial<Metrics>): Metrics {
-    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, ...overrides };
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null, ...overrides };
   }
 
   const baseOpts = {
@@ -1519,7 +1521,7 @@ describe("P3.1: guardrail-specific rollback reason", () => {
 
 describe("P3.2: failed restructure diagnosis", () => {
   function makeMetrics(overrides?: Partial<Metrics>): Metrics {
-    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, ...overrides };
+    return { totalPnl: -70, numTrades: 77, profitFactor: 0.71, maxDrawdownPct: 22, winRate: 41, avgR: -0.09, avgWinR: 0.51, avgLossR: -0.51, maxLossR: -1.14, expectancy: -0.088, edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null, sharpeRatio: null, sortinoRatio: null, ...overrides };
   }
 
   const baseOpts = {
@@ -1591,6 +1593,7 @@ describe("buildOptimizePrompt: rejectedRepeats", () => {
       totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: 5,
       winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5,
       edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null,
+      sharpeRatio: null, sortinoRatio: null,
     };
   }
 
@@ -1661,6 +1664,7 @@ describe("buildOptimizePrompt: lastValidationWarnings", () => {
       totalPnl: 500, numTrades: 60, profitFactor: 1.5, maxDrawdownPct: 5,
       winRate: 45, avgR: 0.2, avgWinR: 0.8, avgLossR: -0.5, maxLossR: -1.5, expectancy: 5,
       edgeBpsGross: null, edgeBpsNet: null, avgCostBps: null, tradesPerDay: null, totalCostPct: null,
+      sharpeRatio: null, sortinoRatio: null,
     };
   }
 

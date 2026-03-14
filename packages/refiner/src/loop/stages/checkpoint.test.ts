@@ -29,6 +29,8 @@ const sampleMetrics: Metrics = {
   avgCostBps: null,
   tradesPerDay: null,
   totalCostPct: null,
+  sharpeRatio: null,
+  sortinoRatio: null,
 };
 
 describe("checkpoint.save / checkpoint.load", () => {
