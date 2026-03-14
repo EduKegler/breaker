@@ -1,6 +1,8 @@
 import type { Candle } from "../types/candle.js";
 import type { CompletedTrade } from "../types/order.js";
 import type { RegimeName, RegimeStats } from "../types/metrics.js";
+
+type RegimeStatsResult = Partial<Record<RegimeName, RegimeStats>>;
 import { adx } from "../indicators/adx.js";
 
 export const REGIME_ADX_PERIOD = 14;
@@ -17,7 +19,7 @@ export function computeRegimeStats(
   trades: CompletedTrade[],
   candles: Candle[],
   precomputedAdx?: number[],
-): Record<string, RegimeStats> | null {
+): RegimeStatsResult | null {
   if (trades.length === 0 || candles.length === 0) return null;
 
   const buckets: Record<string, { count: number; pnl: number; wins: number; grossWin: number; grossLoss: number }> = {};
@@ -44,9 +46,9 @@ export function computeRegimeStats(
     }
   }
 
-  const result: Record<string, RegimeStats> = {};
+  const result: RegimeStatsResult = {};
   for (const [regime, b] of Object.entries(buckets)) {
-    result[regime] = {
+    result[regime as RegimeName] = {
       count: b.count,
       pnl: b.pnl,
       winRate: b.count > 0 ? (b.wins / b.count) * 100 : 0,

@@ -152,13 +152,8 @@ export interface SessionStats {
 
 export type RegimeName = "trending" | "ranging" | "unclear";
 
-export interface RegimeStats {
-  count: number;
-  pnl: number;
-  winRate: number;
-  profitFactor: number;
-  avgTrade: number;
-}
+/** Alias for DirectionStats — same shape, distinct semantic context. */
+export type RegimeStats = DirectionStats;
 
 export interface TradeAnalysis {
   totalExitRows: number;
@@ -175,5 +170,5 @@ export interface TradeAnalysis {
   walkForward: WalkForward | null;
   rollingWalkForward: RollingWalkForward | null;
   bySession: Record<SessionName, SessionStats> | null;
-  byRegime: Record<string, RegimeStats> | null;
+  byRegime: Partial<Record<RegimeName, RegimeStats>> | null;
 }
